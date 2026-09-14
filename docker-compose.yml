@@ -1,0 +1,35 @@
+# Legacy Compose deployment. The supported production installation is the
+# systemd unit set under deploy/systemd; use compose.test.yml for disposable
+# PostgreSQL integration tests. Do not run this file against production data
+# without an explicit deployment review.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finance_receipt_collector}
+      POSTGRES_USER: ${POSTGRES_USER:-receipt_collector}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  receipt-collector:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-receipt_collector}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-finance_receipt_collector}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - collector_state:/app/.receipt-collector
+
+volumes:
+  postgres_data:
+  collector_state:

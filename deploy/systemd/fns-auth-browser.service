@@ -1,0 +1,21 @@
+[Unit]
+Description=Private FNS authentication browser
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fnsbrowser
+Group=fnsbrowser
+WorkingDirectory=/var/lib/fnsbrowser
+RuntimeDirectory=fnsbrowser
+ExecStart=/opt/accountant/receipt-collector/deploy/fns-browser/run.sh
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fnsbrowser /var/log
+
+[Install]
+WantedBy=multi-user.target

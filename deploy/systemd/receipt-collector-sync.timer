@@ -1,0 +1,11 @@
+[Unit]
+Description=Run FNS receipt sync every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=receipt-collector-sync.service
+
+[Install]
+WantedBy=timers.target

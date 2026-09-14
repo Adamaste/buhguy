@@ -1,0 +1,14 @@
+node_modules
+.git
+.env
+.env.*
+!.env.example
+.receipt-collector
+raw-*.json
+tests
+work
+outputs
+*.dump
+*.backup
+*.key
+*.pem

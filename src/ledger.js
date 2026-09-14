@@ -1,0 +1,279 @@
+import { fiscalContentFingerprint } from './fiscal-evidence.js';
+
+export const LEDGER_MODEL_VERSION = 'ledger-v1';
+export const LEDGER_ORIGIN = 'SYSTEM_DERIVED';
+export const LEDGER_CURRENCY = 'RUB';
+
+export const LEDGER_RULES = Object.freeze({
+  PREPAYMENT: 'LEDGER_PREPAYMENT_V1',
+  FULFILLMENT: 'LEDGER_FULFILLMENT_V1',
+  STANDALONE_PURCHASE: 'LEDGER_STANDALONE_PURCHASE_V1',
+  RETURN: 'LEDGER_RETURN_V1',
+  REFUND: 'LEDGER_REFUND_V1',
+  UNSUPPORTED: 'LEDGER_UNSUPPORTED_V1',
+});
+
+export const LEDGER_ACCOUNTS = Object.freeze({
+  MERCHANT_ADVANCE: { type: 'ASSET', description: 'Value prepaid to a merchant before fulfillment' },
+  FISCAL_PAYMENT_CLEARING: { type: 'CONTROL', description: 'Fiscal new-money evidence pending bank/cash reconciliation' },
+  UNCLASSIFIED_ACQUISITION: { type: 'CONTROL', description: 'Confirmed acquisition pending final expense/asset classification' },
+  MERCHANT_REFUND_RECEIVABLE: { type: 'RECEIVABLE', description: 'Merchant refund receivable before monetary refund is proven' },
+});
+
+const amount = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : null;
+};
+const numeric = (value) => Number(value ?? 0);
+const sum = (values) => values.reduce((total, value) => total + numeric(value), 0).toFixed(2);
+
+function evidenceByEvent(evidence) {
+  const result = new Map();
+  for (const row of evidence) result.set(Number(row.event_id), [...(result.get(Number(row.event_id)) ?? []), row]);
+  return result;
+}
+
+function factsForEvidence(row) {
+  return {
+    receiptId: row.receipt_id === null ? null : Number(row.receipt_id),
+    evidenceId: Number(row.evidence_id),
+    dateTime: row.date_time,
+    normalizationVersion: row.normalization_version,
+    status: row.normalization_status,
+    cash: row.cash_total_sum,
+    ecash: row.ecash_total_sum,
+    prepaid: row.prepaid_sum,
+    credit: row.credit_sum,
+    provision: row.provision_sum,
+    componentStatus: row.payment_components_status,
+  };
+}
+
+export function deriveLedgerEntries({ events, evidence, allocations, edges }) {
+  const evidenceMap = evidenceByEvent(evidence);
+  const incoming = new Map();
+  for (const edge of edges) incoming.set(Number(edge.target_event_id), [...(incoming.get(Number(edge.target_event_id)) ?? []), edge]);
+  const outgoing = new Map();
+  for (const edge of edges) outgoing.set(Number(edge.source_event_id), [...(outgoing.get(Number(edge.source_event_id)) ?? []), edge]);
+  const allocationsMap = new Map();
+  for (const allocation of allocations) allocationsMap.set(Number(allocation.target_event_id), [...(allocationsMap.get(Number(allocation.target_event_id)) ?? []), allocation]);
+  const entries = [];
+  const confirmed = events.filter((event) => event.resolution_status === 'CONFIRMED' && event.origin !== 'MANUAL' && event.origin !== 'EXTERNAL_CONFIRMED');
+  const readyPurchaseIds = new Set();
+  for (const event of confirmed.filter((item) => item.event_type === 'PURCHASE')) {
+    const hasPrepaymentLifecycle = (incoming.get(Number(event.id)) ?? []).some((edge) => ['PREPAYMENT_FOR', 'FULFILLS'].includes(edge.relation_type));
+    if (hasPrepaymentLifecycle) continue;
+    const facts = (evidenceMap.get(Number(event.id)) ?? []).map(factsForEvidence)[0];
+    if (['RETURN_REFUND_V1', 'STANDALONE_PURCHASE_V1'].includes(event.rule_code) && facts?.status === 'READY' && facts.componentStatus === 'RECONCILED' && Number(sum([facts.cash, facts.ecash])) > 0) readyPurchaseIds.add(Number(event.id));
+  }
+  for (const event of confirmed.filter((item) => item.event_type === 'FULFILLMENT' && item.rule_code === 'PREPAYMENT_SETTLEMENT_V1')) {
+    for (const edge of outgoing.get(Number(event.id)) ?? []) if (edge.relation_type === 'FULFILLS' && Number(event.amount) > 0) readyPurchaseIds.add(Number(edge.target_event_id));
+  }
+
+  for (const event of confirmed) {
+    const eventEvidence = (evidenceMap.get(Number(event.id)) ?? []).map(factsForEvidence);
+    const firstEvidence = eventEvidence[0] ?? null;
+    const eventAt = firstEvidence?.dateTime ?? event.created_at;
+    const currency = event.currency || LEDGER_CURRENCY;
+    let rule;
+    let description;
+    let postings;
+    let reasonCode = null;
+    let status = 'READY';
+    let links = eventEvidence.map((item) => ({ evidenceId: item.evidenceId, receiptId: item.receiptId, normalizationVersion: item.normalizationVersion, role: 'FISCAL_EVIDENCE' }));
+
+    if (event.event_type === 'PREPAYMENT' && event.rule_code === 'PREPAYMENT_SETTLEMENT_V1') {
+      rule = LEDGER_RULES.PREPAYMENT;
+      description = 'Prepayment new-money evidence creates merchant advance';
+      postings = [{ account: 'MERCHANT_ADVANCE', debit: amount(event.amount), credit: '0.00' }, { account: 'FISCAL_PAYMENT_CLEARING', debit: '0.00', credit: amount(event.amount) }];
+    } else if (event.event_type === 'FULFILLMENT' && event.rule_code === 'PREPAYMENT_SETTLEMENT_V1') {
+      rule = LEDGER_RULES.FULFILLMENT;
+      description = 'Fulfillment consumes merchant advance without a second cash outflow';
+      postings = [{ account: 'UNCLASSIFIED_ACQUISITION', debit: amount(event.amount), credit: '0.00' }, { account: 'MERCHANT_ADVANCE', debit: '0.00', credit: amount(event.amount) }];
+    } else if (event.event_type === 'PURCHASE' && ['RETURN_REFUND_V1', 'STANDALONE_PURCHASE_V1'].includes(event.rule_code) && !(incoming.get(Number(event.id)) ?? []).some((edge) => ['PREPAYMENT_FOR', 'FULFILLS'].includes(edge.relation_type))) {
+      rule = LEDGER_RULES.STANDALONE_PURCHASE;
+      description = 'Standalone confirmed purchase from normalized new-money components';
+      const facts = eventEvidence[0];
+      const componentReady = facts?.status === 'READY' && facts.componentStatus === 'RECONCILED';
+      const newMoney = sum([facts?.cash, facts?.ecash]);
+      if (!componentReady || newMoney === null) {
+        status = 'BLOCKED';
+        reasonCode = 'NORMALIZED_COMPONENTS_NOT_READY';
+        postings = [];
+      } else if (Number(newMoney) > 0) {
+        postings = [{ account: 'UNCLASSIFIED_ACQUISITION', debit: newMoney, credit: '0.00' }, { account: 'FISCAL_PAYMENT_CLEARING', debit: '0.00', credit: newMoney }];
+      } else {
+        status = 'BLOCKED';
+        reasonCode = 'NO_SUPPORTED_NEW_MONEY_COMPONENT';
+        postings = [];
+      }
+    } else if (event.event_type === 'RETURN' && event.rule_code === 'RETURN_REFUND_V1') {
+      rule = LEDGER_RULES.RETURN;
+      description = 'Confirmed return reverses acquisition into merchant refund receivable';
+      const confirmedAllocations = (allocationsMap.get(Number(event.id)) ?? []).filter((item) => item.resolution_status === 'CONFIRMED');
+      const returnedAmount = sum(confirmedAllocations.map((item) => item.allocated_amount));
+      const targetPurchase = (outgoing.get(Number(event.id)) ?? []).find((edge) => edge.relation_type === 'RETURNS');
+      if (!confirmedAllocations.length || Number(returnedAmount) <= 0) {
+        status = 'BLOCKED';
+        reasonCode = 'RETURN_ALLOCATION_MISSING';
+        postings = [];
+      } else if (!targetPurchase || !readyPurchaseIds.has(Number(targetPurchase.target_event_id))) {
+        status = 'BLOCKED';
+        reasonCode = 'PURCHASE_LEDGER_NOT_READY';
+        postings = [];
+      } else {
+        postings = [{ account: 'MERCHANT_REFUND_RECEIVABLE', debit: returnedAmount, credit: '0.00' }, { account: 'UNCLASSIFIED_ACQUISITION', debit: '0.00', credit: returnedAmount }];
+        links = [...links, ...confirmedAllocations.map((item) => ({ allocationId: Number(item.id), receiptId: item.source_receipt_id === null ? null : Number(item.source_receipt_id), role: 'RETURN_ALLOCATION' }))];
+      }
+    } else if (event.event_type === 'REFUND' && event.rule_code === 'RETURN_REFUND_V1') {
+      rule = LEDGER_RULES.REFUND;
+      description = 'Proven monetary refund reduces merchant refund receivable';
+      postings = [{ account: 'FISCAL_PAYMENT_CLEARING', debit: amount(event.amount), credit: '0.00' }, { account: 'MERCHANT_REFUND_RECEIVABLE', debit: '0.00', credit: amount(event.amount) }];
+    } else {
+      rule = LEDGER_RULES.UNSUPPORTED;
+      description = 'Confirmed business event has no safe Ledger V1 posting rule';
+      status = 'BLOCKED';
+      reasonCode = 'UNSUPPORTED_BUSINESS_EVENT_TYPE';
+      postings = [];
+    }
+
+    const entry = {
+      scopeKey: event.scope_key,
+      sourceEventId: Number(event.id),
+      currency,
+      eventAt,
+      semanticKey: fiscalContentFingerprint({ model: LEDGER_MODEL_VERSION, rule, sourceEventId: Number(event.id), currency, amount: event.amount, postings, reasonCode }),
+      derivationRule: rule,
+      derivationVersion: LEDGER_MODEL_VERSION,
+      derivationStatus: status,
+      certificationStatus: status === 'READY' ? 'FUNDING_UNRECONCILED' : 'BLOCKED',
+      origin: LEDGER_ORIGIN,
+      reasonCode,
+      description,
+      postings,
+      links,
+    };
+    entries.push(entry);
+  }
+  return entries;
+}
+
+export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds = null) {
+  const eventFilter = eventIds?.length ? ' AND e.id = ANY($2::bigint[])' : '';
+  const eventParams = eventIds?.length ? [scopeKey, eventIds] : [scopeKey];
+  const events = (await pool.query(`SELECT e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1${eventFilter} ORDER BY e.id`, eventParams)).rows;
+  const ids = events.map((event) => event.id);
+  if (!ids.length) return { events: [], evidence: [], allocations: [], edges: [], entries: [] };
+  const evidence = (await pool.query(`SELECT ev.id AS evidence_id,ev.event_id,ev.receipt_id,ev.normalization_version,r.date_time,f.normalization_status,f.cash_total_sum,f.ecash_total_sum,f.prepaid_sum,f.credit_sum,f.provision_sum,f.payment_components_status FROM business_event_evidence ev LEFT JOIN receipts r ON r.id=ev.receipt_id LEFT JOIN receipt_fiscal_facts f ON f.receipt_id=ev.receipt_id AND f.normalization_version=ev.normalization_version WHERE ev.event_id = ANY($1::bigint[]) ORDER BY ev.id`, [ids])).rows;
+  const allocations = (await pool.query(`SELECT a.* FROM business_event_allocations a JOIN accounting_scopes s ON s.id=a.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
+  const edges = (await pool.query(`SELECT e.* FROM business_event_edges e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
+  return { events, evidence, allocations, edges, entries: deriveLedgerEntries({ events, evidence, allocations, edges }) };
+}
+
+async function ensureAccounts(tx, scopeKey) {
+  const scope = (await tx.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
+  if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
+  // Serialize account-catalog upserts per scope to avoid ON CONFLICT lock cycles.
+  await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [scopeKey]);
+  const accounts = new Map();
+  for (const [code, definition] of Object.entries(LEDGER_ACCOUNTS)) {
+    const row = (await tx.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description) VALUES($1,$2,$3,$4) ON CONFLICT(scope_id,account_code) DO UPDATE SET description=EXCLUDED.description RETURNING id,account_code`, [scope.id, code, definition.type, definition.description])).rows[0];
+    accounts.set(code, Number(row.id));
+  }
+  return accounts;
+}
+
+async function persistEntry(tx, entry, accounts) {
+  const row = (await tx.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description)
+    VALUES((SELECT id FROM accounting_scopes WHERE scope_key=$1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    ON CONFLICT(scope_id,semantic_key,derivation_rule,derivation_version,origin) DO UPDATE SET description=EXCLUDED.description,derivation_status=EXCLUDED.derivation_status,certification_status=EXCLUDED.certification_status,reason_code=EXCLUDED.reason_code
+    RETURNING id,(xmax=0) AS created`, [entry.scopeKey, entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.origin, entry.reasonCode, entry.description])).rows[0];
+  const entryId = Number(row.id);
+  if (entry.derivationStatus === 'BLOCKED') return { entryId, created: Boolean(row.created), postings: 0, links: 0 };
+  let postingCount = 0;
+  for (const posting of entry.postings) {
+    const inserted = await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_allocation_id,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]);
+    postingCount += inserted.rowCount;
+  }
+  let linkCount = 0;
+  for (const link of entry.links) {
+    const semanticKey = fiscalContentFingerprint({ ledgerEntryId: entryId, businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role });
+    const inserted = await tx.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [entryId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role, semanticKey]);
+    linkCount += inserted.rowCount;
+  }
+  return { entryId, created: Boolean(row.created), postings: postingCount, links: linkCount };
+}
+
+export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null } = {}) {
+  const projection = await loadLedgerProjection(pool, scopeKey, eventIds);
+  if (dryRun) return summarizeLedgerProjection(projection);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (replace) {
+      if (!eventIds?.length) {
+        const dependency = (await client.query(`SELECT count(*)::int AS count
+          FROM certification_facts f
+          JOIN ledger_entries e ON e.id=f.ledger_entry_id
+          WHERE e.scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1)
+            AND e.origin='SYSTEM_DERIVED'`, [scopeKey])).rows[0];
+        if (Number(dependency.count) > 0) {
+          const error = new Error('Full ledger replace is forbidden while certification facts reference system-derived ledger entries; use the bounded incremental path or an explicitly coordinated disposable-clone rebuild.');
+          error.code = 'LEDGER_REBUILD_CERTIFICATION_DEPENDENCY';
+          throw error;
+        }
+      }
+      const eventClause = eventIds?.length ? ' AND source_event_id = ANY($2::bigint[])' : '';
+      const params = eventIds?.length ? [scopeKey, eventIds] : [scopeKey];
+      await client.query(`DELETE FROM ledger_postings WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1) AND origin='SYSTEM_DERIVED'${eventClause})`, params);
+      await client.query(`DELETE FROM ledger_source_links WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1) AND origin='SYSTEM_DERIVED'${eventClause})`, params);
+      await client.query(`DELETE FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1) AND origin='SYSTEM_DERIVED'${eventClause}`, params);
+    }
+    const accounts = await ensureAccounts(client, scopeKey);
+    const created = { entries: 0, postings: 0, links: 0, blocked: 0 };
+    for (const entry of projection.entries) {
+      const persisted = await persistEntry(client, entry, accounts);
+      created.entries += Number(persisted.created); created.postings += persisted.postings; created.links += persisted.links;
+      if (entry.derivationStatus === 'BLOCKED') created.blocked += 1;
+      if (failAfter !== null && created.entries >= Number(failAfter)) throw new Error('injected ledger builder failure');
+    }
+    const unbalanced = (await client.query(`SELECT count(*)::int AS count FROM (SELECT ledger_entry_id FROM ledger_postings GROUP BY ledger_entry_id HAVING SUM(debit)<>SUM(credit)) q`)).rows[0].count;
+    if (Number(unbalanced) !== 0) throw new Error(`Ledger is unbalanced: ${unbalanced}`);
+    await client.query('COMMIT');
+    return { ...summarizeLedgerProjection(projection), created, balancedViolations: Number(unbalanced) };
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+async function affectedEventIds(pool, scopeKey, receiptId) {
+  const result = await pool.query(`WITH RECURSIVE component(id) AS (
+    SELECT ev.event_id FROM business_event_evidence ev
+    JOIN business_events e ON e.id=ev.event_id
+    JOIN accounting_scopes s ON s.id=e.scope_id
+    WHERE s.scope_key=$1 AND ev.receipt_id=$2
+    UNION
+    SELECT CASE WHEN edge.source_event_id=component.id THEN edge.target_event_id ELSE edge.source_event_id END
+    FROM business_event_edges edge JOIN component
+      ON edge.source_event_id=component.id OR edge.target_event_id=component.id
+  ) SELECT DISTINCT id FROM component ORDER BY id`, [scopeKey, receiptId]);
+  return result.rows.map((row) => Number(row.id));
+}
+
+export async function refreshLedgerForReceipt(pool, { scopeKey = 'default', receiptId } = {}) {
+  const eventIds = await affectedEventIds(pool, scopeKey, receiptId);
+  if (!eventIds.length) return { eventIds: [], created: { entries: 0, postings: 0, links: 0, blocked: 0 }, bounded: true };
+  return { ...(await rebuildLedger(pool, { scopeKey, replace: true, eventIds })), eventIds, bounded: true };
+}
+
+export function summarizeLedgerProjection(projection) {
+  const byRule = {};
+  for (const entry of projection.entries) {
+    const bucket = byRule[entry.derivationRule] ?? { entries: 0, postings: 0, status: {}, debit: 0, credit: 0 };
+    bucket.entries += 1;
+    bucket.postings += entry.postings.length;
+    bucket.status[entry.derivationStatus] = (bucket.status[entry.derivationStatus] ?? 0) + 1;
+    bucket.debit += entry.postings.reduce((total, posting) => total + numeric(posting.debit), 0);
+    bucket.credit += entry.postings.reduce((total, posting) => total + numeric(posting.credit), 0);
+    byRule[entry.derivationRule] = bucket;
+  }
+  return { model: LEDGER_MODEL_VERSION, currency: LEDGER_CURRENCY, entries: projection.entries.length, postings: projection.entries.reduce((total, entry) => total + entry.postings.length, 0), byRule, blocked: projection.entries.filter((entry) => entry.derivationStatus === 'BLOCKED').map((entry) => ({ sourceEventId: entry.sourceEventId, rule: entry.derivationRule, reasonCode: entry.reasonCode })) };
+}

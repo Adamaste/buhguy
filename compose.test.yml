@@ -1,0 +1,16 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: receipt_collector_test
+      POSTGRES_USER: receipt_collector_test
+      POSTGRES_PASSWORD: test-only-password
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U receipt_collector_test -d receipt_collector_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

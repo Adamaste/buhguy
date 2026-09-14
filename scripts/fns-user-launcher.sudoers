@@ -1,0 +1,1 @@
+fnslogin ALL=(root) NOPASSWD: /usr/local/sbin/fns-user-runtime

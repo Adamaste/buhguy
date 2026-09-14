@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=FNS Chromium
+Exec=/usr/bin/google-chrome --lang=en-US --user-data-dir=/home/fnslogin/chrome-profile --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --no-first-run --no-default-browser-check https://lkdr.nalog.ru/login
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true
