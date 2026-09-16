@@ -13,7 +13,7 @@ const views = [
   'normalization_issues', 'business_events', 'business_event_evidence',
   'business_event_edges', 'business_event_allocations', 'ledger_accounts',
   'ledger_entries', 'ledger_postings', 'ledger_source_links', 'certification_facts',
-  'receipt_source_observations', 'fns_source_receipt_refs', 'persons', 'fns_sources',
+  'receipt_source_observations', 'user_receipts', 'fns_source_receipt_refs', 'persons', 'fns_sources',
   'fns_source_person', 'fns_source_sync_state', 'analytics_purchases',
   'analytics_purchase_items', 'reconciliation_runs', 'reconciliation_results'
 ];
@@ -33,6 +33,15 @@ test('semantic layer never exposes raw payload or auth material', () => {
   assert.doesNotMatch(sql, /CREATE\s+(?:ROLE|USER)/i);
   assert.match(sql, /GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader/);
   assert.match(sql, /GRANT SELECT ON[\s\S]+TO chatgpt_reader/);
+  assert.match(sql, /REVOKE SELECT ON public\.analytics_purchases, public\.analytics_purchase_items FROM chatgpt_reader/);
+});
+
+test('user receipt view is active-source scoped and deduplicates household provenance', () => {
+  assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.user_receipts/);
+  assert.match(sql, /JOIN public\.fns_sources s ON s\.id = o\.fns_source_id AND s\.enabled/);
+  assert.match(sql, /DISTINCT ON \(p\.id, r\.id\)/);
+  assert.match(sql, /Canonical receipt inventory by household person/);
+  assert.match(sql, /analytics_purchases is a derived economic-purchase view/);
 });
 
 test('rollback is limited to the semantic layer schema', () => {

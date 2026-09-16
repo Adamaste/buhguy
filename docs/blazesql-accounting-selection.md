@@ -8,6 +8,12 @@
 4. Do not select duplicate `public.*` raw/internal objects.
 5. Save the selection and verify the schema through the read-only role.
 
+For receipt existence, history, provenance, and user-specific questions, use
+`chatgpt_accounting.user_receipts`. It is the canonical household-person
+receipt inventory and excludes observations from disabled historical sources.
+Use `chatgpt_accounting.analytics_purchases` only for certified economic
+acquisitions; it is not a complete receipt inventory.
+
 ## Required views
 
 - [ ] `chatgpt_accounting.receipts`
@@ -25,6 +31,7 @@
 - [ ] `chatgpt_accounting.ledger_source_links`
 - [ ] `chatgpt_accounting.certification_facts`
 - [ ] `chatgpt_accounting.receipt_source_observations`
+- [ ] `chatgpt_accounting.user_receipts`
 - [ ] `chatgpt_accounting.fns_source_receipt_refs`
 - [ ] `chatgpt_accounting.persons`
 - [ ] `chatgpt_accounting.fns_sources`

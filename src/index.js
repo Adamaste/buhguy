@@ -8,4 +8,5 @@ export { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentity
 export { FnsSourceObservationConflictError } from './multi-user-errors.js';
 export { NORMALIZATION_VERSION, backfillNormalization, normalizeAndStoreReceipt, normalizeFiscalEvidence, rebuildNormalization } from './fiscal-normalization.js';
 export { BusinessEventGraphRepository, EXTERNAL_CONFIRMED, GRAPH_MODEL_VERSION, MANUAL, SYSTEM_DERIVED, validateBusinessEventGraph } from './business-event-graph.js';
+export { runAccountingCatchup } from './accounting-pipeline.js';
 export { MATCHER_RECEIPTS_SQL, MATCHER_VERSION, NORMALIZED_FACT_VERSION, PREPAYMENT_SETTLEMENT_RULE, dryRunPrepaymentSettlements, matchPrepaymentSettlements, persistPrepaymentSettlementMatches, reconsiderPrepaymentSettlement } from './prepayment-settlement-matcher.js';

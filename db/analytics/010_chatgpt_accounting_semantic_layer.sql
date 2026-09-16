@@ -96,6 +96,31 @@ SELECT id, receipt_id, fns_source_id, source_receipt_id,
        source_content_sha256, observed_at
 FROM public.receipt_source_observations;
 
+CREATE OR REPLACE VIEW chatgpt_accounting.user_receipts AS
+SELECT DISTINCT ON (p.id, r.id)
+       p.id AS person_id,
+       p.person_key,
+       p.display_name AS person_display_name,
+       r.id AS receipt_id,
+       r.fns_id,
+       r.date_time,
+       r.seller,
+       r.seller_inn,
+       r.total_sum,
+       r.currency,
+       r.operation_type,
+       s.id AS fns_source_id,
+       s.source_key,
+       s.display_name AS source_display_name,
+       o.source_receipt_id,
+       o.observed_at
+FROM public.receipts r
+JOIN public.receipt_source_observations o ON o.receipt_id = r.id
+JOIN public.fns_sources s ON s.id = o.fns_source_id AND s.enabled
+JOIN public.fns_source_person sp ON sp.fns_source_id = s.id
+JOIN public.persons p ON p.id = sp.person_id
+ORDER BY p.id, r.id, o.observed_at DESC, o.id DESC;
+
 CREATE OR REPLACE VIEW chatgpt_accounting.fns_source_receipt_refs AS
 SELECT id, fns_source_id, source_receipt_id, receipt_id, status,
        first_seen_at, last_seen_at, detail_last_attempt_at,
@@ -167,7 +192,8 @@ COMMENT ON VIEW chatgpt_accounting.persons IS 'Accounting person metadata; not p
 COMMENT ON VIEW chatgpt_accounting.fns_sources IS 'FNS source metadata without session or device references.';
 COMMENT ON VIEW chatgpt_accounting.fns_source_person IS 'Mapping between FNS sources and accounting persons.';
 COMMENT ON VIEW chatgpt_accounting.fns_source_sync_state IS 'Per-source synchronization status and counters.';
-COMMENT ON VIEW chatgpt_accounting.analytics_purchases IS 'Curated one-row-per-certified-acquisition analytics surface.';
+COMMENT ON VIEW chatgpt_accounting.user_receipts IS 'Canonical receipt inventory by household person. Use this view for receipt existence/history/provenance questions. analytics_purchases is a derived economic-purchase view and is not a complete fiscal receipt inventory.';
+COMMENT ON VIEW chatgpt_accounting.analytics_purchases IS 'Certified economic purchase analytics. Not a complete receipt inventory.';
 COMMENT ON VIEW chatgpt_accounting.analytics_purchase_items IS 'Curated item-grain view for certified acquisitions.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_runs IS 'Accounting reconciliation run metadata.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_results IS 'Reconciliation metrics and certification status.';
@@ -200,6 +226,7 @@ GRANT SELECT ON
   chatgpt_accounting.ledger_source_links,
   chatgpt_accounting.certification_facts,
   chatgpt_accounting.receipt_source_observations,
+  chatgpt_accounting.user_receipts,
   chatgpt_accounting.fns_source_receipt_refs,
   chatgpt_accounting.persons,
   chatgpt_accounting.fns_sources,
@@ -210,3 +237,6 @@ GRANT SELECT ON
   chatgpt_accounting.reconciliation_runs,
   chatgpt_accounting.reconciliation_results
 TO chatgpt_reader;
+
+-- Keep BlazeSQL on the explicit semantic layer instead of legacy public views.
+REVOKE SELECT ON public.analytics_purchases, public.analytics_purchase_items FROM chatgpt_reader;

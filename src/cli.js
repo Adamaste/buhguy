@@ -19,6 +19,7 @@ import { certificationReport, rebuildCertification, refreshCertificationForEvent
 import { analyticsSummary, analyticsBlocked, analyticsTrace, assertSupportedMetric } from './analytics.js';
 import { standalonePurchaseCensus, persistStandalonePurchases } from './standalone-purchase.js';
 import { accountingCoverageReport, compareCoverageReports } from './accounting-coverage.js';
+import { runAccountingCatchup } from './accounting-pipeline.js';
 import { runSourceSyncCycle } from './source-sync-cycle.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
@@ -56,6 +57,16 @@ function printJson(value) {
 
 function progress(message) {
   process.stderr.write(`[fns-user] ${message}\n`);
+}
+
+function summarizeAccountingCatchup(result) {
+  return {
+    prepaymentPurchases: result.prepayments?.created?.purchases ?? 0,
+    standalonePurchases: result.standalone?.created ?? 0,
+    returnEvents: result.returns?.created?.returns ?? 0,
+    ledgerEntries: result.ledger?.created?.entries ?? 0,
+    certificationFacts: result.certification?.facts?.length ?? 0,
+  };
 }
 
 function toNumber(value, fallback) {
@@ -416,7 +427,10 @@ export async function main(argv = process.argv.slice(2), {
             progress('Initial sync started.');
             const syncResult = await syncReceipts({ client: sourceClient, repository, accountKey: user.sourceKey, sourceContext: { sourceId: sourceRow.id, sourceKey: user.sourceKey }, normalizer: (receiptId) => normalizeAndStoreReceipt(pool, receiptId), logger });
             progress(`Initial sync completed: fetched=${syncResult.fetched ?? 0}, errors=${syncResult.errors ?? 0}.`);
-            return syncResult;
+            progress('Accounting catch-up started for all normalized receipts in the household scope.');
+            const accounting = await runAccountingCatchup(pool, { scopeKey: 'default', logger });
+            progress(`Accounting catch-up completed: graph/ledger/certification refreshed; standalone=${accounting.standalone?.created ?? 0}.`);
+            return { ...syncResult, accounting };
           },
           verify: async (_user, syncResult) => {
             progress('Running accounting and source validators.');
@@ -497,7 +511,7 @@ export async function main(argv = process.argv.slice(2), {
         logger,
         runSource: async ({ source, sourceRow }) => {
           const sourceClient = new FnsClient({ fetchImpl, sessionStore: new SessionStore({ stateDir: source.sessionDir }) , logger });
-          return syncReceipts({
+          const syncResult = await syncReceipts({
             client: sourceClient,
             repository,
             normalizer: (receiptId) => normalizeAndStoreReceipt(pool, receiptId),
@@ -514,6 +528,8 @@ export async function main(argv = process.argv.slice(2), {
             pageSize: toNumber(args['page-size'], 50),
             logger,
           });
+          await runAccountingCatchup(pool, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', logger });
+          return syncResult;
         },
       });
       printJson(cycle);
@@ -528,6 +544,18 @@ export async function main(argv = process.argv.slice(2), {
       const result = args.rebuild ? await rebuildNormalization(pool) : await backfillNormalization(pool);
       printJson({ ok: true, ...result });
       return result.blocked || result.unsupported ? 2 : 0;
+    } finally { await pool.end(); }
+  }
+
+  if (command === 'accounting') {
+    const subcommand = args._[0] ?? 'catch-up';
+    if (subcommand !== 'catch-up') throw new ReceiptCollectorError('Accounting command must be catch-up');
+    const pool = createPool();
+    try {
+      await migrate(pool);
+      const result = await runAccountingCatchup(pool, { scopeKey: args['scope-key'] ?? 'default', logger });
+      printJson({ ok: true, scopeKey: args['scope-key'] ?? 'default', ...summarizeAccountingCatchup(result) });
+      return 0;
     } finally { await pool.end(); }
   }
 
