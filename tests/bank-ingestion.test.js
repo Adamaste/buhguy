@@ -31,3 +31,16 @@ test('internal handler rejects an unknown source without receipt matching', asyn
   const result = await createBankIngestionHandler({ pool })(event);
   assert.deepEqual(result, { status: 'rejected', code: 'UNKNOWN_SOURCE' });
 });
+
+test('internal handler returns stable rejection for malformed input', async () => {
+  const pool = { query: async () => { throw new Error('database must not be touched'); } };
+  const handler = createBankIngestionHandler({ pool });
+  assert.deepEqual(await handler({ body: { sourceKey: 'bad input' } }), { status: 'rejected', code: 'INVALID_EVENT' });
+  assert.deepEqual(await handler(null), { status: 'rejected', code: 'INVALID_EVENT' });
+});
+
+test('internal handler still throws unexpected infrastructure errors', async () => {
+  const infrastructureError = new Error('database unavailable');
+  const pool = { query: async () => { throw infrastructureError; } };
+  await assert.rejects(() => createBankIngestionHandler({ pool })(event), infrastructureError);
+});

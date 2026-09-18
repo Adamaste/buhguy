@@ -144,11 +144,24 @@ export async function ingestBankEvent(pool, input) {
     return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized };
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505') return { status: 'duplicate', code: 'DUPLICATE_EVENT' };
+    if (error.code === '23505') {
+      const persisted = await client.query('SELECT id,payload_sha256 FROM bank_event_observations WHERE bank_source_id=$1 AND dedup_key=$2', [source.id, dedupKey]);
+      if (!persisted.rowCount) throw error;
+      if (persisted.rows[0].payload_sha256 !== payloadSha256) return { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' };
+      return { status: 'duplicate', observationId: Number(persisted.rows[0].id) };
+    }
     throw error;
   } finally { client.release(); }
 }
 
 export function createBankIngestionHandler({ pool }) {
-  return async (request) => ingestBankEvent(pool, request?.body ?? request);
+  return async (request) => {
+    const input = request?.body ?? request;
+    try {
+      validateBankEventInput(input);
+    } catch {
+      return { status: 'rejected', code: 'INVALID_EVENT' };
+    }
+    return ingestBankEvent(pool, input);
+  };
 }

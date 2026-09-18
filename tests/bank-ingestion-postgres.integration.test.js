@@ -15,10 +15,13 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
       payload: { amount: '125.50', currency: 'RUB', direction: 'DEBIT', merchant: 'Synthetic shop' },
       ingestionMetadata: { adapter: 'test', schemaVersion: '1' },
     };
-    const created = await ingestBankEvent(pool, event);
-    assert.equal(created.status, 'created');
+    const [first, second] = await Promise.all([
+      ingestBankEvent(pool, event),
+      ingestBankEvent(pool, { ...event, payload: { ...event.payload, amount: '126.00' } }),
+    ]);
+    assert.deepEqual([first.status, second.status].sort(), ['created', 'rejected']);
+    assert.equal([first, second].filter((result) => result.code === 'SOURCE_EVENT_CONFLICT').length, 1);
     assert.equal((await ingestBankEvent(pool, event)).status, 'duplicate');
-    assert.deepEqual(await ingestBankEvent(pool, { ...event, payload: { ...event.payload, amount: '126.00' } }), { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
     assert.equal((await ingestBankEvent(pool, { ...event, sourceKey: 'android-bank-test-b' })).status, 'created');
     const counts = await pool.query(`SELECT (SELECT count(*) FROM bank_event_observations) AS observations,
       (SELECT count(*) FROM bank_transactions) AS transactions,
