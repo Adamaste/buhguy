@@ -41,10 +41,13 @@ acquisitions; it is not a complete receipt inventory.
 - [ ] `chatgpt_accounting.analytics_purchase_items`
 - [ ] `chatgpt_accounting.reconciliation_runs`
 - [ ] `chatgpt_accounting.reconciliation_results`
+- [ ] `chatgpt_accounting.bank_sources`
+- [ ] `chatgpt_accounting.bank_transactions`
 
 ## Do not select
 
 - `public.receipt_raw`;
+- `public.bank_event_observations` and any bank raw/evidence payload;
 - session, token, cookie, password, or secret configuration objects;
 - internal `public.*` tables when the corresponding semantic view exists.
 
