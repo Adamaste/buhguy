@@ -11,9 +11,14 @@ class BankCollectorApplication : Application() {
     val database: CollectorDatabase by lazy { Room.databaseBuilder(this, CollectorDatabase::class.java, "bank-collector.db").build() }
     val transport: BankTransport
         get() {
-        val url = AppPreferences(this).serverUrl()
-        if (url.isBlank()) object : BankTransport {
-            override suspend fun send(eventJson: String): TransportResult = TransportResult(null, networkFailure = true)
-        } else HttpBankTransport(url)
+            val url = AppPreferences(this).serverUrl()
+            return if (url.isBlank()) {
+                object : BankTransport {
+                    override suspend fun send(eventJson: String): TransportResult =
+                        TransportResult(null, networkFailure = true)
+                }
+            } else {
+                HttpBankTransport(url)
+            }
         }
 }
