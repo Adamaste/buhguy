@@ -15,7 +15,8 @@ const views = [
   'ledger_entries', 'ledger_postings', 'ledger_source_links', 'certification_facts',
   'receipt_source_observations', 'user_receipts', 'fns_source_receipt_refs', 'persons', 'fns_sources',
   'fns_source_person', 'fns_source_sync_state', 'analytics_purchases',
-  'analytics_purchase_items', 'reconciliation_runs', 'reconciliation_results'
+  'analytics_purchase_items', 'reconciliation_runs', 'reconciliation_results',
+  'bank_sources', 'bank_transactions'
 ];
 
 test('semantic layer exposes the complete safe view manifest', () => {

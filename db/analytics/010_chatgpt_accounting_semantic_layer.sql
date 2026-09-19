@@ -169,6 +169,21 @@ SELECT id, run_id, metric_code, status, amount, currency, count_items,
        reason_code, semantic_key, created_at
 FROM public.reconciliation_results;
 
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_sources AS
+SELECT id, source_key, source_type, display_name, enabled, created_at, updated_at
+FROM public.bank_sources;
+
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_transactions AS
+SELECT bt.id, bt.observation_id, beo.bank_source_id,
+       bs.source_key, bs.source_type, bs.display_name AS source_display_name,
+       bt.occurred_at, bt.amount, bt.currency, bt.direction,
+       bt.merchant, bt.counterparty,
+       bt.normalization_status, bt.normalization_version,
+       bt.evidence_quality, beo.observed_at, beo.event_time
+FROM public.bank_transactions bt
+JOIN public.bank_event_observations beo ON beo.id = bt.observation_id
+JOIN public.bank_sources bs ON bs.id = beo.bank_source_id;
+
 COMMENT ON SCHEMA chatgpt_accounting IS
 'Read-only accounting semantic layer for ChatGPT. Select views in this schema in BlazeSQL. Use analytics_* for ordinary analytics and the proof-chain views for audit questions. Never infer payer or owner from FNS source provenance.';
 
@@ -197,6 +212,8 @@ COMMENT ON VIEW chatgpt_accounting.analytics_purchases IS 'Certified economic pu
 COMMENT ON VIEW chatgpt_accounting.analytics_purchase_items IS 'Curated item-grain view for certified acquisitions.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_runs IS 'Accounting reconciliation run metadata.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_results IS 'Reconciliation metrics and certification status.';
+COMMENT ON VIEW chatgpt_accounting.bank_sources IS 'Bank source metadata without credentials or raw event payloads.';
+COMMENT ON VIEW chatgpt_accounting.bank_transactions IS 'Normalized cash-flow evidence. A bank transaction is not automatically a purchase, receipt, payer, or accounting certification; missing receipt linkage is not an error.';
 
 COMMENT ON COLUMN chatgpt_accounting.receipts.fns_id IS 'Canonical FNS identity; not a source-person identity.';
 COMMENT ON COLUMN chatgpt_accounting.receipts.total_sum IS 'Fiscal receipt total; do not treat as confirmed cash flow.';
@@ -207,6 +224,8 @@ COMMENT ON COLUMN chatgpt_accounting.ledger_postings.debit IS 'Debit amount; pai
 COMMENT ON COLUMN chatgpt_accounting.ledger_postings.credit IS 'Credit amount; pair with debit and ledger entry for balance analysis.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.amount IS 'Certified acquisition amount at purchase grain.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchase_items.item_sum IS 'Item-grain amount; do not sum with purchase-grain amounts.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.direction IS 'Explicit bank direction when evidence provides it; UNKNOWN is retained instead of inferred.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.evidence_quality IS 'Quality of normalized evidence, not confidence that the event is a purchase.';
 
 REVOKE ALL ON ALL TABLES IN SCHEMA chatgpt_accounting FROM PUBLIC;
 GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader;
@@ -235,7 +254,9 @@ GRANT SELECT ON
   chatgpt_accounting.analytics_purchases,
   chatgpt_accounting.analytics_purchase_items,
   chatgpt_accounting.reconciliation_runs,
-  chatgpt_accounting.reconciliation_results
+  chatgpt_accounting.reconciliation_results,
+  chatgpt_accounting.bank_sources,
+  chatgpt_accounting.bank_transactions
 TO chatgpt_reader;
 
 -- Keep BlazeSQL on the explicit semantic layer instead of legacy public views.
