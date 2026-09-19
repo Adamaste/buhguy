@@ -25,6 +25,7 @@ import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding
 import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
 import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
+import { createProvisionedBankSource, listProvisionedBankSources, linkProvisionedBankSourcePerson, setProvisionedBankSourceEnabled } from './bank-source-provisioning.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -94,6 +95,30 @@ export async function runBankDeviceCommand(args, { pool, write = printJson } = {
     return 0;
   }
   throw new ReceiptCollectorError('Bank device command must be create, list or revoke');
+}
+
+export async function runBankSourceCommand(args, { pool, write = printJson } = {}) {
+  const subcommand = args._[0];
+  if (subcommand === 'create') {
+    const source = await createProvisionedBankSource(pool, { sourceKey: args['source-key'] || args._[1], displayName: args['display-name'] || args._[2], sourceType: args['source-type'] });
+    write({ ok: true, source });
+    return 0;
+  }
+  if (subcommand === 'list') {
+    write({ sources: await listProvisionedBankSources(pool) });
+    return 0;
+  }
+  if (subcommand === 'enable' || subcommand === 'disable') {
+    const source = await setProvisionedBankSourceEnabled(pool, { sourceKey: args['source-key'] || args._[1], enabled: subcommand === 'enable' });
+    write({ ok: true, source });
+    return 0;
+  }
+  if (subcommand === 'link-person') {
+    const link = await linkProvisionedBankSourcePerson(pool, { sourceKey: args['source-key'] || args._[1], personKey: args['person-key'] || args._[2], relationType: args['relation-type'] || 'OWNER', scopeKey: args['scope-key'] || 'default' });
+    write({ ok: true, link });
+    return 0;
+  }
+  throw new ReceiptCollectorError('Bank source command must be create, list, enable, disable or link-person');
 }
 
 export function normalizePhone(value) {
@@ -182,7 +207,7 @@ export async function main(argv = process.argv.slice(2), {
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     printJson({
-      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device>',
+      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device|bank-source>',
       examples: [
         'receipt-collector login',
         'receipt-collector list',
@@ -499,6 +524,13 @@ export async function main(argv = process.argv.slice(2), {
     const pool = createPool();
     try {
       return await runBankDeviceCommand(args, { pool });
+    } finally { await pool.end(); }
+  }
+
+  if (command === 'bank-source') {
+    const pool = createPool();
+    try {
+      return await runBankSourceCommand(args, { pool });
     } finally { await pool.end(); }
   }
 
