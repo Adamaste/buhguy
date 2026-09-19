@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { createBankSource, ingestBankEvent } from '../src/bank-ingestion.js';
+import { createProvisionedBankSource, linkProvisionedBankSourcePerson, listProvisionedBankSources, setProvisionedBankSourceEnabled } from '../src/bank-source-provisioning.js';
+import { migrate } from '../src/database.js';
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -37,4 +39,27 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
   } finally {
     await pool.end();
   }
+});
+
+integration('bank source provisioning is DML-only, non-upserting, safe, and idempotent', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const sourceKey = `provisioning-${process.pid}-${Date.now()}`;
+  try {
+    await migrate(pool);
+    const person = (await pool.query(`INSERT INTO persons(scope_id,person_key,display_name)
+      SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING person_key`, [`person-${sourceKey}`, 'Synthetic person'])).rows[0];
+    const created = await createProvisionedBankSource(pool, { sourceKey, displayName: 'Synthetic phone' });
+    assert.equal(created.source_type, 'ANDROID_NOTIFICATION');
+    await assert.rejects(() => createProvisionedBankSource(pool, { sourceKey, displayName: 'Changed name', sourceType: 'BANK_API' }), (error) => error.code === 'SOURCE_ALREADY_EXISTS');
+    const unchanged = (await pool.query('SELECT source_type,display_name,enabled FROM bank_sources WHERE source_key=$1', [sourceKey])).rows[0];
+    assert.deepEqual(unchanged, { source_type: 'ANDROID_NOTIFICATION', display_name: 'Synthetic phone', enabled: true });
+    await linkProvisionedBankSourcePerson(pool, { sourceKey, personKey: person.person_key });
+    await linkProvisionedBankSourcePerson(pool, { sourceKey, personKey: person.person_key });
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_source_person sp JOIN bank_sources s ON s.id=sp.bank_source_id WHERE s.source_key=$1`, [sourceKey])).rows[0].count, 1);
+    await setProvisionedBankSourceEnabled(pool, { sourceKey, enabled: false });
+    assert.equal((await listProvisionedBankSources(pool)).find((source) => source.source_key === sourceKey).enabled, false);
+    await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]);
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]);
+    await pool.query('DELETE FROM persons WHERE person_key=$1', [person.person_key]);
+  } finally { await pool.end(); }
 });
