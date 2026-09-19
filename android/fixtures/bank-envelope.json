@@ -1,0 +1,16 @@
+{
+  "sourceKey": "android-demo",
+  "sourceEventId": "e3e8fb5baf7d7877634d8eb2207320ba924493ba0c276111148dad2144a66245",
+  "observedAt": "2026-09-18T10:00:00Z",
+  "eventTime": "2026-09-18T09:59:00Z",
+  "payload": {
+    "title": "Payment received",
+    "text": "A bank notification without universal parsing"
+  },
+  "ingestionMetadata": {
+    "adapter": "android-notification",
+    "provider": "demo",
+    "deviceType": "android",
+    "schemaVersion": "1"
+  }
+}
