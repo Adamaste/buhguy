@@ -8,13 +8,15 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import javax.crypto.spec.SecretKeySpec
 
 @RunWith(RobolectricTestRunner::class)
 class DeviceCredentialStoreTest {
     @Test fun tokenIsEncryptedAtRestAndClearedWithoutPlaintextPreferences() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val token = "bg1.credential-key.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO12"
-        val store = DeviceCredentialStore(context)
+        val testKey = SecretKeySpec(ByteArray(32) { it.toByte() }, "AES")
+        val store = DeviceCredentialStore(context) { testKey }
 
         store.clear()
         store.save(token)
