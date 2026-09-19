@@ -18,7 +18,7 @@ class BankCollectorApplication : Application() {
                         TransportResult(null, networkFailure = true)
                 }
             } else {
-                HttpBankTransport(url)
+                HttpBankTransport(url, KeystoreAuthHeaderProvider(this))
             }
         }
 }

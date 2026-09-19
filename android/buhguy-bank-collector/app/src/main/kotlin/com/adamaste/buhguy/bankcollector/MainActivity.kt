@@ -7,6 +7,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.text.InputType
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
@@ -29,12 +30,28 @@ class MainActivity : AppCompatActivity() {
         val server = EditText(this).apply { hint = "Server URL (HTTPS for production)"; setText(preferences.serverUrl()) }
         val source = EditText(this).apply { hint = "sourceKey"; setText(preferences.sourceKey()) }
         val packages = EditText(this).apply { hint = "Allowed bank package names, comma-separated"; setText(preferences.allowedPackages().joinToString(",")) }
+        val credentialStore = DeviceCredentialStore(this)
+        val credential = EditText(this).apply { hint = "Device credential (shown once when provisioned)"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        val credentialStatus = TextView(this).apply { text = if (credentialStore.isConfigured()) "Device credential configured" else "Device credential not configured" }
         layout.addView(server)
         layout.addView(source)
         layout.addView(packages)
+        layout.addView(credential)
+        layout.addView(credentialStatus)
         layout.addView(Button(this).apply {
             text = "Save configuration"
-            setOnClickListener { preferences.save(server.text.toString(), source.text.toString(), packages.text.toString().split(',').toSet()) }
+            setOnClickListener {
+                preferences.save(server.text.toString(), source.text.toString(), packages.text.toString().split(',').toSet())
+                if (credential.text.isNotBlank()) {
+                    credentialStore.save(credential.text.toString())
+                    credential.text?.clear()
+                    credentialStatus.text = "Device credential configured"
+                }
+            }
+        })
+        layout.addView(Button(this).apply {
+            text = "Clear device credential"
+            setOnClickListener { credentialStore.clear(); credential.text?.clear(); credentialStatus.text = "Device credential not configured" }
         })
         layout.addView(Button(this).apply {
             text = "Test connection / deliver pending"

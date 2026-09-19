@@ -37,8 +37,10 @@ class HttpBankTransport(
                 (if (statusCode in 200..299) connection.inputStream else connection.errorStream)
                     ?.bufferedReader()?.use { it.readText() }
             }.getOrNull()
-            val serverStatus = body?.let { runCatching { Json.parseToJsonElement(it).jsonObject["status"]?.toString()?.trim('"') }.getOrNull() }
-            TransportResult(statusCode, serverStatus)
+            val parsed = body?.let { runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull() }
+            val serverStatus = parsed?.get("status")?.toString()?.trim('"')
+            val serverCode = parsed?.get("code")?.toString()?.trim('"')
+            TransportResult(statusCode, serverStatus, serverCode = serverCode)
         } finally {
             connection.disconnect()
         }

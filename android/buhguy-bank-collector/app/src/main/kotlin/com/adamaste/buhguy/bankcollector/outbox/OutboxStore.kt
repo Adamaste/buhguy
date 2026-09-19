@@ -37,6 +37,9 @@ interface OutboxDao {
     @Query("UPDATE bank_notification_outbox SET retryCount = retryCount + 1, lastError = :error WHERE id = :id")
     suspend fun markRetry(id: Long, error: String)
 
+    @Query("UPDATE bank_notification_outbox SET lastError = :error WHERE id = :id")
+    suspend fun markPendingIssue(id: Long, error: String)
+
     @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'PENDING'")
     suspend fun pendingCount(): Int
 }
