@@ -13,3 +13,8 @@ export class AuthRequiredError extends ReceiptCollectorError {}
 export class CaptchaRequiredError extends ReceiptCollectorError {}
 export class SmsRequiredError extends ReceiptCollectorError {}
 export class SessionExpiredError extends ReceiptCollectorError {}
+export class SchemaMigrationRequiredError extends ReceiptCollectorError {
+  constructor() {
+    super('Database schema is not current; run administrative migration before starting runtime.', { code: 'SCHEMA_MIGRATION_REQUIRED' });
+  }
+}

@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } from './fiscal-evidence.js';
 import { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from './fiscal-errors.js';
 import { FnsSourceObservationConflictError } from './multi-user-errors.js';
+import { SchemaMigrationRequiredError } from './errors.js';
 
 export function createPool(config = {}) {
   const connectionString = config.connectionString ?? process.env.DATABASE_URL;
@@ -21,6 +22,19 @@ export async function migrate(pool, migrationsDir = path.join(process.cwd(), 'db
     try { await client.query('BEGIN'); await client.query(await fs.readFile(path.join(migrationsDir, filename), 'utf8')); await client.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]); await client.query('COMMIT'); }
     catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
+}
+
+export async function assertSchemaCurrent(pool, migrationsDir = path.join(process.cwd(), 'db', 'migrations')) {
+  let applied;
+  try {
+    applied = new Set((await pool.query('SELECT filename FROM schema_migrations')).rows.map((row) => row.filename));
+  } catch (error) {
+    if (error?.code === '42P01' || error?.code === '42501') throw new SchemaMigrationRequiredError();
+    throw error;
+  }
+  const expected = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
+  if (expected.some((filename) => !applied.has(filename))) throw new SchemaMigrationRequiredError();
+  return { ok: true, migrations: expected.length };
 }
 
 export class ReceiptRepository {

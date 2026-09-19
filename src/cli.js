@@ -8,7 +8,7 @@ import { FnsClient } from './fns-client.js';
 import { createLogger } from './logger.js';
 import { SessionStore } from './session-store.js';
 import { CaptchaRequiredError, ReceiptCollectorError, SessionExpiredError } from './errors.js';
-import { createPool, migrate, ReceiptRepository } from './database.js';
+import { assertSchemaCurrent, createPool, migrate, ReceiptRepository } from './database.js';
 import { syncReceipts } from './sync.js';
 import { backfillNormalization, normalizeAndStoreReceipt, rebuildNormalization } from './fiscal-normalization.js';
 import { validateBusinessEventGraph, BusinessEventGraphRepository } from './business-event-graph.js';
@@ -344,7 +344,7 @@ export async function main(argv = process.argv.slice(2), {
         store,
         repository: { ensureSource: async (source) => {
           const pool = createPool();
-          try { await migrate(pool); return await new ReceiptRepository(pool).ensureSource(source); } finally { await pool.end(); }
+          try { await assertSchemaCurrent(pool); return await new ReceiptRepository(pool).ensureSource(source); } finally { await pool.end(); }
         } },
         displayName: nameOrSource,
         sessionDir: path.join(stateDir, identity.sourceKey),
@@ -399,7 +399,7 @@ export async function main(argv = process.argv.slice(2), {
     }
     if (subcommand === 'disable') {
       const pool = createPool();
-      try { await migrate(pool); const result = await disableOnboarding({ store, repository: new ReceiptRepository(pool), nameOrSource, configPath }); printJson({ ok: true, user: { displayName: result.displayName, sourceKey: result.sourceKey, state: result.state, disabled: true } }); return 0; } finally { await pool.end(); }
+      try { await assertSchemaCurrent(pool); const result = await disableOnboarding({ store, repository: new ReceiptRepository(pool), nameOrSource, configPath }); printJson({ ok: true, user: { displayName: result.displayName, sourceKey: result.sourceKey, state: result.state, disabled: true } }); return 0; } finally { await pool.end(); }
     }
     if (subcommand === 'retry') {
       const user = await store.find(nameOrSource);
@@ -420,7 +420,7 @@ export async function main(argv = process.argv.slice(2), {
       if (user.state === ONBOARDING_STATES.PARTIAL_ENABLEMENT) {
         const pool = createPool();
         try {
-          await migrate(pool);
+          await assertSchemaCurrent(pool);
           const result = await disableOnboarding({ store, repository: new ReceiptRepository(pool), nameOrSource, configPath });
           printJson({ ok: true, action: 'RECONCILE_DISABLED', state: result.state, active: false });
           return 0;
@@ -441,14 +441,14 @@ export async function main(argv = process.argv.slice(2), {
       if (!user) throw new ReceiptCollectorError('Onboarding user/source not found');
       if (![ONBOARDING_STATES.ACTIVE, ONBOARDING_STATES.DISABLED].includes(user.state)) throw new ReceiptCollectorError('Enable requires ACTIVE or DISABLED onboarding state');
       const pool = createPool();
-      try { await migrate(pool); const sourceStore = new SessionStore({ stateDir: user.sessionDir }); const sourceState = await sourceStore.load(); if (!sourceState.accessToken || !sourceState.refreshToken) throw new ReceiptCollectorError('Enable requires a healthy saved session'); await new FnsClient({ sessionStore: sourceStore, logger }).refreshSession(sourceState); await new ReceiptRepository(pool).ensureSource({ scopeKey: 'default', sourceKey: user.sourceKey, displayName: user.displayName, sessionRef: `filesystem:${user.sessionDir}/session.json`, deviceRef: `filesystem:${user.sessionDir}/device.json`, personKey: user.personKey, personDisplayName: user.displayName, enabled: true }); if (configPath) await updateSourceConfigAtomic({ configPath, source: { sourceKey: user.sourceKey, displayName: user.displayName, scopeKey: 'default', personKey: user.personKey, personDisplayName: user.displayName, sessionDir: user.sessionDir, sessionRef: `filesystem:${user.sessionDir}/session.json`, deviceRef: `filesystem:${user.sessionDir}/device.json` }, enabled: true }); printJson({ ok: true, sourceKey: user.sourceKey, enabled: true }); return 0; } finally { await pool.end(); }
+        try { await assertSchemaCurrent(pool); const sourceStore = new SessionStore({ stateDir: user.sessionDir }); const sourceState = await sourceStore.load(); if (!sourceState.accessToken || !sourceState.refreshToken) throw new ReceiptCollectorError('Enable requires a healthy saved session'); await new FnsClient({ sessionStore: sourceStore, logger }).refreshSession(sourceState); await new ReceiptRepository(pool).ensureSource({ scopeKey: 'default', sourceKey: user.sourceKey, displayName: user.displayName, sessionRef: `filesystem:${user.sessionDir}/session.json`, deviceRef: `filesystem:${user.sessionDir}/device.json`, personKey: user.personKey, personDisplayName: user.displayName, enabled: true }); if (configPath) await updateSourceConfigAtomic({ configPath, source: { sourceKey: user.sourceKey, displayName: user.displayName, scopeKey: 'default', personKey: user.personKey, personDisplayName: user.displayName, sessionDir: user.sessionDir, sessionRef: `filesystem:${user.sessionDir}/session.json`, deviceRef: `filesystem:${user.sessionDir}/device.json` }, enabled: true }); printJson({ ok: true, sourceKey: user.sourceKey, enabled: true }); return 0; } finally { await pool.end(); }
     }
     if (subcommand === 'finish') {
       const user = await store.find(nameOrSource);
       if (!user) throw new ReceiptCollectorError('Onboarding user/source not found');
       const pool = createPool();
       try {
-        await migrate(pool);
+        await assertSchemaCurrent(pool);
         const repository = new ReceiptRepository(pool);
         const sourceRow = await repository.ensureSource({ scopeKey: 'default', sourceKey: user.sourceKey, displayName: user.displayName, sessionRef: `filesystem:${user.sessionDir}/session.json`, deviceRef: `filesystem:${user.sessionDir}/device.json`, personKey: user.personKey, personDisplayName: user.displayName, enabled: false });
         const sourceStore = new SessionStore({ stateDir: user.sessionDir });
@@ -523,6 +523,7 @@ export async function main(argv = process.argv.slice(2), {
   if (command === 'bank-device') {
     const pool = createPool();
     try {
+      await assertSchemaCurrent(pool);
       return await runBankDeviceCommand(args, { pool });
     } finally { await pool.end(); }
   }
@@ -530,6 +531,7 @@ export async function main(argv = process.argv.slice(2), {
   if (command === 'bank-source') {
     const pool = createPool();
     try {
+      await assertSchemaCurrent(pool);
       return await runBankSourceCommand(args, { pool });
     } finally { await pool.end(); }
   }
@@ -563,7 +565,7 @@ export async function main(argv = process.argv.slice(2), {
   if (command === 'sync') {
     const pool = createPool();
     try {
-      await migrate(pool);
+      await assertSchemaCurrent(pool);
       const repository = new ReceiptRepository(pool);
       const boundedRefreshEnabled = Boolean(args['persist-matcher'] || args['persist-return-refund']);
       const cycle = await runSourceSyncCycle({
@@ -601,7 +603,7 @@ export async function main(argv = process.argv.slice(2), {
   if (command === 'normalize') {
     const pool = createPool();
     try {
-      await migrate(pool);
+      await assertSchemaCurrent(pool);
       const result = args.rebuild ? await rebuildNormalization(pool) : await backfillNormalization(pool);
       printJson({ ok: true, ...result });
       return result.blocked || result.unsupported ? 2 : 0;
@@ -613,7 +615,7 @@ export async function main(argv = process.argv.slice(2), {
     if (subcommand !== 'catch-up') throw new ReceiptCollectorError('Accounting command must be catch-up');
     const pool = createPool();
     try {
-      await migrate(pool);
+      await assertSchemaCurrent(pool);
       const result = await runAccountingCatchup(pool, { scopeKey: args['scope-key'] ?? 'default', logger });
       printJson({ ok: true, scopeKey: args['scope-key'] ?? 'default', ...summarizeAccountingCatchup(result) });
       return 0;
