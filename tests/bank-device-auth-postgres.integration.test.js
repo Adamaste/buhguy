@@ -30,6 +30,21 @@ integration('bank device auth binds credentials, preserves dedup and enforces HT
     const event = { sourceKey, sourceEventId: 'http-event-1', observedAt: '2026-09-19T10:00:00Z', eventTime: '2026-09-19T09:59:00Z', payload: { amount: '12.50', currency: 'RUB', direction: 'DEBIT' }, ingestionMetadata: { adapter: 'test', schemaVersion: '1' } };
     const headers = { authorization: `Bearer ${credential.token}`, 'content-type': 'application/json' };
     try {
+      async function authFailure(token) {
+        const response = await fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(event) });
+        return { status: response.status, body: await response.text() };
+      }
+      const invalidSecret = `${credential.token.slice(0, -1)}${credential.token.endsWith('A') ? 'B' : 'A'}`;
+      const invalidResult = await authFailure(invalidSecret);
+      assert.deepEqual(invalidResult, { status: 401, body: '{"status":"unauthorized","code":"AUTHENTICATION_FAILED"}' });
+      await pool.query('UPDATE bank_device_credentials SET enabled=FALSE WHERE credential_key=$1', [credential.credential_key]);
+      const disabledCredentialResult = await authFailure(credential.token);
+      assert.deepEqual(disabledCredentialResult, invalidResult);
+      await pool.query('UPDATE bank_device_credentials SET enabled=TRUE WHERE credential_key=$1', [credential.credential_key]);
+      await pool.query('UPDATE bank_sources SET enabled=FALSE WHERE source_key=$1', [sourceKey]);
+      const disabledSourceResult = await authFailure(credential.token);
+      assert.deepEqual(disabledSourceResult, invalidResult);
+      await pool.query('UPDATE bank_sources SET enabled=TRUE WHERE source_key=$1', [sourceKey]);
       const invalid = await fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers, body: '{"sourceKey":' });
       assert.equal(invalid.status, 400);
       const wrongContentType = await fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers: { ...headers, 'content-type': 'text/plain' }, body: '{}' });
@@ -44,9 +59,11 @@ integration('bank device auth binds credentials, preserves dedup and enforces HT
       assert.equal(mismatch.status, 403);
       const oversized = await fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers, body: JSON.stringify({ ...event, payload: { text: 'x'.repeat(40 * 1024) } }) });
       assert.equal(oversized.status, 413);
+      await revokeBankDeviceCredential(pool, credential.credential_key);
+      const revokedResult = await authFailure(credential.token);
+      assert.deepEqual(revokedResult, invalidResult);
     } finally { await new Promise((resolve) => server.close(resolve)); }
 
-    await revokeBankDeviceCredential(pool, credential.credential_key);
     assert.equal((await authenticateBankDevice(pool, credential.token)).ok, false);
     const observations = await pool.query('SELECT count(*)::int AS count FROM bank_event_observations WHERE source_event_id=$1', ['http-event-1']);
     assert.equal(observations.rows[0].count, 1);

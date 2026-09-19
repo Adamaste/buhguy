@@ -24,3 +24,38 @@ test('health and HTTP rejection contract do not expose internals', async () => {
     assert.equal(media.status, 415);
   });
 });
+
+test('HTTP infrastructure failures are generic and do not expose database details', async () => {
+  const pool = { query: async () => { throw new Error('secret SQL, stack and DATABASE_URL must not escape'); } };
+  await withServer(pool, async (base) => {
+    const response = await fetch(`${base}/api/v1/bank/events`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer bg1.credential-key.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO12', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(response.status, 500);
+    const body = await response.text();
+    assert.equal(body, '{"status":"error","code":"INTERNAL_ERROR"}');
+    assert.doesNotMatch(body, /secret SQL|DATABASE_URL|stack|bg1\./i);
+  });
+});
+
+test('HTTP rejects disabled and invalid credentials with the same generic response', async () => {
+  const rows = {
+    'invalid-key': { id: 1, secret_hash: '0'.repeat(64), enabled: true, revoked_at: null, bank_source_id: 1, source_key: 'android', source_enabled: true },
+    'revoked-key': { id: 1, secret_hash: '0'.repeat(64), enabled: true, revoked_at: 'now', bank_source_id: 1, source_key: 'android', source_enabled: true },
+    'disabled-key': { id: 1, secret_hash: '0'.repeat(64), enabled: false, revoked_at: null, bank_source_id: 1, source_key: 'android', source_enabled: true },
+    'source-key': { id: 1, secret_hash: '0'.repeat(64), enabled: true, revoked_at: null, bank_source_id: 1, source_key: 'android', source_enabled: false },
+  };
+  const pool = { query: async (_sql, [key]) => ({ rows: [rows[key] ?? rows.invalid], rowCount: 1 }) };
+  await withServer(pool, async (base) => {
+    const request = (key) => fetch(`${base}/api/v1/bank/events`, {
+      method: 'POST',
+      headers: { authorization: `Bearer bg1.${key}.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO12`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const responses = await Promise.all(['invalid-key', 'revoked-key', 'disabled-key', 'source-key'].map(request));
+    const bodies = await Promise.all(responses.map(async (response) => ({ status: response.status, body: await response.text() })));
+    assert.deepEqual(bodies, bodies.map(() => ({ status: 401, body: '{"status":"unauthorized","code":"AUTHENTICATION_FAILED"}' })));
+  });
+});

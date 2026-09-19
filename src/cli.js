@@ -75,6 +75,27 @@ function toNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+export async function runBankDeviceCommand(args, { pool, write = printJson } = {}) {
+  const subcommand = args._[0];
+  if (subcommand === 'create') {
+    const sourceKey = args['source-key'] || args._[1];
+    const displayName = args['display-name'] || args._[2] || 'Android bank device';
+    const credential = await createBankDeviceCredential(pool, { sourceKey, displayName });
+    write({ ok: true, message: 'Device credential created. Token cannot be shown again.', source: sourceKey, credentialKey: credential.credential_key, token: credential.token });
+    return 0;
+  }
+  if (subcommand === 'list') {
+    write({ credentials: await listBankDeviceCredentials(pool) });
+    return 0;
+  }
+  if (subcommand === 'revoke') {
+    const credentialKey = args['credential-key'] || args._[1];
+    write({ ok: true, credential: await revokeBankDeviceCredential(pool, credentialKey) });
+    return 0;
+  }
+  throw new ReceiptCollectorError('Bank device command must be create, list or revoke');
+}
+
 export function normalizePhone(value) {
   const phone = String(value ?? '').replace(/[^\d+]/g, '');
   if (phone.startsWith('+7')) {
@@ -475,27 +496,9 @@ export async function main(argv = process.argv.slice(2), {
   }
 
   if (command === 'bank-device') {
-    const subcommand = args._[0];
     const pool = createPool();
     try {
-      await migrate(pool);
-      if (subcommand === 'create') {
-        const sourceKey = args['source-key'] || args._[1];
-        const displayName = args['display-name'] || args._[2] || 'Android bank device';
-        const credential = await createBankDeviceCredential(pool, { sourceKey, displayName });
-        printJson({ ok: true, message: 'Device credential created. Token cannot be shown again.', source: sourceKey, credentialKey: credential.credential_key, token: credential.token });
-        return 0;
-      }
-      if (subcommand === 'list') {
-        printJson({ credentials: await listBankDeviceCredentials(pool) });
-        return 0;
-      }
-      if (subcommand === 'revoke') {
-        const credentialKey = args['credential-key'] || args._[1];
-        printJson({ ok: true, credential: await revokeBankDeviceCredential(pool, credentialKey) });
-        return 0;
-      }
-      throw new ReceiptCollectorError('Bank device command must be create, list or revoke');
+      return await runBankDeviceCommand(args, { pool });
     } finally { await pool.end(); }
   }
 

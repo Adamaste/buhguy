@@ -8,6 +8,13 @@ Bank transactions remain separate from receipts, purchases, payer proof and ledg
 
 ## Provisioning
 
+Migration `011_bank_device_credentials.sql` is a deployment-time step and must be
+applied before the service or the CLI is started. The long-running ingestion
+service and `bank-device create/list/revoke` use only the prepared schema and
+require DML access to the approved tables; they do not run migrations at
+runtime. Run them with a minimal-privilege runtime role that has no DDL,
+ownership, or schema-management privileges.
+
 Create a credential for an existing enabled or disabled bank source:
 
 ```text
