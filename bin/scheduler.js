@@ -1,4 +1,4 @@
-import { createPool, migrate, ReceiptRepository } from '../src/database.js';
+import { assertSchemaCurrent, createPool, ReceiptRepository } from '../src/database.js';
 import { FnsClient } from '../src/fns-client.js';
 import { SessionStore } from '../src/session-store.js';
 import { syncReceipts } from '../src/sync.js';
@@ -21,7 +21,7 @@ async function runOnce() {
   } finally { running = false; }
 }
 
-await migrate(pool);
+await assertSchemaCurrent(pool);
 await runOnce();
 const timer = setInterval(runOnce, intervalMs);
 

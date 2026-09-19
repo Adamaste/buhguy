@@ -2,7 +2,7 @@ export { FnsClient } from './fns-client.js';
 export { SessionStore } from './session-store.js';
 export { normalizeItems, normalizeOperationType, normalizeReceiptDetail, normalizeReceiptListItem } from './normalize.js';
 export { syncReceipts } from './sync.js';
-export { createPool, migrate, ReceiptRepository } from './database.js';
+export { assertSchemaCurrent, createPool, migrate, ReceiptRepository } from './database.js';
 export { canonicalizeFiscalContent, fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } from './fiscal-evidence.js';
 export { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from './fiscal-errors.js';
 export { FnsSourceObservationConflictError } from './multi-user-errors.js';
