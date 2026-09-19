@@ -17,7 +17,7 @@ interface BankTransport {
     suspend fun send(eventJson: String): TransportResult
 }
 
-data class TransportResult(val httpStatus: Int?, val serverStatus: String? = null, val networkFailure: Boolean = false)
+data class TransportResult(val httpStatus: Int?, val serverStatus: String? = null, val networkFailure: Boolean = false, val serverCode: String? = null)
 
 class BankDeliveryWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -26,7 +26,7 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
         for (entity in database.outbox().pending(50)) {
             val result = runCatching { transport.send(entity.eventJson) }
                 .getOrElse { error -> transportFailureResult(error) }
-            when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus)) {
+            when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus, result.serverCode)) {
                 DeliveryDecision.Sent -> {
                     database.outbox().setStatus(entity.id, "SENT")
                     com.adamaste.buhguy.bankcollector.AppPreferences(applicationContext).markSuccessfulDelivery(Instant.now().toString())
@@ -35,6 +35,11 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
                 is DeliveryDecision.PermanentlyRejected -> {
                     database.outbox().setStatus(entity.id, "PERMANENTLY_REJECTED", decision.reason)
                     Log.w("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=REJECTED http=${result.httpStatus}")
+                }
+                is DeliveryDecision.PreservePending -> {
+                    database.outbox().markPendingIssue(entity.id, decision.reason)
+                    Log.w("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=PENDING reason=${decision.reason}")
+                    return Result.success()
                 }
                 DeliveryDecision.Retry -> {
                     database.outbox().markRetry(entity.id, "transient delivery failure")

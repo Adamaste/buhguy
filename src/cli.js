@@ -24,6 +24,7 @@ import { runSourceSyncCycle } from './source-sync-cycle.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
+import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -160,7 +161,7 @@ export async function main(argv = process.argv.slice(2), {
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     printJson({
-      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage>',
+      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device>',
       examples: [
         'receipt-collector login',
         'receipt-collector list',
@@ -471,6 +472,31 @@ export async function main(argv = process.argv.slice(2), {
       } finally { await pool.end(); }
     }
     throw new ReceiptCollectorError('fns-user command must be add, import-profile, finish, status, retry, disable or enable');
+  }
+
+  if (command === 'bank-device') {
+    const subcommand = args._[0];
+    const pool = createPool();
+    try {
+      await migrate(pool);
+      if (subcommand === 'create') {
+        const sourceKey = args['source-key'] || args._[1];
+        const displayName = args['display-name'] || args._[2] || 'Android bank device';
+        const credential = await createBankDeviceCredential(pool, { sourceKey, displayName });
+        printJson({ ok: true, message: 'Device credential created. Token cannot be shown again.', source: sourceKey, credentialKey: credential.credential_key, token: credential.token });
+        return 0;
+      }
+      if (subcommand === 'list') {
+        printJson({ credentials: await listBankDeviceCredentials(pool) });
+        return 0;
+      }
+      if (subcommand === 'revoke') {
+        const credentialKey = args['credential-key'] || args._[1];
+        printJson({ ok: true, credential: await revokeBankDeviceCredential(pool, credentialKey) });
+        return 0;
+      }
+      throw new ReceiptCollectorError('Bank device command must be create, list or revoke');
+    } finally { await pool.end(); }
   }
 
   if (command === 'show') {
