@@ -16,7 +16,7 @@ class DeviceCredentialStoreTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val token = "bg1.credential-key.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO12"
         val testKey = SecretKeySpec(ByteArray(32) { it.toByte() }, "AES")
-        val store = DeviceCredentialStore(context) { testKey }
+        val store = DeviceCredentialStore(context, testKeyProvider = { testKey })
 
         store.clear()
         store.save(token)
