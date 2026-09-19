@@ -24,7 +24,10 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
         val transport = AppRuntime.transport(applicationContext)
         for (entity in database.outbox().pending(50)) {
             val result = runCatching { transport.send(entity.eventJson) }
-                .getOrElse { TransportResult(null, networkFailure = true) }
+                .getOrElse { error ->
+                    if (error is TransportConfigurationException) TransportResult(400, "rejected")
+                    else TransportResult(null, networkFailure = true)
+                }
             when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus)) {
                 DeliveryDecision.Sent -> {
                     database.outbox().setStatus(entity.id, "SENT")

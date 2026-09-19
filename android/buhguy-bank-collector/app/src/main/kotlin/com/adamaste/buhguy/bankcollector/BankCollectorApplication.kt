@@ -13,7 +13,7 @@ class BankCollectorApplication : Application() {
         get() {
         val url = AppPreferences(this).serverUrl()
         if (url.isBlank()) object : BankTransport {
-            override suspend fun send(eventJson: String): TransportResult = TransportResult(null, networkFailure = true)
+            override suspend fun send(eventJson: String): TransportResult = TransportResult(400, "rejected")
         } else HttpBankTransport(url)
         }
 }

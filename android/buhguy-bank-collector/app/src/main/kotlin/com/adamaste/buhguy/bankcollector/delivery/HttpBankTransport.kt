@@ -9,6 +9,8 @@ interface AuthHeaderProvider {
     fun authorizationHeader(): String?
 }
 
+class TransportConfigurationException(message: String) : IllegalArgumentException(message)
+
 class NoAuthHeaderProvider : AuthHeaderProvider {
     override fun authorizationHeader(): String? = null
 }
@@ -19,7 +21,7 @@ class HttpBankTransport(
 ) : BankTransport {
     override suspend fun send(eventJson: String): TransportResult {
         val uri = URI(serverUrl)
-        require(uri.scheme == "https") { "Production bank delivery requires HTTPS" }
+        if (uri.scheme != "https") throw TransportConfigurationException("Production bank delivery requires HTTPS")
         val connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15_000
