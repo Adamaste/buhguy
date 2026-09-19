@@ -28,13 +28,13 @@ integration('Ledger V1 clone persist, idempotency, concurrency and rollback', { 
   }
 });
 
-integration('bounded refresh rejects deleting a certified ledger entry', { concurrency: false }, async () => {
+integration('identical certified bounded refresh preserves ledger identity', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl });
-  let scopeId;
-  let eventId;
-  let receiptId;
-  let ledgerEntryId;
-  let runId;
+  let scopeId = null;
+  let eventId = null;
+  let receiptId = null;
+  let ledgerEntryId = null;
+  let runId = null;
   try {
     await pool.query('BEGIN');
     const scope = (await pool.query("INSERT INTO accounting_scopes(scope_key,label) VALUES('bounded-certified-refresh','fixture') RETURNING id")).rows[0];
@@ -51,21 +51,32 @@ integration('bounded refresh rejects deleting a certified ledger entry', { concu
     const run = (await pool.query("INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status) VALUES($1,'certification-v1',repeat('c',64),'READY') RETURNING id", [scope.id])).rows[0];
     runId = Number(run.id);
     await pool.query("INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,semantic_key,source_state_key) VALUES($1,$2,'LEDGER_ENTRY',$3,'FIXTURE','BUSINESS_CERTIFICATION','CERTIFIED',10,'RUB',NOW(),'FIXTURE','STANDALONE_PURCHASE_V1','v1',$3,$4,repeat('d',64),repeat('c',64))", [run.id,scope.id,ledgerEntryId,event.id]);
-    await assert.rejects(
-      () => refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId }),
-      (error) => error.code === '23503',
-    );
+    const snapshot = async () => ({
+      entry: (await pool.query('SELECT id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description FROM ledger_entries WHERE id=$1', [ledgerEntryId])).rows,
+      postings: (await pool.query('SELECT p.id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id WHERE p.ledger_entry_id=$1 ORDER BY p.id', [ledgerEntryId])).rows,
+      links: (await pool.query('SELECT id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [ledgerEntryId])).rows,
+      certification: (await pool.query('SELECT id,run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE ledger_entry_id=$1 ORDER BY id', [ledgerEntryId])).rows,
+    });
+    const before = await snapshot();
+    const result = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
+    assert.equal(result.bounded, true);
+    assert.equal(result.changed, false);
+    const after = await snapshot();
+    assert.deepEqual(after, before);
+    assert.equal(Number(after.entry[0]?.id), ledgerEntryId);
   } finally {
-    await pool.query('DELETE FROM certification_facts WHERE run_id=$1', [runId]);
-    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [runId]);
-    await pool.query('DELETE FROM ledger_source_links WHERE ledger_entry_id=$1', [ledgerEntryId]);
-    await pool.query('DELETE FROM ledger_postings WHERE ledger_entry_id=$1', [ledgerEntryId]);
-    await pool.query('DELETE FROM ledger_entries WHERE id=$1', [ledgerEntryId]);
-    await pool.query('DELETE FROM business_event_evidence WHERE event_id=$1', [eventId]);
-    await pool.query('DELETE FROM business_events WHERE id=$1', [eventId]);
-    await pool.query('DELETE FROM receipt_fiscal_facts WHERE receipt_id=$1', [receiptId]);
-    await pool.query('DELETE FROM receipts WHERE id=$1', [receiptId]);
-    await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [scopeId]);
+    await pool.query('ROLLBACK').catch(() => {});
+    if (runId !== null) await pool.query('DELETE FROM certification_facts WHERE run_id=$1', [runId]);
+    if (runId !== null) await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [runId]);
+    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_source_links WHERE ledger_entry_id=$1', [ledgerEntryId]);
+    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_postings WHERE ledger_entry_id=$1', [ledgerEntryId]);
+    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_entries WHERE id=$1', [ledgerEntryId]);
+    if (scopeId !== null) await pool.query('DELETE FROM ledger_accounts WHERE scope_id=$1', [scopeId]);
+    if (eventId !== null) await pool.query('DELETE FROM business_event_evidence WHERE event_id=$1', [eventId]);
+    if (eventId !== null) await pool.query('DELETE FROM business_events WHERE id=$1', [eventId]);
+    if (receiptId !== null) await pool.query('DELETE FROM receipt_fiscal_facts WHERE receipt_id=$1', [receiptId]);
+    if (receiptId !== null) await pool.query('DELETE FROM receipts WHERE id=$1', [receiptId]);
+    if (scopeId !== null) await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [scopeId]);
     await pool.end();
   }
 });
