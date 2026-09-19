@@ -1,0 +1,47 @@
+package com.adamaste.buhguy.bankcollector
+
+import com.adamaste.buhguy.bankcollector.config.BankProviderConfig
+import com.adamaste.buhguy.bankcollector.config.BankProviderRegistry
+import com.adamaste.buhguy.bankcollector.delivery.DeliveryDecision
+import com.adamaste.buhguy.bankcollector.delivery.deliveryDecision
+import com.adamaste.buhguy.bankcollector.notification.NotificationEventMapper
+import com.adamaste.buhguy.bankcollector.notification.NotificationCapture
+import com.adamaste.buhguy.bankcollector.notification.NotificationSnapshot
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Test
+
+class BankCollectorCoreTest {
+    private val registry = BankProviderRegistry(listOf(BankProviderConfig("demo", "Demo", setOf("com.demo.bank"))))
+    private val mapper = NotificationEventMapper(registry, "android-demo")
+    private val snapshot = NotificationSnapshot("com.demo.bank", "key", 7, "tag", 1000L, "Payment", "100 RUB", null, null)
+
+    @Test fun unknownPackageIsIgnored() = assertEquals(null, mapper.map(snapshot.copy(packageName = "com.other.app")))
+
+    @Test fun sameNotificationHasStableIdAndDifferentNotificationDoesNot() {
+        assertEquals(mapper.deterministicSourceEventId(snapshot), mapper.deterministicSourceEventId(snapshot))
+        assertNotEquals(mapper.deterministicSourceEventId(snapshot), mapper.deterministicSourceEventId(snapshot.copy(postTime = 2000L)))
+    }
+
+    @Test fun payloadContainsOnlyMinimizedFields() {
+        val event = mapper.map(snapshot)!!
+        assertEquals(setOf("title", "text"), event.payload.keys)
+        assertEquals("android-notification", event.ingestionMetadata["adapter"])
+    }
+
+    @Test fun allowlistedNotificationIsCapturedAndRetryReusesSameEventId() {
+        val capture = NotificationCapture(mapper)
+        val first = capture.capture(snapshot)!!
+        val retry = capture.capture(snapshot)!!
+        assertEquals(first.sourceEventId, retry.sourceEventId)
+        assertEquals(first.packageName, "com.demo.bank")
+    }
+
+    @Test fun deliveryPolicyClassifiesOutcomes() {
+        assertEquals(DeliveryDecision.Sent, deliveryDecision(201, false, "created"))
+        assertEquals(DeliveryDecision.Sent, deliveryDecision(200, false, "duplicate"))
+        assertEquals(DeliveryDecision.Retry, deliveryDecision(500, false))
+        assertEquals(DeliveryDecision.Retry, deliveryDecision(null, true))
+        assertEquals(DeliveryDecision.PermanentlyRejected("HTTP_400"), deliveryDecision(400, false))
+    }
+}
