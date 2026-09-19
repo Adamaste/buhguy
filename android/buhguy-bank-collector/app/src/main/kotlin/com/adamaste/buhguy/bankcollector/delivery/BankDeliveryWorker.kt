@@ -24,10 +24,7 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
         val transport = AppRuntime.transport(applicationContext)
         for (entity in database.outbox().pending(50)) {
             val result = runCatching { transport.send(entity.eventJson) }
-                .getOrElse { error ->
-                    if (error is TransportConfigurationException) TransportResult(400, "rejected")
-                    else TransportResult(null, networkFailure = true)
-                }
+                .getOrElse { error -> transportFailureResult(error) }
             when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus)) {
                 DeliveryDecision.Sent -> {
                     database.outbox().setStatus(entity.id, "SENT")
@@ -48,6 +45,8 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
         return Result.success()
     }
 }
+
+fun transportFailureResult(_error: Throwable): TransportResult = TransportResult(null, networkFailure = true)
 
 object AppRuntime {
     fun database(context: Context): com.adamaste.buhguy.bankcollector.outbox.CollectorDatabase = (context.applicationContext as BankCollectorApplication).database

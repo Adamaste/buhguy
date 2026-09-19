@@ -17,7 +17,13 @@ class BankProviderRegistry(configs: List<BankProviderConfig>) {
 
     companion object {
         fun fromPackageAllowlist(packageNames: Set<String>): BankProviderRegistry = BankProviderRegistry(
-            listOf(BankProviderConfig("configured", "Configured bank", packageNames)),
+            packageNames.sorted().map { packageName ->
+                BankProviderConfig(
+                    providerKey = packageName,
+                    displayName = packageName,
+                    packageNames = setOf(packageName),
+                )
+            },
         )
     }
 }
