@@ -15,7 +15,7 @@ integration('runtime schema gate works with a role that has no public CREATE pri
   let runtime;
   try {
     await migrate(admin);
-    await admin.query(`CREATE ROLE ${quotedRole} LOGIN PASSWORD $1`, [password]);
+    await admin.query(`CREATE ROLE ${quotedRole} LOGIN PASSWORD '${password}'`);
     await admin.query(`GRANT USAGE ON SCHEMA public TO ${quotedRole}`);
     await admin.query(`GRANT SELECT ON TABLE schema_migrations TO ${quotedRole}`);
     await admin.query(`REVOKE CREATE ON SCHEMA public FROM ${quotedRole}`);
