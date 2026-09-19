@@ -25,6 +25,7 @@ integration('runtime schema gate works with a role that has no public CREATE pri
     assert.deepEqual(await assertSchemaCurrent(runtime), { ok: true, migrations: (await admin.query('SELECT count(*)::int AS count FROM schema_migrations')).rows[0].count });
   } finally {
     await runtime?.end();
+    await admin.query(`DROP OWNED BY ${quotedRole}`);
     await admin.query(`DROP ROLE IF EXISTS ${quotedRole}`);
     await admin.end();
   }
