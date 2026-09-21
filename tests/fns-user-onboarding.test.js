@@ -686,7 +686,7 @@ test('browser launcher login phase is vanilla and import phase binds CDP to loca
   let killed;
   await writeFile(path.join(user.sessionDir, 'chromium.pid'), '7008\n');
   await stopOnboardingBrowser({ user, kill: (pid, signal) => { killed = [pid, signal]; }, isAlive: () => false });
-  assert.deepEqual(killed, [process.platform === 'win32' ? 7008 : -7008, 'SIGTERM']);
+  assert.deepEqual(killed, [7008, 'SIGTERM']);
   await rm(f.dir, { recursive: true, force: true });
 });
 

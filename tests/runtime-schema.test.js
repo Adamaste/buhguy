@@ -84,7 +84,8 @@ test('sync performs one scope-wide accounting catch-up after all sources', async
   assert.ok(syncStart >= 0 && syncEnd > syncStart, 'sync branch must be present');
   const syncBranch = cliSource.slice(syncStart, syncEnd);
   const runSourceStart = syncBranch.indexOf('runSource: async');
-  const runSourceEnd = syncBranch.indexOf('},\n      });', runSourceStart);
+  const runSourceEndMatch = syncBranch.slice(runSourceStart).match(/},\r?\n      \}\);/s);
+  const runSourceEnd = runSourceEndMatch ? runSourceStart + runSourceEndMatch.index : -1;
   assert.ok(runSourceStart >= 0 && runSourceEnd > runSourceStart, 'source runner must be present');
   const runSource = syncBranch.slice(runSourceStart, runSourceEnd);
 
