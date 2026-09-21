@@ -64,6 +64,10 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     const after = await snapshot();
     assert.deepEqual(after, before);
     assert.equal(Number(after.entry[0]?.id), ledgerEntryId);
+    const replay = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
+    assert.equal(replay.bounded, true);
+    assert.equal(replay.changed, false);
+    assert.deepEqual(await snapshot(), before);
   } finally {
     await pool.query('ROLLBACK').catch(() => {});
     if (runId !== null) await pool.query('DELETE FROM certification_facts WHERE run_id=$1', [runId]);

@@ -1,4 +1,5 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
+import { refreshCertificationForEvents } from './certification.js';
 
 export const LEDGER_MODEL_VERSION = 'ledger-v1';
 export const LEDGER_ORIGIN = 'SYSTEM_DERIVED';
@@ -204,12 +205,13 @@ async function persistEntry(tx, entry, accounts) {
   return { entryId, created: Boolean(row.created), postings: postingCount, links: linkCount };
 }
 
-export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null } = {}) {
-  const projection = await loadLedgerProjection(pool, scopeKey, eventIds);
+export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null, projection: providedProjection = null, client: transactionClient = null } = {}) {
+  const projection = providedProjection ?? await loadLedgerProjection(pool, scopeKey, eventIds);
   if (dryRun) return summarizeLedgerProjection(projection);
-  const client = await pool.connect();
+  const client = transactionClient ?? await pool.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     if (replace) {
       if (!eventIds?.length) {
         const dependency = (await client.query(`SELECT count(*)::int AS count
@@ -239,9 +241,9 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
     }
     const unbalanced = (await client.query(`SELECT count(*)::int AS count FROM (SELECT ledger_entry_id FROM ledger_postings GROUP BY ledger_entry_id HAVING SUM(debit)<>SUM(credit)) q`)).rows[0].count;
     if (Number(unbalanced) !== 0) throw new Error(`Ledger is unbalanced: ${unbalanced}`);
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return { ...summarizeLedgerProjection(projection), created, balancedViolations: Number(unbalanced) };
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
 }
 
 async function affectedEventIds(pool, scopeKey, receiptId) {
@@ -261,7 +263,46 @@ async function affectedEventIds(pool, scopeKey, receiptId) {
 export async function refreshLedgerForReceipt(pool, { scopeKey = 'default', receiptId } = {}) {
   const eventIds = await affectedEventIds(pool, scopeKey, receiptId);
   if (!eventIds.length) return { eventIds: [], created: { entries: 0, postings: 0, links: 0, blocked: 0 }, bounded: true };
-  return { ...(await rebuildLedger(pool, { scopeKey, replace: true, eventIds })), eventIds, bounded: true };
+  const projection = await loadLedgerProjection(pool, scopeKey, eventIds);
+  const scopeId = (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0]?.id;
+  const existing = (await pool.query(`SELECT id,source_event_id,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,reason_code,description
+    FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED' ORDER BY id`, [scopeId, eventIds])).rows;
+  const existingByEvent = new Map(existing.map((entry) => [String(entry.source_event_id), entry]));
+  const unchanged = existing.length === projection.entries.length
+    && projection.entries.every((entry) => {
+      const current = existingByEvent.get(String(entry.sourceEventId));
+      return current
+        && current.semantic_key === entry.semanticKey
+        && current.derivation_rule === entry.derivationRule
+        && current.derivation_version === entry.derivationVersion
+        && current.derivation_status === entry.derivationStatus
+        && current.certification_status === entry.certificationStatus
+        && current.reason_code === (entry.reasonCode ?? null)
+        && current.description === (entry.description ?? null);
+    });
+  if (unchanged) return { ...summarizeLedgerProjection(projection), eventIds, bounded: true, changed: false, created: { entries: 0, postings: 0, links: 0, blocked: 0 } };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM reconciliation_results WHERE run_id IN (
+      SELECT DISTINCT f.run_id FROM certification_facts f
+      WHERE f.ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED')
+         OR f.business_event_id=ANY($2::bigint[])
+    )`, [scopeId, eventIds]);
+    await client.query(`DELETE FROM certification_facts
+      WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED')
+         OR business_event_id=ANY($2::bigint[])`, [scopeId, eventIds]);
+    const ledger = await rebuildLedger(pool, { scopeKey, replace: true, eventIds, projection, client });
+    const certification = await refreshCertificationForEvents(pool, { scopeKey, eventIds, client });
+    await client.query('COMMIT');
+    return { ...ledger, certification, eventIds, bounded: true, changed: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function summarizeLedgerProjection(projection) {
