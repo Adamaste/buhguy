@@ -591,10 +591,10 @@ export async function main(argv = process.argv.slice(2), {
             pageSize: toNumber(args['page-size'], 50),
             logger,
           });
-          await runAccountingCatchup(pool, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', logger });
           return syncResult;
         },
       });
+      await runAccountingCatchup(pool, { scopeKey: args['scope-key'] ?? 'default', logger });
       printJson(cycle);
       return cycle.exitCode;
     } finally { await pool.end(); }

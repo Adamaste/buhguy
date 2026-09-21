@@ -101,3 +101,15 @@ test('manual/external graph assertions are outside pure matcher output', () => {
   assert.equal(Object.hasOwn(result, 'businessEvents'), false);
   assert.equal(Object.hasOwn(result, 'ledger'), false);
 });
+
+test('persistence mode does not retain forensic predicate payloads for large candidate sets', () => {
+  const rows = [];
+  for (let index = 0; index < 120; index += 1) {
+    rows.push(receipt(`pre-${index}`, `2026-01-${String((index % 20) + 1).padStart(2, '0')}T10:00:00Z`, 'PREPAYMENT_ONLY'));
+    rows.push(receipt(`set-${index}`, `2026-02-${String((index % 20) + 1).padStart(2, '0')}T10:00:00Z`, 'SETTLEMENT_ONLY', { prepaidSum: 100, cashTotalSum: 0 }));
+  }
+  const result = matchPrepaymentSettlements(rows, { retainDetails: false });
+  assert.ok(result.candidates.length > 0);
+  assert.equal(result.candidates.some((candidate) => Object.hasOwn(candidate, 'predicates')), false);
+  assert.equal(result.candidates.every((candidate) => Object.hasOwn(candidate, 'prepaymentReceiptId') && Object.hasOwn(candidate, 'settlementReceiptId')), true);
+});
