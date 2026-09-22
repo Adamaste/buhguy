@@ -6,6 +6,14 @@ const SECRET_KEYS = new Set([
   'challengeToken',
   'code',
   'phone',
+  'password',
+  'clientSecret',
+  'client_secret',
+  'secret',
+  'secretHash',
+  'secret_hash',
+  'sessionId',
+  'session_id',
 ]);
 
 function redactValue(value) {
@@ -20,14 +28,25 @@ function redactValue(value) {
   return `${value.slice(0, 2)}…[REDACTED]…${value.slice(-2)}`;
 }
 
-export function redactDeep(input) {
+export function redactDeep(input, seen = new WeakSet()) {
   if (Array.isArray(input)) {
-    return input.map(redactDeep);
+    if (seen.has(input)) {
+      return '[CIRCULAR]';
+    }
+    seen.add(input);
+    const output = input.map((value) => redactDeep(value, seen));
+    seen.delete(input);
+    return output;
   }
 
   if (!input || typeof input !== 'object') {
     return input;
   }
+
+  if (seen.has(input)) {
+    return '[CIRCULAR]';
+  }
+  seen.add(input);
 
   const output = {};
   for (const [key, value] of Object.entries(input)) {
@@ -35,27 +54,54 @@ export function redactDeep(input) {
       output[key] = redactValue(value);
       continue;
     }
-    output[key] = redactDeep(value);
+    output[key] = redactDeep(value, seen);
   }
+  seen.delete(input);
   return output;
 }
 
 export function createLogger({ silent = false } = {}) {
-  const write = (...args) => {
+  const write = (level, ...args) => {
     if (silent) {
       return;
     }
-    process.stderr.write(`${args.map((part) => {
-      if (typeof part === 'string') {
-        return part;
+
+    const [first, ...rest] = args;
+    const fields = {};
+    let event = 'log';
+
+    if (typeof first === 'string') {
+      event = first;
+    } else if (first instanceof Error) {
+      fields.message = first.message;
+      event = 'error';
+    } else if (first && typeof first === 'object' && !Array.isArray(first)) {
+      Object.assign(fields, first);
+    }
+
+    for (const part of rest) {
+      if (part instanceof Error) {
+        fields.message ??= part.message;
+      } else if (part && typeof part === 'object' && !Array.isArray(part)) {
+        Object.assign(fields, part);
+      } else if (part !== undefined) {
+        fields.message ??= String(part);
       }
-      return JSON.stringify(redactDeep(part));
-    }).join(' ')}\n`);
+    }
+
+    const record = { ...redactDeep(fields), level, event };
+    let line;
+    try {
+      line = JSON.stringify(record);
+    } catch {
+      line = JSON.stringify({ level, event: 'logger_serialization_failed' });
+    }
+    process.stderr.write(`${line}\n`);
   };
 
   return {
-    info: (...args) => write(...args),
-    warn: (...args) => write(...args),
-    error: (...args) => write(...args),
+    info: (...args) => write('info', ...args),
+    warn: (...args) => write('warn', ...args),
+    error: (...args) => write('error', ...args),
   };
 }
