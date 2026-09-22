@@ -20,6 +20,15 @@ export async function resolveSyncSources({ configFile = process.env.FNS_SOURCES_
   };
 }
 
+export function deriveAccountingCatchupScopeKeys(sources, scopeOverride = null) {
+  const scopes = new Set();
+  for (const source of sources ?? []) {
+    if (source.enabled === false) continue;
+    scopes.add(scopeOverride ?? source.scopeKey ?? 'default');
+  }
+  return [...scopes];
+}
+
 function hasFailedResult(result) {
   return Boolean(
     result?.errors
@@ -41,7 +50,7 @@ export async function runSourceSyncCycle({ repository, runSource, logger = conso
   const results = [];
   for (const source of sources) {
     if (source.enabled === false) {
-      results.push({ sourceKey: source.sourceKey, enabled: false, attempted: false, result: null });
+      results.push({ sourceKey: source.sourceKey, scopeKey: source.scopeKey ?? 'default', enabled: false, attempted: false, result: null });
       continue;
     }
     const startedAt = Date.now();
@@ -51,7 +60,7 @@ export async function runSourceSyncCycle({ repository, runSource, logger = conso
       logger.info?.('source_sync_started', { sourceId: sourceRow.id, sourceKey: source.sourceKey });
       const result = await runSource({ source, sourceRow, explicit });
       const failed = hasFailedResult(result);
-      results.push({ sourceId: sourceRow.id, sourceKey: source.sourceKey, enabled: true, attempted: true, failed, result });
+      results.push({ sourceId: sourceRow.id, sourceKey: source.sourceKey, scopeKey: source.scopeKey ?? 'default', enabled: true, attempted: true, failed, result });
       logger[failed ? 'error' : 'info']?.('source_sync_finished', {
         sourceId: sourceRow.id,
         sourceKey: source.sourceKey,
@@ -70,7 +79,7 @@ export async function runSourceSyncCycle({ repository, runSource, logger = conso
       if (sourceRow?.id) {
         await repository.updateSourceSyncState(sourceRow.id, { startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(), error: error.message, errorClass: error.code ?? error.name });
       }
-      results.push({ sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, enabled: true, attempted: true, failed: true, result: safeResult });
+      results.push({ sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, scopeKey: source.scopeKey ?? 'default', enabled: true, attempted: true, failed: true, result: safeResult });
       logger.error?.('source_sync_failed', { sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, code: error.code ?? 'SOURCE_SYNC_FAILED', error: error.message, durationMs: Date.now() - startedAt });
     }
   }

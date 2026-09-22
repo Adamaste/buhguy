@@ -268,7 +268,21 @@ export async function refreshLedgerForReceipt(pool, { scopeKey = 'default', rece
   const existing = (await pool.query(`SELECT id,source_event_id,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,reason_code,description
     FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED' ORDER BY id`, [scopeId, eventIds])).rows;
   const existingByEvent = new Map(existing.map((entry) => [String(entry.source_event_id), entry]));
+  const existingEntryIds = existing.map((entry) => Number(entry.id));
+  const existingPostings = existingEntryIds.length === 0 ? [] : (await pool.query(`SELECT p.ledger_entry_id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id
+    FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id
+    WHERE p.ledger_entry_id=ANY($1::bigint[])`, [existingEntryIds])).rows;
+  const existingLinks = existingEntryIds.length === 0 ? [] : (await pool.query(`SELECT ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role
+    FROM ledger_source_links WHERE ledger_entry_id=ANY($1::bigint[])`, [existingEntryIds])).rows;
+  const stableRows = (rows, fields) => rows.map((row) => fields.map((field) => row[field] === null || row[field] === undefined ? null : String(row[field]))).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const projectedPostings = projection.entries.flatMap((entry) => entry.postings.map((posting) => [String(entry.sourceEventId), posting.account, entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]));
+  const persistedPostings = existingPostings.map((posting) => [String(existing.find((entry) => Number(entry.id) === Number(posting.ledger_entry_id))?.source_event_id), posting.account_code, posting.currency, posting.debit, posting.credit, posting.source_allocation_id, posting.source_receipt_id]);
+  const projectedLinks = projection.entries.flatMap((entry) => entry.links.map((link) => [String(entry.sourceEventId), String(entry.sourceEventId), link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role]));
+  const persistedLinks = existingLinks.map((link) => [String(existing.find((entry) => Number(entry.id) === Number(link.ledger_entry_id))?.source_event_id), link.business_event_id, link.graph_evidence_id, link.graph_allocation_id, link.receipt_id, link.normalization_version, link.link_role]);
+  const childrenUnchanged = JSON.stringify(stableRows(persistedPostings, [0, 1, 2, 3, 4, 5, 6])) === JSON.stringify(stableRows(projectedPostings, [0, 1, 2, 3, 4, 5, 6]))
+    && JSON.stringify(stableRows(persistedLinks, [0, 1, 2, 3, 4, 5, 6])) === JSON.stringify(stableRows(projectedLinks, [0, 1, 2, 3, 4, 5, 6]));
   const unchanged = existing.length === projection.entries.length
+    && childrenUnchanged
     && projection.entries.every((entry) => {
       const current = existingByEvent.get(String(entry.sourceEventId));
       return current

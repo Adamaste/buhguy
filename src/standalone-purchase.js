@@ -92,7 +92,7 @@ async function persistCandidate(tx, row, scopeKey) {
   return { receiptId: Number(row.id), eventId: Number(event.id), evidenceId: Number(evidence.id), created: Boolean(event.created), reused: false };
 }
 
-export async function persistStandalonePurchases(pool, { scopeKey = 'default', receiptIds = null, ledgerRefresher = null, certificationRefresher = null } = {}) {
+export async function persistStandalonePurchases(pool, { scopeKey = 'default', receiptIds = null, ledgerRefresher = null } = {}) {
   const ids = receiptIds?.map((id) => Number(id)) ?? null;
   const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, ids]), graphReceiptSets(pool, scopeKey)]);
   const requested = receiptIds ? new Set(receiptIds.map((id) => String(id))) : null;
@@ -108,7 +108,7 @@ export async function persistStandalonePurchases(pool, { scopeKey = 'default', r
     if (ledgerRefresher) {
       const ledger = await ledgerRefresher(row.receiptId);
       propagation.ledger += Number(ledger?.created?.entries ?? 0);
-      if (certificationRefresher && ledger?.eventIds?.length) { await certificationRefresher(ledger.eventIds); propagation.certification += ledger.eventIds.length; }
+      propagation.certification += Number(ledger?.certification?.facts ?? 0);
     }
   }
   return { model: STANDALONE_PURCHASE_RULE, candidates: eligible.length, created: created.length, reused: persisted.filter((row) => row.reused).length, purchases: persisted, propagation };
