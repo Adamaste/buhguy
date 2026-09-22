@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadFnsSourceConfig } from '../src/fns-source-config.js';
-import { deriveAccountingCatchupScopeKeys, resolveSyncSources, runSourceSyncCycle } from '../src/source-sync-cycle.js';
+import { deriveAccountingCatchupScopeKeys, effectiveAccountingScopeKey, resolveSyncSources, runAccountingCatchupsForSources, runSourceSyncCycle } from '../src/source-sync-cycle.js';
 import { FnsSourceObservationConflictError } from '../src/multi-user-errors.js';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -126,5 +126,23 @@ test('accounting catch-up runs once per unique enabled source scope', () => {
   assert.deepEqual(deriveAccountingCatchupScopeKeys([
     { enabled: true, scopeKey: 'default' },
     { enabled: true, scopeKey: 'household-2' },
-  ], 'override'), ['override']);
+  ], 'override'), ['default', 'household-2']);
+});
+
+test('sync orchestration uses one source-first effective scope for processing and catch-up', async () => {
+  const sources = [
+    { enabled: true, sourceKey: 'default-source', scopeKey: 'default' },
+    { enabled: true, sourceKey: 'household-source', scopeKey: 'household-2' },
+    { enabled: true, sourceKey: 'duplicate-household-source', scopeKey: 'household-2' },
+    { enabled: false, sourceKey: 'disabled-source', scopeKey: 'disabled' },
+  ];
+  const processed = sources.filter((source) => source.enabled !== false).map((source) => ({ sourceKey: source.sourceKey, scopeKey: effectiveAccountingScopeKey(source, 'cli-override') }));
+  const caughtUp = [];
+  await runAccountingCatchupsForSources(sources, 'cli-override', async (scopeKey) => caughtUp.push(scopeKey));
+  assert.deepEqual(processed, [
+    { sourceKey: 'default-source', scopeKey: 'default' },
+    { sourceKey: 'household-source', scopeKey: 'household-2' },
+    { sourceKey: 'duplicate-household-source', scopeKey: 'household-2' },
+  ]);
+  assert.deepEqual(caughtUp, ['default', 'household-2']);
 });
