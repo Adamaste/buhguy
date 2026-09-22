@@ -83,13 +83,23 @@ function comparePair(prepayment, settlement, { scopeKey = 'default' } = {}) {
   };
 }
 
-export function matchPrepaymentSettlements(receipts, { scopeKey = 'default' } = {}) {
+export function matchPrepaymentSettlements(receipts, { scopeKey = 'default', retainDetails = true } = {}) {
   const rows = [...receipts].sort((a, b) => String(a.dateTime).localeCompare(String(b.dateTime)) || Number(a.id) - Number(b.id));
   const settlements = rows.filter((row) => SETTLEMENT_STAGES.has(row.paymentStage));
   const candidates = [];
   const settlementsResult = [];
   for (const settlement of settlements) {
-    const pairs = rows.filter((row) => PREPAYMENT_STAGES.has(row.paymentStage) && new Date(row.dateTime).getTime() < new Date(settlement.dateTime).getTime()).map((prepayment) => comparePair(prepayment, settlement, { scopeKey }));
+    const pairs = rows.filter((row) => PREPAYMENT_STAGES.has(row.paymentStage) && new Date(row.dateTime).getTime() < new Date(settlement.dateTime).getTime()).map((prepayment) => {
+      const pair = comparePair(prepayment, settlement, { scopeKey });
+      if (retainDetails) return pair;
+      return {
+        prepaymentReceiptId: pair.prepaymentReceiptId,
+        settlementReceiptId: pair.settlementReceiptId,
+        amount: pair.amount,
+        purchaseValue: pair.purchaseValue,
+        strict: pair.strict,
+      };
+    });
     const strictPairs = pairs.filter((pair) => pair.strict);
     candidates.push(...pairs);
     settlementsResult.push({ settlementReceiptId: settlement.id, status: 'PENDING', candidateCount: pairs.length, strictCount: strictPairs.length, strictPairs });
@@ -171,7 +181,7 @@ ${MATCHER_RECEIPTS_GROUP}
 export async function dryRunPrepaymentSettlements(pool, options = {}) {
   const result = await pool.query(MATCHER_RECEIPTS_SQL, [options.normalizerVersion ?? NORMALIZED_FACT_VERSION]);
   const scopeKey = options.scopeKey ?? 'default';
-  return matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey })), { ...options, scopeKey });
+  return matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey })), { ...options, scopeKey, retainDetails: options.retainDetails ?? true });
 }
 
 export async function reconsiderPrepaymentSettlement(pool, receiptId, options = {}) {
@@ -191,7 +201,7 @@ export async function reconsiderPrepaymentSettlement(pool, receiptId, options = 
 }
 
 export async function persistPrepaymentSettlementMatches(pool, options = {}) {
-  const result = options.result ?? await dryRunPrepaymentSettlements(pool, options);
+  const result = options.result ?? await dryRunPrepaymentSettlements(pool, { ...options, retainDetails: false });
   const graph = new BusinessEventGraphRepository(pool);
   const strictBySettlement = new Map();
   for (const pair of result.candidates.filter((candidate) => candidate.strict)) {

@@ -42,24 +42,26 @@ async function insertFacts(client, runId, facts) {
   for (const fact of facts) await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,status=EXCLUDED.status,amount=EXCLUDED.amount`, [runId, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
 }
 
-export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [] } = {}) {
+export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [], client: transactionClient = null } = {}) {
   if (!eventIds.length) return { bounded: true, eventIds: [], facts: 0 };
-  const { scope } = await loadInputs(pool, scopeKey, eventIds);
-  const sourceStateKey = await sourceState(pool, scope.id);
-  const input = await loadInputs(pool, scopeKey, eventIds);
+  const queryable = transactionClient ?? pool;
+  const { scope } = await loadInputs(queryable, scopeKey, eventIds);
+  const sourceStateKey = await sourceState(queryable, scope.id);
+  const input = await loadInputs(queryable, scopeKey, eventIds);
   const facts = deriveCertificationFacts({ ...input, sourceStateKey });
-  const client = await pool.connect();
+  const client = transactionClient ?? await pool.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     const run = await ensureRun(client, scope.id, sourceStateKey);
     await client.query(`DELETE FROM certification_facts WHERE run_id=$1 AND ledger_entry_id IN (SELECT id FROM ledger_entries WHERE source_event_id=ANY($2::bigint[]))`, [run.id, eventIds]);
     await insertFacts(client, run.id, facts);
     await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
     const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;
     for (const result of aggregates) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metric_code, result.status, result.amount, result.currency, result.count_items, result.reason_code, fiscalContentFingerprint({ ...result, runId: Number(run.id) })]);
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return { bounded: true, eventIds, facts: facts.length, runId: Number(run.id) };
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
 }
 
 export function deriveCertificationFacts({ entries, postings, links, sourceStateKey, from = null, to = null }) {
