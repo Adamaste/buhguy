@@ -20,7 +20,7 @@ import { analyticsSummary, analyticsBlocked, analyticsTrace, assertSupportedMetr
 import { standalonePurchaseCensus, persistStandalonePurchases } from './standalone-purchase.js';
 import { accountingCoverageReport, compareCoverageReports } from './accounting-coverage.js';
 import { runAccountingCatchup } from './accounting-pipeline.js';
-import { deriveAccountingCatchupScopeKeys, runSourceSyncCycle } from './source-sync-cycle.js';
+import { effectiveAccountingScopeKey, runAccountingCatchupsForSources, runSourceSyncCycle } from './source-sync-cycle.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
@@ -573,18 +573,19 @@ export async function main(argv = process.argv.slice(2), {
         legacySessionStore: sessionStore,
         logger,
         runSource: async ({ source, sourceRow }) => {
+          const scopeKey = effectiveAccountingScopeKey(source, args['scope-key'] ?? null);
           const sourceClient = new FnsClient({ fetchImpl, sessionStore: new SessionStore({ stateDir: source.sessionDir }) , logger });
           const syncResult = await syncReceipts({
             client: sourceClient,
             repository,
             normalizer: (receiptId) => normalizeAndStoreReceipt(pool, receiptId),
-            matcher: (receiptId) => reconsiderPrepaymentSettlement(pool, receiptId, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', persist: Boolean(args['persist-matcher']) }),
-            returnMatcher: args['return-refund'] ? (receiptId) => reconsiderReturnRefund(pool, receiptId, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', persist: Boolean(args['persist-return-refund']) }) : null,
+            matcher: (receiptId) => reconsiderPrepaymentSettlement(pool, receiptId, { scopeKey, persist: Boolean(args['persist-matcher']) }),
+            returnMatcher: args['return-refund'] ? (receiptId) => reconsiderReturnRefund(pool, receiptId, { scopeKey, persist: Boolean(args['persist-return-refund']) }) : null,
             standaloneMatcher: async (receiptId) => {
-              const standalone = await persistStandalonePurchases(pool, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', receiptIds: [receiptId], ledgerRefresher: boundedRefreshEnabled ? (id) => refreshLedgerForReceipt(pool, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', receiptId: id }) : null });
+              const standalone = await persistStandalonePurchases(pool, { scopeKey, receiptIds: [receiptId], ledgerRefresher: boundedRefreshEnabled ? (id) => refreshLedgerForReceipt(pool, { scopeKey, receiptId: id }) : null });
               return { examined: 1, created: standalone.purchases.some((item) => Number(item.receiptId) === Number(receiptId) && item.created) ? 1 : 0 };
             },
-            ledgerRefresher: args['persist-matcher'] || args['persist-return-refund'] ? (receiptId) => refreshLedgerForReceipt(pool, { scopeKey: source.scopeKey ?? args['scope-key'] ?? 'default', receiptId }) : null,
+            ledgerRefresher: args['persist-matcher'] || args['persist-return-refund'] ? (receiptId) => refreshLedgerForReceipt(pool, { scopeKey, receiptId }) : null,
             accountKey: source.sourceKey,
             sourceContext: { sourceId: sourceRow.id, sourceKey: source.sourceKey },
             pageSize: toNumber(args['page-size'], 50),
@@ -593,9 +594,7 @@ export async function main(argv = process.argv.slice(2), {
           return syncResult;
         },
       });
-      for (const scopeKey of deriveAccountingCatchupScopeKeys(cycle.sources, args['scope-key'] ?? null)) {
-        await runAccountingCatchup(pool, { scopeKey, logger });
-      }
+      await runAccountingCatchupsForSources(cycle.sources, args['scope-key'] ?? null, (scopeKey) => runAccountingCatchup(pool, { scopeKey, logger }));
       printJson(cycle);
       return cycle.exitCode;
     } finally { await pool.end(); }

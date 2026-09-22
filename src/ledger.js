@@ -190,11 +190,12 @@ async function persistEntry(tx, entry, accounts) {
     ON CONFLICT(scope_id,semantic_key,derivation_rule,derivation_version,origin) DO UPDATE SET description=EXCLUDED.description,derivation_status=EXCLUDED.derivation_status,certification_status=EXCLUDED.certification_status,reason_code=EXCLUDED.reason_code
     RETURNING id,(xmax=0) AS created`, [entry.scopeKey, entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.origin, entry.reasonCode, entry.description])).rows[0];
   const entryId = Number(row.id);
-  if (entry.derivationStatus === 'BLOCKED') return { entryId, created: Boolean(row.created), postings: 0, links: 0 };
   let postingCount = 0;
-  for (const posting of entry.postings) {
-    const inserted = await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_allocation_id,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]);
-    postingCount += inserted.rowCount;
+  if (entry.derivationStatus !== 'BLOCKED') {
+    for (const posting of entry.postings) {
+      const inserted = await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_allocation_id,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]);
+      postingCount += inserted.rowCount;
+    }
   }
   let linkCount = 0;
   for (const link of entry.links) {

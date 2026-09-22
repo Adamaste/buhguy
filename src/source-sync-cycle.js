@@ -20,13 +20,21 @@ export async function resolveSyncSources({ configFile = process.env.FNS_SOURCES_
   };
 }
 
+export function effectiveAccountingScopeKey(source, scopeOverride = null) {
+  return source?.scopeKey ?? scopeOverride ?? 'default';
+}
+
 export function deriveAccountingCatchupScopeKeys(sources, scopeOverride = null) {
   const scopes = new Set();
   for (const source of sources ?? []) {
     if (source.enabled === false) continue;
-    scopes.add(scopeOverride ?? source.scopeKey ?? 'default');
+    scopes.add(effectiveAccountingScopeKey(source, scopeOverride));
   }
   return [...scopes];
+}
+
+export async function runAccountingCatchupsForSources(sources, scopeOverride, runCatchup) {
+  for (const scopeKey of deriveAccountingCatchupScopeKeys(sources, scopeOverride)) await runCatchup(scopeKey);
 }
 
 function hasFailedResult(result) {
