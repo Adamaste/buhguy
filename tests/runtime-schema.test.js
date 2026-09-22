@@ -77,6 +77,19 @@ test('runtime entry points do not invoke migrations', async () => {
   assert.match(cliSource, /if \(command === 'migrate'\)/);
 });
 
+test('bounded refresh callers do not invoke certification a second time', async () => {
+  const [cliSource, syncSource, standaloneSource] = await Promise.all([
+    readFile(new URL('../src/cli.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/sync.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/standalone-purchase.js', import.meta.url), 'utf8'),
+  ]);
+  assert.doesNotMatch(syncSource, /certificationRefresher\s*\(/);
+  assert.doesNotMatch(standaloneSource, /certificationRefresher\s*\(/);
+  const syncStart = cliSource.indexOf("if (command === 'sync')");
+  const syncEnd = cliSource.indexOf("if (command === 'normalize')", syncStart);
+  assert.doesNotMatch(cliSource.slice(syncStart, syncEnd), /certificationRefresher:/);
+});
+
 test('sync performs one scope-wide accounting catch-up after all sources', async () => {
   const cliSource = await readFile(new URL('../src/cli.js', import.meta.url), 'utf8');
   const syncStart = cliSource.indexOf("if (command === 'sync')");
@@ -91,5 +104,5 @@ test('sync performs one scope-wide accounting catch-up after all sources', async
 
   assert.doesNotMatch(runSource, /runAccountingCatchup\s*\(/);
   assert.equal((syncBranch.match(/runAccountingCatchup\s*\(/g) ?? []).length, 1);
-  assert.match(syncBranch, /runSourceSyncCycle\([\s\S]*?\);\s*await runAccountingCatchup\s*\(/);
+  assert.match(syncBranch, /runSourceSyncCycle\([\s\S]*?\);\s*for \(const scopeKey of deriveAccountingCatchupScopeKeys\(/);
 });

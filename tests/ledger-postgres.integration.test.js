@@ -68,6 +68,18 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     assert.equal(replay.bounded, true);
     assert.equal(replay.changed, false);
     assert.deepEqual(await snapshot(), before);
+
+    await pool.query("INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,'fiscal-normalizer-v1','ADDITIONAL_PURCHASE_EVIDENCE','SYSTEM_DERIVED','business-graph-v1','STANDALONE_PURCHASE_V1','v1',repeat('h',64))", [eventId, receiptId]);
+    const evidenceChanged = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
+    assert.equal(evidenceChanged.bounded, true);
+    assert.equal(evidenceChanged.changed, true);
+    const afterEvidenceChange = await snapshot();
+    assert.deepEqual(afterEvidenceChange.postings, before.postings);
+    assert.equal(afterEvidenceChange.links.length, before.links.length + 1);
+    assert.equal(afterEvidenceChange.certification.length, 1);
+    const evidenceReplay = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
+    assert.equal(evidenceReplay.changed, false);
+    assert.deepEqual(await snapshot(), afterEvidenceChange);
   } finally {
     await pool.query('ROLLBACK').catch(() => {});
     if (runId !== null) await pool.query('DELETE FROM certification_facts WHERE run_id=$1', [runId]);

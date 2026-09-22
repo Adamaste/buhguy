@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadFnsSourceConfig } from '../src/fns-source-config.js';
-import { resolveSyncSources, runSourceSyncCycle } from '../src/source-sync-cycle.js';
+import { deriveAccountingCatchupScopeKeys, resolveSyncSources, runSourceSyncCycle } from '../src/source-sync-cycle.js';
 import { FnsSourceObservationConflictError } from '../src/multi-user-errors.js';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -114,4 +114,17 @@ test('source cycle returns zero only when all enabled sources succeed', async ()
   assert.equal(cycle.attempted, 1);
   assert.equal(cycle.failed, 0);
   assert.equal(cycle.exitCode, 0);
+});
+
+test('accounting catch-up runs once per unique enabled source scope', () => {
+  assert.deepEqual(deriveAccountingCatchupScopeKeys([
+    { enabled: true, scopeKey: 'default' },
+    { enabled: true, scopeKey: 'household-2' },
+    { enabled: true, scopeKey: 'household-2' },
+    { enabled: false, scopeKey: 'disabled-scope' },
+  ]), ['default', 'household-2']);
+  assert.deepEqual(deriveAccountingCatchupScopeKeys([
+    { enabled: true, scopeKey: 'default' },
+    { enabled: true, scopeKey: 'household-2' },
+  ], 'override'), ['override']);
 });
