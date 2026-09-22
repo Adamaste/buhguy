@@ -51,11 +51,11 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     const run = (await pool.query("INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status) VALUES($1,'certification-v1',repeat('c',64),'READY') RETURNING id", [scope.id])).rows[0];
     runId = Number(run.id);
     await pool.query("INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,semantic_key,source_state_key) VALUES($1,$2,'LEDGER_ENTRY',$3,'FIXTURE','BUSINESS_CERTIFICATION','CERTIFIED',10,'RUB',NOW(),'FIXTURE','STANDALONE_PURCHASE_V1','v1',$3,$4,repeat('d',64),repeat('c',64))", [run.id,scope.id,ledgerEntryId,event.id]);
-    const snapshot = async () => ({
-      entry: (await pool.query('SELECT id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description FROM ledger_entries WHERE id=$1', [ledgerEntryId])).rows,
-      postings: (await pool.query('SELECT p.id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id WHERE p.ledger_entry_id=$1 ORDER BY p.id', [ledgerEntryId])).rows,
-      links: (await pool.query('SELECT id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [ledgerEntryId])).rows,
-      certification: (await pool.query('SELECT id,run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE ledger_entry_id=$1 ORDER BY id', [ledgerEntryId])).rows,
+    const snapshot = async (entryId = ledgerEntryId) => ({
+      entry: (await pool.query('SELECT id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description FROM ledger_entries WHERE id=$1', [entryId])).rows,
+      postings: (await pool.query('SELECT p.id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id WHERE p.ledger_entry_id=$1 ORDER BY p.id', [entryId])).rows,
+      links: (await pool.query('SELECT id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [entryId])).rows,
+      certification: (await pool.query('SELECT id,run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE ledger_entry_id=$1 ORDER BY id', [entryId])).rows,
     });
     const before = await snapshot();
     const result = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
@@ -73,13 +73,14 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     const evidenceChanged = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
     assert.equal(evidenceChanged.bounded, true);
     assert.equal(evidenceChanged.changed, true);
-    const afterEvidenceChange = await snapshot();
+    const currentEntryId = Number((await pool.query("SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2 AND origin='SYSTEM_DERIVED' ORDER BY id DESC LIMIT 1", [scopeId, eventId])).rows[0].id);
+    const afterEvidenceChange = await snapshot(currentEntryId);
     assert.deepEqual(afterEvidenceChange.postings, before.postings);
     assert.equal(afterEvidenceChange.links.length, before.links.length + 1);
     assert.equal(afterEvidenceChange.certification.length, 1);
     const evidenceReplay = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
     assert.equal(evidenceReplay.changed, false);
-    assert.deepEqual(await snapshot(), afterEvidenceChange);
+    assert.deepEqual(await snapshot(currentEntryId), afterEvidenceChange);
   } finally {
     await pool.query('ROLLBACK').catch(() => {});
     if (scopeId !== null) await pool.query('DELETE FROM certification_facts WHERE scope_id=$1', [scopeId]);
