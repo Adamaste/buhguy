@@ -82,11 +82,11 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     assert.deepEqual(await snapshot(), afterEvidenceChange);
   } finally {
     await pool.query('ROLLBACK').catch(() => {});
-    if (runId !== null) await pool.query('DELETE FROM certification_facts WHERE run_id=$1', [runId]);
+    if (scopeId !== null) await pool.query('DELETE FROM certification_facts WHERE scope_id=$1', [scopeId]);
     if (runId !== null) await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [runId]);
-    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_source_links WHERE ledger_entry_id=$1', [ledgerEntryId]);
-    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_postings WHERE ledger_entry_id=$1', [ledgerEntryId]);
-    if (ledgerEntryId !== null) await pool.query('DELETE FROM ledger_entries WHERE id=$1', [ledgerEntryId]);
+    if (scopeId !== null) await pool.query('DELETE FROM ledger_source_links WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1)', [scopeId]);
+    if (scopeId !== null) await pool.query('DELETE FROM ledger_postings WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1)', [scopeId]);
+    if (scopeId !== null) await pool.query('DELETE FROM ledger_entries WHERE scope_id=$1', [scopeId]);
     if (scopeId !== null) await pool.query('DELETE FROM ledger_accounts WHERE scope_id=$1', [scopeId]);
     if (eventId !== null) await pool.query('DELETE FROM business_event_evidence WHERE event_id=$1', [eventId]);
     if (eventId !== null) await pool.query('DELETE FROM business_events WHERE id=$1', [eventId]);
