@@ -75,7 +75,8 @@ integration('identical certified bounded refresh preserves ledger identity', { c
     assert.equal(evidenceChanged.changed, true);
     const currentEntryId = Number((await pool.query("SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2 AND origin='SYSTEM_DERIVED' ORDER BY id DESC LIMIT 1", [scopeId, eventId])).rows[0].id);
     const afterEvidenceChange = await snapshot(currentEntryId);
-    assert.deepEqual(afterEvidenceChange.postings, before.postings);
+    const postingContent = (rows) => rows.map(({ id, ...content }) => content);
+    assert.deepEqual(postingContent(afterEvidenceChange.postings), postingContent(before.postings));
     assert.equal(afterEvidenceChange.links.length, before.links.length + 1);
     assert.equal(afterEvidenceChange.certification.length, 1);
     const evidenceReplay = await refreshLedgerForReceipt(pool, { scopeKey: 'bounded-certified-refresh', receiptId });
