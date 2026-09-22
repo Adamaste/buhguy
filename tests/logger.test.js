@@ -87,6 +87,31 @@ test('secret fields stay redacted in emitted JSON', () => {
   assert.match(record.nested.password, /\[REDACTED\]/);
 });
 
+test('secret fields are redacted regardless of value type', () => {
+  const record = captureLog('info', 'auth_payload', {
+    code: 123456,
+    sessionId: 123456789,
+    password: true,
+    token: { raw: 'secret-object' },
+  });
+
+  assert.equal(record.code, '[REDACTED]');
+  assert.equal(record.sessionId, '[REDACTED]');
+  assert.equal(record.password, '[REDACTED]');
+  assert.equal(record.token, '[REDACTED]');
+  assert.ok(!JSON.stringify(record).includes('secret-object'));
+});
+
+test('operational errorCode remains observable while auth code stays secret', () => {
+  const record = captureLog('error', 'ledger_incremental_refresh_failure', {
+    errorCode: 'LEDGER_REFRESH_FAILED',
+    code: '123456',
+  });
+
+  assert.equal(record.errorCode, 'LEDGER_REFRESH_FAILED');
+  assert.equal(record.code, '[REDACTED]');
+});
+
 test('silent logger emits nothing', () => {
   const lines = captureStderr(() => createLogger({ silent: true }).info('silent_event', { ok: true }));
   assert.deepEqual(lines, []);

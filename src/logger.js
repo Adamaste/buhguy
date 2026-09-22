@@ -18,7 +18,7 @@ const SECRET_KEYS = new Set([
 
 function redactValue(value) {
   if (typeof value !== 'string') {
-    return value;
+    return '[REDACTED]';
   }
 
   if (value.length <= 8) {

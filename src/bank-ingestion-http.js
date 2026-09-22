@@ -61,7 +61,7 @@ export function createBankIngestionServer({ pool, logger = console, bodyLimit = 
       if (result.code === 'SOURCE_EVENT_CONFLICT') return writeJson(response, 409, result);
       return writeJson(response, 400, result);
     } catch (error) {
-      logger.error?.('bank_ingestion_request_failed', { code: error.code || 'INTERNAL_ERROR', status: error.status });
+      logger.error?.('bank_ingestion_request_failed', { errorCode: error.code || 'INTERNAL_ERROR', status: error.status });
       if (!response.headersSent) writeJson(response, 500, { status: 'error', code: 'INTERNAL_ERROR' });
     }
   });

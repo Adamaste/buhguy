@@ -71,7 +71,7 @@ export async function runSourceSyncCycle({ repository, runSource, logger = conso
         await repository.updateSourceSyncState(sourceRow.id, { startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(), error: error.message, errorClass: error.code ?? error.name });
       }
       results.push({ sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, enabled: true, attempted: true, failed: true, result: safeResult });
-      logger.error?.('source_sync_failed', { sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, code: error.code ?? 'SOURCE_SYNC_FAILED', error: error.message, durationMs: Date.now() - startedAt });
+      logger.error?.('source_sync_failed', { sourceId: sourceRow?.id ?? null, sourceKey: source.sourceKey, errorCode: error.code ?? 'SOURCE_SYNC_FAILED', error: error.message, durationMs: Date.now() - startedAt });
     }
   }
   const attempted = results.filter((item) => item.attempted);

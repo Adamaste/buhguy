@@ -73,7 +73,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
                   logger.info?.('prepayment_settlement_reconsidered', { receiptId: summary.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'RECONSIDERED' });
                 } catch (matcherError) {
                   result.matcher_failed += 1;
-                  logger.error?.('prepayment_settlement_matcher_failure', { receiptId: summary.id, code: 'MATCHER_EXCEPTION', error: matcherError.message });
+                  logger.error?.('prepayment_settlement_matcher_failure', { receiptId: summary.id, errorCode: 'MATCHER_EXCEPTION', error: matcherError.message });
                 }
               }
               // Return reconsideration is bounded to newly ingested return receipts;
@@ -90,7 +90,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
                   logger.info?.('return_refund_reconsidered', { receiptId: matched?.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'UNRESOLVED' });
                 } catch (returnMatcherError) {
                   result.return_matcher_failed += 1;
-                  logger.error?.('return_refund_matcher_failure', { receiptId: saved.id, code: 'RETURN_MATCHER_EXCEPTION', error: returnMatcherError.message });
+                  logger.error?.('return_refund_matcher_failure', { receiptId: saved.id, errorCode: 'RETURN_MATCHER_EXCEPTION', error: returnMatcherError.message });
                 }
               }
               let standalone = null;
@@ -101,7 +101,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
                   result.standalone_purchase_created += Number(standalone?.created ?? 0);
                 } catch (standaloneError) {
                   result.standalone_purchase_failed += 1;
-                  logger.error?.('standalone_purchase_failure', { receiptId: saved.id, code: 'STANDALONE_PURCHASE_EXCEPTION', error: standaloneError.message });
+                  logger.error?.('standalone_purchase_failure', { receiptId: saved.id, errorCode: 'STANDALONE_PURCHASE_EXCEPTION', error: standaloneError.message });
                 }
               }
               if (ledgerRefresher && (saved?.created !== false || Number(standalone?.created ?? 0) > 0)) {
@@ -114,17 +114,17 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
                       logger.info?.('certification_incremental_refresh', { receiptId: saved.id, bounded: certification?.bounded === true, eventCount: certification?.eventIds?.length ?? 0, facts: certification?.facts ?? 0 });
                     } catch (certificationError) {
                       result.certification_refresh_failed = (result.certification_refresh_failed ?? 0) + 1;
-                      logger.error?.('certification_incremental_refresh_failure', { receiptId: saved.id, code: 'CERTIFICATION_REFRESH_FAILED', error: certificationError.message });
+                      logger.error?.('certification_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'CERTIFICATION_REFRESH_FAILED', error: certificationError.message });
                     }
                   }
                 } catch (ledgerError) {
                   result.ledger_refresh_failed = (result.ledger_refresh_failed ?? 0) + 1;
-                  logger.error?.('ledger_incremental_refresh_failure', { receiptId: saved.id, code: 'LEDGER_REFRESH_FAILED', error: ledgerError.message });
+                  logger.error?.('ledger_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'LEDGER_REFRESH_FAILED', error: ledgerError.message });
                 }
               }
             } catch (normalizationError) {
               result.normalization_failed_count += 1;
-              logger.error?.('fiscal_normalization_failure', { receiptId: summary.id, code: 'NORMALIZER_EXCEPTION', error: normalizationError.message });
+              logger.error?.('fiscal_normalization_failure', { receiptId: summary.id, errorCode: 'NORMALIZER_EXCEPTION', error: normalizationError.message });
             }
           }
         } catch (error) {
@@ -142,7 +142,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
           if (error.code === 'FISCAL_IDENTITY_CONFLICT') result.fiscalIdentityConflicts = (result.fiscalIdentityConflicts ?? 0) + 1;
           if (error.code === 'FISCAL_CONTENT_CONFLICT') result.fiscalContentConflicts = (result.fiscalContentConflicts ?? 0) + 1;
           if (sourceContext?.sourceId && repository.markSourceReceiptRetryable) await repository.markSourceReceiptRetryable({ sourceId: sourceContext.sourceId, sourceReceiptId: summary.id, error: safeDetailErrorFields(error) });
-          logger.error?.('fiscal_ingest_failure', { receiptId: summary.id, code: error.code ?? 'RECEIPT_SYNC_FAILED', error: error.message });
+          logger.error?.('fiscal_ingest_failure', { receiptId: summary.id, errorCode: error.code ?? 'RECEIPT_SYNC_FAILED', error: error.message });
         }
       }
       offset += page.receipts.length;
@@ -159,7 +159,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
     if (error instanceof SessionExpiredError) {
       result.errors += 1;
       result.authError = 'FNS authentication/refresh failed';
-      logger.error?.('FNS authentication failed during sync', { status: error.status, code: error.code });
+      logger.error?.('FNS authentication failed during sync', { status: error.status, errorCode: error.code });
       return result;
     }
     throw error;

@@ -315,7 +315,7 @@ export async function main(argv = process.argv.slice(2), {
       } catch (error) {
         logger.error?.('FNS authentication refresh failed', {
           status: error.status,
-          code: error.code,
+          errorCode: error.code,
           authError: 'FNS_REFRESH_FAILED',
         });
         printJson({ ok: false, authError: 'FNS_REFRESH_FAILED' });
