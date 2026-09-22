@@ -2,7 +2,7 @@ import { normalizeReceiptDetail } from './normalize.js';
 import { SessionExpiredError } from './errors.js';
 import { isKnownFnsDetailUnavailable, safeDetailErrorFields } from './fns-detail-errors.js';
 
-export async function syncReceipts({ client, repository, normalizer = null, matcher = null, returnMatcher = null, standaloneMatcher = null, ledgerRefresher = null, certificationRefresher = null, detailErrorClassifier = isKnownFnsDetailUnavailable, accountKey = 'default', sourceContext = null, pageSize = 50, logger = console }) {
+export async function syncReceipts({ client, repository, normalizer = null, matcher = null, returnMatcher = null, standaloneMatcher = null, ledgerRefresher = null, detailErrorClassifier = isKnownFnsDetailUnavailable, accountKey = 'default', sourceContext = null, pageSize = 50, logger = console }) {
   const startedAt = new Date().toISOString();
   await repository.updateSyncState(accountKey, { startedAt, finishedAt: null, error: null });
   if (sourceContext?.sourceId) await repository.updateSourceSyncState(sourceContext.sourceId, { startedAt, fetched: 0, inserted: 0, replayed: 0 });
@@ -108,15 +108,6 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
                 try {
                   const ledger = await ledgerRefresher(saved.id);
                   logger.info?.('ledger_incremental_refresh', { receiptId: saved.id, bounded: ledger?.bounded === true, eventCount: ledger?.eventIds?.length ?? 0, createdEntries: ledger?.created?.entries ?? 0 });
-                  if (certificationRefresher && ledger?.eventIds?.length) {
-                    try {
-                      const certification = await certificationRefresher(ledger.eventIds);
-                      logger.info?.('certification_incremental_refresh', { receiptId: saved.id, bounded: certification?.bounded === true, eventCount: certification?.eventIds?.length ?? 0, facts: certification?.facts ?? 0 });
-                    } catch (certificationError) {
-                      result.certification_refresh_failed = (result.certification_refresh_failed ?? 0) + 1;
-                      logger.error?.('certification_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'CERTIFICATION_REFRESH_FAILED', error: certificationError.message });
-                    }
-                  }
                 } catch (ledgerError) {
                   result.ledger_refresh_failed = (result.ledger_refresh_failed ?? 0) + 1;
                   logger.error?.('ledger_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'LEDGER_REFRESH_FAILED', error: ledgerError.message });

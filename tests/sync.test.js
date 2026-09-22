@@ -16,6 +16,23 @@ test('sync is idempotent and stores full receipts only once', async () => {
   assert.equal(repository.saved[0].normalized.items[0].name, 'Tea');
 });
 
+test('bounded ledger refresh owns certification and sync does not invoke it twice', async () => {
+  const repository = repositoryFixture();
+  let ledgerCalls = 0;
+  let certificationCalls = 0;
+  const result = await syncReceipts({
+    client: { async listReceipts() { return { hasMore: false, receipts: [{ id: 'new' }] }; }, async getReceiptRaw(id) { return { key: id, items: [] }; } },
+    repository,
+    normalizer: async () => ({ facts: { normalizationStatus: 'READY' } }),
+    ledgerRefresher: async () => { ledgerCalls += 1; return { bounded: true, eventIds: [42], certification: { facts: 1 } }; },
+    certificationRefresher: async () => { certificationCalls += 1; return { bounded: true, facts: 1 }; },
+    logger: { info() {}, error() {} },
+  });
+  assert.equal(result.ledger_refresh_failed, undefined);
+  assert.equal(ledgerCalls, 1);
+  assert.equal(certificationCalls, 0);
+});
+
 test('sync continues after one receipt detail error', async () => {
   const repository = repositoryFixture();
   const client = { async listReceipts() { return { hasMore: false, receipts: [{ id: 'bad' }, { id: 'good' }] }; }, async getReceiptRaw(id) { if (id === 'bad') throw new Error('temporary API error'); return { key: id, items: [] }; } };

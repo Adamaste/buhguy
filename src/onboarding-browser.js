@@ -132,7 +132,7 @@ export async function waitForOnboardingBrowserExit({ user, fsImpl = fs, isAlive 
   throw Object.assign(new Error('FNS browser login timed out'), { code: 'AUTH_TIMEOUT' });
 }
 
-export async function stopOnboardingBrowser({ user, kill = (pid) => process.kill(pid), fsImpl = fs, isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error?.code === 'ESRCH') return false; throw error; } }, waitMs = 5000, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+export async function stopOnboardingBrowser({ user, kill = (pid, signal) => process.platform === 'win32' ? process.kill(pid, signal) : process.kill(-pid, signal), fsImpl = fs, isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error?.code === 'ESRCH') return false; throw error; } }, waitMs = 5000, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const pidPath = path.join(user.sessionDir, 'chromium.pid');
   try {
     let pidText;
