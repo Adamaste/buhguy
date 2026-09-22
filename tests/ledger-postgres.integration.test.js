@@ -83,7 +83,8 @@ integration('identical certified bounded refresh preserves ledger identity', { c
   } finally {
     await pool.query('ROLLBACK').catch(() => {});
     if (scopeId !== null) await pool.query('DELETE FROM certification_facts WHERE scope_id=$1', [scopeId]);
-    if (runId !== null) await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [runId]);
+    if (scopeId !== null) await pool.query('DELETE FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1)', [scopeId]);
+    if (scopeId !== null) await pool.query('DELETE FROM reconciliation_runs WHERE scope_id=$1', [scopeId]);
     if (scopeId !== null) await pool.query('DELETE FROM ledger_source_links WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1)', [scopeId]);
     if (scopeId !== null) await pool.query('DELETE FROM ledger_postings WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1)', [scopeId]);
     if (scopeId !== null) await pool.query('DELETE FROM ledger_entries WHERE scope_id=$1', [scopeId]);
