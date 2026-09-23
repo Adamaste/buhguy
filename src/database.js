@@ -6,6 +6,7 @@ import { fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } fr
 import { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from './fiscal-errors.js';
 import { FnsSourceObservationConflictError } from './multi-user-errors.js';
 import { SchemaMigrationRequiredError } from './errors.js';
+import { decodePostgresJsonEvidence, encodePostgresJsonEvidence } from './postgres-json-evidence.js';
 
 export function createPool(config = {}) {
   const connectionString = config.connectionString ?? process.env.DATABASE_URL;
@@ -68,7 +69,7 @@ export class ReceiptRepository {
       let id = byFns.rows[0]?.id ?? byFiscal.rows[0]?.id ?? null;
       if (id) {
         const storedRaw = await client.query('SELECT payload FROM receipt_raw WHERE receipt_id=$1 FOR UPDATE', [id]);
-        if (!storedRaw.rowCount || fiscalContentFingerprint(storedRaw.rows[0].payload) !== fiscalContentFingerprint(raw)) {
+        if (!storedRaw.rowCount || fiscalContentFingerprint(decodePostgresJsonEvidence(storedRaw.rows[0].payload)) !== fiscalContentFingerprint(raw)) {
           throw new FiscalContentConflictError();
         }
         await client.query('COMMIT');
@@ -86,15 +87,15 @@ export class ReceiptRepository {
         id = racedFns.rows[0]?.id ?? racedFiscal.rows[0]?.id ?? null;
         if (!id) throw new FiscalIdentityConflictError();
         const racedRaw = await client.query('SELECT payload FROM receipt_raw WHERE receipt_id=$1 FOR UPDATE', [id]);
-        if (!racedRaw.rowCount || fiscalContentFingerprint(racedRaw.rows[0].payload) !== fiscalContentFingerprint(raw)) throw new FiscalContentConflictError();
+        if (!racedRaw.rowCount || fiscalContentFingerprint(decodePostgresJsonEvidence(racedRaw.rows[0].payload)) !== fiscalContentFingerprint(raw)) throw new FiscalContentConflictError();
         await client.query('COMMIT');
         return { id, created: false, replayed: true };
       }
 
       await this.faultInjector?.('after_receipt_insert');
-      for (const [position, item] of (normalized.items ?? []).entries()) { const source = raw?.items?.[position] ?? null; await client.query('INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum,provider_inn,nds,raw) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, position, item.name, item.quantity, item.price, item.sum, source?.providerInn ?? null, source?.nds ?? null, source]); }
+      for (const [position, item] of (normalized.items ?? []).entries()) { const source = raw?.items?.[position] ?? null; await client.query('INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum,provider_inn,nds,raw) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, position, item.name, item.quantity, item.price, item.sum, source?.providerInn ?? null, source?.nds ?? null, encodePostgresJsonEvidence(source)]); }
       await this.faultInjector?.('after_items');
-      await client.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [id, raw]);
+      await client.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [id, encodePostgresJsonEvidence(raw)]);
       await this.faultInjector?.('after_raw');
       await client.query('COMMIT');
       return { id, created: true, replayed: false };
@@ -199,14 +200,14 @@ export class ReceiptRepository {
       let created = false;
       if (id) {
         const stored = await client.query('SELECT payload FROM receipt_raw WHERE receipt_id=$1 FOR UPDATE', [id]);
-        if (!stored.rowCount || fiscalContentFingerprint(stored.rows[0].payload) !== fiscalContentFingerprint(raw)) throw new FiscalContentConflictError();
+        if (!stored.rowCount || fiscalContentFingerprint(decodePostgresJsonEvidence(stored.rows[0].payload)) !== fiscalContentFingerprint(raw)) throw new FiscalContentConflictError();
       } else {
         if (!fiscalKey) throw new FiscalIdentityUnavailableError();
         const inserted = (await client.query(`INSERT INTO receipts(fns_id,date_time,seller,seller_inn,total_sum,currency,operation_type,fiscal_document_number,fiscal_drive_number,fiscal_sign,kkt_reg_id)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [normalized.id, normalized.dateTime, normalized.seller, normalized.sellerInn, normalized.totalSum, normalized.currency, normalized.operationType ?? null, raw?.fiscalDocumentNumber ?? null, raw?.fiscalDriveNumber ?? null, raw?.fiscalSign ?? null, raw?.kktRegId ?? null])).rows[0];
         id = inserted.id; created = true;
-        for (const [position, item] of (normalized.items ?? []).entries()) { const source = raw?.items?.[position] ?? null; await client.query('INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum,provider_inn,nds,raw) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, position, item.name, item.quantity, item.price, item.sum, source?.providerInn ?? null, source?.nds ?? null, source]); }
-        await client.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [id, raw]);
+        for (const [position, item] of (normalized.items ?? []).entries()) { const source = raw?.items?.[position] ?? null; await client.query('INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum,provider_inn,nds,raw) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, position, item.name, item.quantity, item.price, item.sum, source?.providerInn ?? null, source?.nds ?? null, encodePostgresJsonEvidence(source)]); }
+        await client.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [id, encodePostgresJsonEvidence(raw)]);
       }
       const observation = await client.query(`INSERT INTO receipt_source_observations(fns_source_id,receipt_id,source_receipt_id,source_content_sha256) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`, [sourceId, id, sourceReceiptId, fiscalContentFingerprint(raw)]);
       await client.query('COMMIT');
@@ -219,7 +220,10 @@ export class ReceiptRepository {
     const ids = [byFns?.id, byFiscal?.id].filter(Boolean);
     const stored = ids.length ? await client.query('SELECT r.id,r.fns_id,r.date_time,r.seller_inn,r.total_sum,r.currency,r.operation_type,r.fiscal_drive_number,r.fiscal_document_number,r.fiscal_sign,r.kkt_reg_id,rr.payload FROM receipts r LEFT JOIN receipt_raw rr ON rr.receipt_id=r.id WHERE r.id = ANY($1::bigint[]) ORDER BY r.id', [ids]) : { rows: [] };
     const safeId = (value) => value ? String(value).replace(/^[^|@\\s]+@[^|\\s]+/, '[REDACTED_EMAIL]') : null;
-    const safe = (value, row = null) => ({ receiptId: row?.id ?? null, fnsId: safeId(row?.fns_id ?? value?.key ?? value?.id), identity: fiscalIdentityFromRaw(row?.payload ?? value), kktRegId: row?.kkt_reg_id ?? value?.kktRegId ?? null, sellerInn: row?.seller_inn ?? value?.sellerInn ?? value?.userInn ?? null, dateTime: row?.date_time ?? value?.dateTime ?? null, totalSum: row?.total_sum ?? value?.totalSum ?? null, currency: row?.currency ?? value?.currency ?? null, operationType: row?.operation_type ?? value?.operationType ?? null, contentSha256: fiscalContentFingerprint(row?.payload ?? value) });
+    const safe = (value, row = null) => {
+      const payload = decodePostgresJsonEvidence(row?.payload ?? value);
+      return { receiptId: row?.id ?? null, fnsId: safeId(row?.fns_id ?? payload?.key ?? payload?.id), identity: fiscalIdentityFromRaw(payload), kktRegId: row?.kkt_reg_id ?? payload?.kktRegId ?? null, sellerInn: row?.seller_inn ?? payload?.sellerInn ?? payload?.userInn ?? null, dateTime: row?.date_time ?? payload?.dateTime ?? null, totalSum: row?.total_sum ?? payload?.totalSum ?? null, currency: row?.currency ?? payload?.currency ?? null, operationType: row?.operation_type ?? payload?.operationType ?? null, contentSha256: fiscalContentFingerprint(payload) };
+    };
     const observation = { timestamp: new Date().toISOString(), branch, incomingList: safe(listSummary), incomingDetail: safe(raw), fnsIdLookup: safe(null, stored.rows.find((row) => row.id === byFns?.id)), tupleLookup: safe(null, stored.rows.find((row) => row.id === byFiscal?.id)) };
     await fs.mkdir(path.dirname(output), { recursive: true, mode: 0o700 });
     await fs.appendFile(output, `${JSON.stringify(observation)}\n`, { mode: 0o600 });

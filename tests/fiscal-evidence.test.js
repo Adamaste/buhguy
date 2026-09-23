@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { canonicalizeFiscalContent, fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } from '../src/fiscal-evidence.js';
 import { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from '../src/fiscal-errors.js';
+import { decodePostgresJsonEvidence, encodePostgresJsonEvidence } from '../src/postgres-json-evidence.js';
 
 function fixture(overrides = {}) {
   return {
@@ -60,6 +61,23 @@ test('DEDUP-010/011: changed evidence is a content conflict', () => {
 test('DEDUP-012: exact ignored transport metadata does not change fingerprint', () => {
   assert.equal(fiscalContentFingerprint(fixture({ requestNumber: 'one', receivedAt: 'a' })), fiscalContentFingerprint(fixture({ requestNumber: 'two', receivedAt: 'b' })));
   assert.notDeepEqual(canonicalizeFiscalContent(fixture({ requestNumber: 'one' })), fixture({ requestNumber: 'one' }));
+});
+
+test('PostgreSQL raw evidence encoding is reversible and distinguishes literal escapes', () => {
+  const raw = {
+    cyrillic: 'Продавец',
+    emoji: 'ok ✅',
+    nested: [{ value: 'A\u0000B' }, { value: 'A\\u0000B' }],
+    markerLikeObject: { __receiptCollectorEncodedStringV1: true, encoding: 'utf16-code-units', value: '\\u0000' },
+  };
+  const encoded = encodePostgresJsonEvidence(raw);
+  assert.equal(encoded.cyrillic, raw.cyrillic);
+  assert.equal(encoded.emoji, raw.emoji);
+  assert.equal(encoded.nested[0].value.__receiptCollectorEncodedStringV1, true);
+  assert.equal(encoded.nested[1].value, 'A\\u0000B');
+  assert.equal(encoded.markerLikeObject.__receiptCollectorEncodedObjectV1, true);
+  assert.deepEqual(decodePostgresJsonEvidence(encoded), raw);
+  assert.equal(fiscalContentFingerprint(decodePostgresJsonEvidence(encoded)), fiscalContentFingerprint(raw));
 });
 
 test('DEDUP-015: incomplete identity is explicit and never falls back to similarity', () => {

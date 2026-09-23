@@ -6,6 +6,8 @@ import { FiscalContentConflictError, FiscalIdentityConflictError } from '../src/
 import { syncReceipts } from '../src/sync.js';
 import { BusinessEventGraphRepository, EXTERNAL_CONFIRMED, GRAPH_MODEL_VERSION, MANUAL, SYSTEM_DERIVED, validateBusinessEventGraph } from '../src/business-event-graph.js';
 import { dryRunPrepaymentSettlements, persistPrepaymentSettlementMatches, reconsiderPrepaymentSettlement } from '../src/prepayment-settlement-matcher.js';
+import { fiscalContentFingerprint } from '../src/fiscal-evidence.js';
+import { decodePostgresJsonEvidence } from '../src/postgres-json-evidence.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) {
@@ -392,6 +394,108 @@ if (!connectionString) {
     const result = await pool.query("SELECT total_sum, payload->>'totalSum' AS raw_total FROM receipts r JOIN receipt_raw x ON x.receipt_id=r.id WHERE fns_id='content-a'");
     assert.equal(result.rows[0].total_sum, '32380.00');
     assert.equal(result.rows[0].raw_total, '32380');
+  });
+
+  test('raw JSON evidence with PostgreSQL-incompatible Unicode is persisted reversibly', async () => {
+    await reset();
+    const repo = new ReceiptRepository(pool);
+    const raw = rawFixture('unicode-jsonb-a', 'unicode-jsonb-a', {
+      fiscalDocumentFormatVer: '4',
+      items: [{
+        name: 'Sanitized item',
+        quantity: 1,
+        price: 32380,
+        sum: 32380,
+        paymentType: 4,
+        productType: 4,
+        productCodeNew: { code: { rawProductCode: 'A\u0000B' } },
+      }],
+    });
+    const literal = rawFixture('unicode-jsonb-literal', 'unicode-jsonb-literal', {
+      fiscalDocumentFormatVer: '4',
+      items: [{
+        name: 'Literal escape text',
+        quantity: 1,
+        price: 32380,
+        sum: 32380,
+        paymentType: 4,
+        productType: 4,
+        productCodeNew: { code: { rawProductCode: 'A\\u0000B' } },
+      }],
+    });
+
+    const source = await repo.ensureSource({
+      sourceKey: 'unicode-jsonb-source',
+      sessionRef: 'test:unicode-jsonb-source',
+      displayName: 'Unicode JSONB fixture',
+    });
+    const saved = await repo.upsertObservedBundle({ sourceId: source.id, sourceReceiptId: 'unicode-jsonb-a-source', ...bundle(raw) });
+    assert.equal(saved.created, true);
+    assert.equal(saved.observationCreated, true);
+    assert.deepEqual(await counts(), { receipts: '1', items: '1', raw: '1' });
+
+    const replay = await repo.upsertObservedBundle({ sourceId: source.id, sourceReceiptId: 'unicode-jsonb-a-source', ...bundle(raw) });
+    assert.equal(replay.created, false);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(await counts(), { receipts: '1', items: '1', raw: '1' });
+
+    const stored = await pool.query('SELECT payload FROM receipt_raw WHERE receipt_id=$1', [saved.id]);
+    assert.equal(stored.rows[0].payload.items[0].productCodeNew.code.rawProductCode.__receiptCollectorEncodedStringV1, true);
+    const decodedStored = decodePostgresJsonEvidence(stored.rows[0].payload);
+    assert.equal(decodedStored.items[0].productCodeNew.code.rawProductCode, 'A\u0000B');
+    const itemRaw = await pool.query('SELECT raw FROM receipt_items WHERE receipt_id=$1 AND position=0', [saved.id]);
+    assert.equal(decodePostgresJsonEvidence(itemRaw.rows[0].raw).productCodeNew.code.rawProductCode, 'A\u0000B');
+
+    const direct = await repo.upsertBundle(bundle(literal));
+    assert.equal(direct.created, true);
+    const literalStored = await pool.query('SELECT payload FROM receipt_raw WHERE receipt_id=$1', [direct.id]);
+    assert.equal(literalStored.rows[0].payload.items[0].productCodeNew.code.rawProductCode, 'A\\u0000B');
+    assert.notEqual(fiscalContentFingerprint(raw), fiscalContentFingerprint(literal));
+    assert.equal(fiscalContentFingerprint(decodedStored), fiscalContentFingerprint(raw));
+  });
+
+  test('sync continues after PostgreSQL-incompatible Unicode raw evidence', async () => {
+    await reset();
+    const repo = new ReceiptRepository(pool);
+    const source = await repo.ensureSource({
+      sourceKey: 'unicode-jsonb-sync-source',
+      sessionRef: 'test:unicode-jsonb-sync-source',
+      displayName: 'Unicode JSONB sync fixture',
+    });
+    const bad = rawFixture('unicode-sync-bad', 'unicode-sync-bad', {
+      fiscalDocumentFormatVer: '4',
+      items: [{
+        name: 'Sanitized item',
+        quantity: 1,
+        price: 32380,
+        sum: 32380,
+        paymentType: 4,
+        productType: 4,
+        productCodeNew: { code: { rawProductCode: 'A\u0000B' } },
+      }],
+    });
+    const healthy = rawFixture('unicode-sync-healthy', 'unicode-sync-healthy', {
+      fiscalDocumentFormatVer: '4',
+      items: [{ name: 'Healthy item', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 4 }],
+    });
+    const receipts = [bad, healthy];
+
+    const result = await syncReceipts({
+      client: {
+        async listReceipts() { return { receipts: receipts.map((item) => ({ id: item.key })), hasMore: false }; },
+        async getReceiptRaw(id) { return receipts.find((item) => item.key === id); },
+      },
+      repository: repo,
+      sourceContext: { sourceId: source.id },
+      logger: { info() {}, warn() {}, error() {} },
+    });
+
+    assert.equal(result.fetched, 2);
+    assert.equal(result.inserted, 2);
+    assert.equal(result.errors, 0);
+    assert.equal(result.resolved, 2);
+    assert.equal(result.unclassified, 0);
+    assert.deepEqual(await counts(), { receipts: '2', items: '2', raw: '2' });
   });
 
   test('transient metadata replay is harmless and Xiaomi two-document regression stays two', async () => {
