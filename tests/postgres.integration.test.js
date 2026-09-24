@@ -8,6 +8,7 @@ import { BusinessEventGraphRepository, EXTERNAL_CONFIRMED, GRAPH_MODEL_VERSION, 
 import { dryRunPrepaymentSettlements, persistPrepaymentSettlementMatches, reconsiderPrepaymentSettlement } from '../src/prepayment-settlement-matcher.js';
 import { fiscalContentFingerprint } from '../src/fiscal-evidence.js';
 import { decodePostgresJsonEvidence } from '../src/postgres-json-evidence.js';
+import { decodePostgresTextEvidence } from '../src/postgres-text-evidence.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) {
@@ -254,6 +255,42 @@ if (!connectionString) {
     assert.equal(facts[0].rows[0].facts, '1');
     assert.equal(facts[1].rows[0].items, '1');
     assert.equal(facts[2].rows[0].issues, '0');
+  });
+
+  test('PostgreSQL-safe raw product code normalization is reversible and idempotent', async () => {
+    await reset();
+    const raw = rawFixture('text-unicode-normalization', 'text-unicode-normalization', {
+      fiscalDocumentFormatVer: '4',
+      cashTotalSum: 32380,
+      ecashTotalSum: 0,
+      prepaidSum: 0,
+      creditSum: 0,
+      provisionSum: 0,
+      items: [{
+        name: 'NUL product code',
+        quantity: 1,
+        price: 32380,
+        sum: 32380,
+        paymentType: 4,
+        productType: 4,
+        productCodeNew: { code: { rawProductCode: 'A\u0000B' } },
+      }],
+    });
+    const repo = new ReceiptRepository(pool);
+    const saved = await repo.upsertBundle(bundle(raw));
+
+    const first = await normalizeAndStoreReceipt(pool, saved.id);
+    assert.equal(first.facts.normalizationStatus, 'READY');
+    const firstStored = await pool.query('SELECT raw_product_code, normalized_content_sha256 FROM receipt_item_fiscal_facts WHERE receipt_item_id=(SELECT id FROM receipt_items WHERE receipt_id=$1)', [saved.id]);
+    assert.equal(firstStored.rowCount, 1);
+    assert.notEqual(firstStored.rows[0].raw_product_code, 'A\u0000B');
+    assert.equal(decodePostgresTextEvidence(firstStored.rows[0].raw_product_code), 'A\u0000B');
+    assert.equal(first.facts.normalizedContentSha256, fiscalContentFingerprint(first.semantic));
+
+    const second = await normalizeAndStoreReceipt(pool, saved.id);
+    const secondStored = await pool.query('SELECT raw_product_code, normalized_content_sha256 FROM receipt_item_fiscal_facts WHERE receipt_item_id=(SELECT id FROM receipt_items WHERE receipt_id=$1)', [saved.id]);
+    assert.deepEqual(secondStored.rows[0], firstStored.rows[0]);
+    assert.equal(second.facts.normalizedContentSha256, first.facts.normalizedContentSha256);
   });
 
   test('normalizer failure preserves committed source evidence and is reported', async () => {

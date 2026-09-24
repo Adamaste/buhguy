@@ -5,6 +5,7 @@ const unitFiles = [
   'tests/cli.test.js',
   'tests/fiscal-evidence.test.js',
   'tests/fiscal-normalization.test.js',
+  'tests/postgres-text-evidence.test.js',
   'tests/fns-detail-errors.test.js',
   'tests/logger.test.js',
   'tests/normalize.test.js',
