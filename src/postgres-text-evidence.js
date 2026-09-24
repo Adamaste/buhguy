@@ -43,4 +43,3 @@ export function decodePostgresTextEvidence(value) {
   if (decoded === null) return value;
   return decoded;
 }
-

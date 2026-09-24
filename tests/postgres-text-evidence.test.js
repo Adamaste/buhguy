@@ -17,4 +17,3 @@ test('literal escape text does not conflict with encoded representation', () => 
   assert.equal(decodePostgresTextEvidence(literal), literal);
   assert.equal(decodePostgresTextEvidence(encodePostgresTextEvidence(literal)), literal);
 });
-
