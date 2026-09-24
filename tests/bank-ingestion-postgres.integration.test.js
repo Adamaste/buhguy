@@ -10,6 +10,13 @@ import { migrate } from '../src/database.js';
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 
+async function cleanupRuntimeRole(admin) {
+  const role = await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'");
+  if (!role.rowCount) return;
+  await admin.query('DROP OWNED BY receipt_collector');
+  await admin.query('DROP ROLE receipt_collector');
+}
+
 integration('bank ingestion is immutable, source-scoped, and deterministic', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   try {
@@ -56,7 +63,7 @@ integration('bank ingestion works under the restricted runtime role without extr
   const sourceKey = `runtime-role-${process.pid}-${Date.now()}`;
   let runtime;
   try {
-    await admin.query('DROP ROLE IF EXISTS receipt_collector');
+    await cleanupRuntimeRole(admin);
     await admin.query(`CREATE ROLE receipt_collector LOGIN PASSWORD '${password.replaceAll("'", "''")}'`);
     await admin.query(readFileSync('scripts/apply-bank-ingestion-grants.sql', 'utf8'));
     await createBankSource(admin, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Runtime role synthetic' });
@@ -98,11 +105,12 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.observations_references, false);
   } finally {
     if (runtime) await runtime.end();
-    await admin.query('DROP ROLE IF EXISTS receipt_collector').catch(() => {});
     await admin.query('DELETE FROM bank_device_credentials WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    await cleanupRuntimeRole(admin);
+    assert.equal((await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'")).rowCount, 0);
     await admin.end();
   }
 });
