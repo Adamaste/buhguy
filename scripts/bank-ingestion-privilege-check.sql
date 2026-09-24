@@ -30,10 +30,18 @@ FROM (VALUES
   ('public.bank_device_credentials'::text, 'DELETE'::text),
   ('public.bank_event_observations'::text, 'UPDATE'::text),
   ('public.bank_event_observations'::text, 'DELETE'::text),
+  ('public.bank_transactions'::text, 'SELECT'::text),
   ('public.bank_transactions'::text, 'UPDATE'::text),
   ('public.bank_transactions'::text, 'DELETE'::text)
 ) AS forbidden(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
+
+SELECT column_name, privilege_name,
+  has_column_privilege('receipt_collector', 'public.bank_transactions', column_name, privilege_name) AS granted
+FROM (VALUES
+  ('id'::text, 'SELECT'::text)
+) AS columns(column_name, privilege_name)
+ORDER BY column_name;
 
 SELECT column_name, privilege_name,
   has_column_privilege('receipt_collector', 'public.bank_device_credentials', column_name, privilege_name) AS granted

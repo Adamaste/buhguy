@@ -14,9 +14,12 @@ test('bank ingestion grant script is narrowly scoped to runtime DML', async () =
   assert.doesNotMatch(sql, /GRANT SELECT, UPDATE ON public\.bank_device_credentials/i);
   assert.match(sql, /GRANT SELECT, INSERT ON public\.bank_event_observations TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transactions TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(id\) ON public\.bank_transactions TO receipt_collector/);
+  assert.doesNotMatch(sql, /GRANT SELECT ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT USAGE ON SEQUENCE public\.bank_event_observations_id_seq TO receipt_collector/);
   assert.match(sql, /GRANT USAGE ON SEQUENCE public\.bank_transactions_id_seq TO receipt_collector/);
   assert.doesNotMatch(sql, /GRANT USAGE, SELECT ON SEQUENCE/i);
+  assert.doesNotMatch(sql, /GRANT\s+REFERENCES/i);
   assert.doesNotMatch(sql, /GRANT\s+ALL/i);
   assert.doesNotMatch(sql, /GRANT\s+(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE)\s+ON\s+public\.(?:bank_sources|bank_source_person)/i);
   assert.doesNotMatch(sql, /(?:CREATE|ALTER|DROP|REVOKE|TRUNCATE)\s+(?:ROLE|USER|TABLE|SCHEMA|SEQUENCE)?/i);
@@ -34,6 +37,7 @@ test('bank ingestion privilege check covers required and forbidden capabilities'
   assert.match(sql, /bank_event_observations_id_seq/);
   assert.match(sql, /bank_transactions_id_seq/);
   assert.match(sql, /has_column_privilege\('receipt_collector', 'public\.bank_device_credentials'/);
+  assert.match(sql, /has_column_privilege\('receipt_collector', 'public\.bank_transactions', column_name, privilege_name\)/);
   assert.match(sql, /'last_used_at'/);
   assert.match(sql, /'secret_hash'/);
   assert.match(sql, /'enabled'/);
