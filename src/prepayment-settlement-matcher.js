@@ -1,5 +1,6 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
+import { decodePostgresTextEvidence } from './postgres-text-evidence.js';
 
 export const PREPAYMENT_SETTLEMENT_RULE = 'PREPAYMENT_SETTLEMENT_V1';
 export const MATCHER_VERSION = 'prepayment-settlement-matcher-v1';
@@ -181,7 +182,7 @@ ${MATCHER_RECEIPTS_GROUP}
 export async function dryRunPrepaymentSettlements(pool, options = {}) {
   const result = await pool.query(MATCHER_RECEIPTS_SQL, [options.normalizerVersion ?? NORMALIZED_FACT_VERSION]);
   const scopeKey = options.scopeKey ?? 'default';
-  return matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey })), { ...options, scopeKey, retainDetails: options.retainDetails ?? true });
+  return matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey, items: row.items.map((item) => ({ ...item, rawProductCode: decodePostgresTextEvidence(item.rawProductCode) })) })), { ...options, scopeKey, retainDetails: options.retainDetails ?? true });
 }
 
 export async function reconsiderPrepaymentSettlement(pool, receiptId, options = {}) {
@@ -189,7 +190,7 @@ export async function reconsiderPrepaymentSettlement(pool, receiptId, options = 
   const result = await pool.query(MATCHER_INCREMENTAL_RECEIPTS_SQL, [normalizerVersion, receiptId]);
   if (!result.rowCount) return { rule: PREPAYMENT_SETTLEMENT_RULE, matcherVersion: MATCHER_VERSION, normalizerVersion, receiptId, summary: { settlementsExamined: 0, candidatePairs: 0, strictMatches: 0, confirmedSettlements: 0, ambiguousSettlements: 0, unmatchedSettlements: 0, candidateOnlySettlements: 0 }, candidates: [], settlements: [], triggerStatus: 'NOT_READY' };
   const scopeKey = options.scopeKey ?? 'default';
-  const dryRun = matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey })), { ...options, scopeKey });
+  const dryRun = matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey, items: row.items.map((item) => ({ ...item, rawProductCode: decodePostgresTextEvidence(item.rawProductCode) })) })), { ...options, scopeKey });
   const trigger = dryRun.settlements.find((row) => String(row.settlementReceiptId) === String(receiptId)) ?? null;
   if (options.persist && dryRun.summary.confirmedSettlements) {
     const pairKeys = dryRun.candidates
