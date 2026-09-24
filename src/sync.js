@@ -2,7 +2,7 @@ import { normalizeReceiptDetail } from './normalize.js';
 import { SessionExpiredError } from './errors.js';
 import { isKnownFnsDetailUnavailable, safeDetailErrorFields } from './fns-detail-errors.js';
 
-export async function syncReceipts({ client, repository, normalizer = null, matcher = null, returnMatcher = null, standaloneMatcher = null, ledgerRefresher = null, detailErrorClassifier = isKnownFnsDetailUnavailable, accountKey = 'default', sourceContext = null, pageSize = 50, logger = console }) {
+export async function syncReceipts({ client, repository, normalizer = null, matcher = null, returnMatcher = null, standaloneMatcher = null, ledgerRefresher = null, detailErrorClassifier = isKnownFnsDetailUnavailable, accountKey = 'default', sourceContext = null, pageSize = 50, normalizationVersion = 'fiscal-normalizer-v1', logger = console }) {
   const startedAt = new Date().toISOString();
   await repository.updateSyncState(accountKey, { startedAt, finishedAt: null, error: null });
   if (sourceContext?.sourceId) await repository.updateSourceSyncState(sourceContext.sourceId, { startedAt, fetched: 0, inserted: 0, replayed: 0 });
@@ -32,13 +32,84 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
   }
   let offset = 0;
   try {
+    const processSavedReceipt = async ({ saved, summary, recovered = false }) => {
+      if (!normalizer || !saved?.id) return;
+      try {
+        const normalized = await normalizer(saved.id);
+        const status = normalized?.facts?.normalizationStatus;
+        if (status === 'READY') result.normalization_ready_count += 1;
+        else if (status === 'BLOCKED') result.normalization_blocked_count += 1;
+        else if (status === 'UNSUPPORTED') result.normalization_unsupported_count += 1;
+        if (recovered) logger.info?.('fiscal_normalization_recovered', { receiptId: saved.id, normalizationVersion });
+        if (matcher && status === 'READY') {
+          try {
+            const matched = await matcher(saved.id, normalized);
+            const matcherSummary = matched?.summary ?? {};
+            result.matcher_examined += Number(matcherSummary.settlementsExamined ?? 0);
+            result.matcher_confirmed += Number(matcherSummary.confirmedSettlements ?? 0);
+            result.matcher_ambiguous += Number(matcherSummary.ambiguousSettlements ?? 0);
+            result.matcher_candidate_only += Number(matcherSummary.candidateOnlySettlements ?? 0);
+            result.matcher_unmatched += Number(matcherSummary.unmatchedSettlements ?? 0);
+            logger.info?.('prepayment_settlement_reconsidered', { receiptId: matcherSummary.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'RECONSIDERED' });
+          } catch (matcherError) {
+            result.matcher_failed += 1;
+            logger.error?.('prepayment_settlement_matcher_failure', { receiptId: saved.id, errorCode: 'MATCHER_EXCEPTION', error: matcherError.message });
+          }
+        }
+        if (returnMatcher && status === 'READY' && Number(normalized?.facts?.fiscalOperationType) === 2 && (saved?.created !== false || recovered)) {
+          try {
+            const matched = await returnMatcher(saved.id, normalized);
+            const returnSummary = matched?.summary ?? {};
+            result.return_matcher_examined += Number(returnSummary.returnsExamined ?? 0);
+            result.return_matcher_confirmed += Number(returnSummary.confirmed ?? 0);
+            result.return_matcher_ambiguous += Number(returnSummary.ambiguous ?? 0);
+            result.return_matcher_candidate_only += Number(returnSummary.candidateOnly ?? 0);
+            result.return_matcher_unmatched += Number(returnSummary.unresolved ?? 0);
+            logger.info?.('return_refund_reconsidered', { receiptId: matched?.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'UNRESOLVED' });
+          } catch (returnMatcherError) {
+            result.return_matcher_failed += 1;
+            logger.error?.('return_refund_matcher_failure', { receiptId: saved.id, errorCode: 'RETURN_MATCHER_EXCEPTION', error: returnMatcherError.message });
+          }
+        }
+        let standalone = null;
+        if (standaloneMatcher && status === 'READY') {
+          try {
+            standalone = await standaloneMatcher(saved.id, normalized);
+            result.standalone_purchase_examined += Number(standalone?.examined ?? 1);
+            result.standalone_purchase_created += Number(standalone?.created ?? 0);
+          } catch (standaloneError) {
+            result.standalone_purchase_failed += 1;
+            logger.error?.('standalone_purchase_failure', { receiptId: saved.id, errorCode: 'STANDALONE_PURCHASE_EXCEPTION', error: standaloneError.message });
+          }
+        }
+        if (ledgerRefresher && (saved?.created !== false || recovered || Number(standalone?.created ?? 0) > 0)) {
+          try {
+            const ledger = await ledgerRefresher(saved.id);
+            logger.info?.('ledger_incremental_refresh', { receiptId: saved.id, bounded: ledger?.bounded === true, eventCount: ledger?.eventIds?.length ?? 0, createdEntries: ledger?.created?.entries ?? 0 });
+          } catch (ledgerError) {
+            result.ledger_refresh_failed = (result.ledger_refresh_failed ?? 0) + 1;
+            logger.error?.('ledger_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'LEDGER_REFRESH_FAILED', error: ledgerError.message });
+          }
+        }
+      } catch (normalizationError) {
+        result.normalization_failed_count += 1;
+        logger.error?.('fiscal_normalization_failure', { receiptId: summary.id, errorCode: 'NORMALIZER_EXCEPTION', error: normalizationError.message });
+      }
+    };
     while (true) {
       const page = await client.listReceipts({ limit: pageSize, offset, orderBy: 'CREATED_DATE:DESC' });
       result.fetched += page.receipts.length;
       for (const summary of page.receipts) {
         if (sourceContext?.sourceId && repository.upsertSourceReceiptReference) {
           const reference = await repository.upsertSourceReceiptReference({ sourceId: sourceContext.sourceId, sourceReceiptId: summary.id });
-          if (reference.status === 'RESOLVED') { result.resolved += 1; continue; }
+          if (reference.status === 'RESOLVED') {
+            if (normalizer && reference.receipt_id && repository.hasCurrentNormalization
+              && !(await repository.hasCurrentNormalization(reference.receipt_id, normalizationVersion))) {
+              await processSavedReceipt({ saved: { id: reference.receipt_id, created: false, replayed: true }, summary, recovered: true });
+            }
+            result.resolved += 1;
+            continue;
+          }
           if (reference.detail_next_retry_at && new Date(reference.detail_next_retry_at).getTime() > Date.now()) { result.retryPending += 1; continue; }
           await repository.markSourceReceiptDetailAttempt({ sourceId: sourceContext.sourceId, sourceReceiptId: summary.id });
         }
@@ -54,70 +125,7 @@ export async function syncReceipts({ client, repository, normalizer = null, matc
           if (saved?.created === false) { result.alreadyExisted += 1; logger.info?.('fiscal_receipt_replay', { receiptId: summary.id }); }
           else { result.inserted += 1; logger.info?.('fiscal_receipt_inserted', { receiptId: summary.id }); }
           if (normalizer) result.source_ingest_success_count += 1;
-          if (normalizer && saved?.id && !(sourceContext?.sourceId && saved.created === false)) {
-            try {
-              const normalized = await normalizer(saved.id);
-              const status = normalized?.facts?.normalizationStatus;
-              if (status === 'READY') result.normalization_ready_count += 1;
-              else if (status === 'BLOCKED') result.normalization_blocked_count += 1;
-              else if (status === 'UNSUPPORTED') result.normalization_unsupported_count += 1;
-              if (matcher && status === 'READY') {
-                try {
-                  const matched = await matcher(saved.id, normalized);
-                  const summary = matched?.summary ?? {};
-                  result.matcher_examined += Number(summary.settlementsExamined ?? 0);
-                  result.matcher_confirmed += Number(summary.confirmedSettlements ?? 0);
-                  result.matcher_ambiguous += Number(summary.ambiguousSettlements ?? 0);
-                  result.matcher_candidate_only += Number(summary.candidateOnlySettlements ?? 0);
-                  result.matcher_unmatched += Number(summary.unmatchedSettlements ?? 0);
-                  logger.info?.('prepayment_settlement_reconsidered', { receiptId: summary.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'RECONSIDERED' });
-                } catch (matcherError) {
-                  result.matcher_failed += 1;
-                  logger.error?.('prepayment_settlement_matcher_failure', { receiptId: summary.id, errorCode: 'MATCHER_EXCEPTION', error: matcherError.message });
-                }
-              }
-              // Return reconsideration is bounded to newly ingested return receipts;
-              // replaying the full corpus must not rescan every historical return.
-              if (returnMatcher && status === 'READY' && Number(normalized?.facts?.fiscalOperationType) === 2 && saved?.created !== false) {
-                try {
-                  const matched = await returnMatcher(saved.id, normalized);
-                  const returnSummary = matched?.summary ?? {};
-                  result.return_matcher_examined += Number(returnSummary.returnsExamined ?? 0);
-                  result.return_matcher_confirmed += Number(returnSummary.confirmed ?? 0);
-                  result.return_matcher_ambiguous += Number(returnSummary.ambiguous ?? 0);
-                  result.return_matcher_candidate_only += Number(returnSummary.candidateOnly ?? 0);
-                  result.return_matcher_unmatched += Number(returnSummary.unresolved ?? 0);
-                  logger.info?.('return_refund_reconsidered', { receiptId: matched?.receiptId ?? saved.id, status: matched?.triggerStatus ?? 'UNRESOLVED' });
-                } catch (returnMatcherError) {
-                  result.return_matcher_failed += 1;
-                  logger.error?.('return_refund_matcher_failure', { receiptId: saved.id, errorCode: 'RETURN_MATCHER_EXCEPTION', error: returnMatcherError.message });
-                }
-              }
-              let standalone = null;
-              if (standaloneMatcher && status === 'READY') {
-                try {
-                  standalone = await standaloneMatcher(saved.id, normalized);
-                  result.standalone_purchase_examined += Number(standalone?.examined ?? 1);
-                  result.standalone_purchase_created += Number(standalone?.created ?? 0);
-                } catch (standaloneError) {
-                  result.standalone_purchase_failed += 1;
-                  logger.error?.('standalone_purchase_failure', { receiptId: saved.id, errorCode: 'STANDALONE_PURCHASE_EXCEPTION', error: standaloneError.message });
-                }
-              }
-              if (ledgerRefresher && (saved?.created !== false || Number(standalone?.created ?? 0) > 0)) {
-                try {
-                  const ledger = await ledgerRefresher(saved.id);
-                  logger.info?.('ledger_incremental_refresh', { receiptId: saved.id, bounded: ledger?.bounded === true, eventCount: ledger?.eventIds?.length ?? 0, createdEntries: ledger?.created?.entries ?? 0 });
-                } catch (ledgerError) {
-                  result.ledger_refresh_failed = (result.ledger_refresh_failed ?? 0) + 1;
-                  logger.error?.('ledger_incremental_refresh_failure', { receiptId: saved.id, errorCode: 'LEDGER_REFRESH_FAILED', error: ledgerError.message });
-                }
-              }
-            } catch (normalizationError) {
-              result.normalization_failed_count += 1;
-              logger.error?.('fiscal_normalization_failure', { receiptId: summary.id, errorCode: 'NORMALIZER_EXCEPTION', error: normalizationError.message });
-            }
-          }
+          if (normalizer && saved?.id && !(sourceContext?.sourceId && saved.created === false)) await processSavedReceipt({ saved, summary });
         } catch (error) {
           if (sourceContext?.sourceId && repository.markSourceReceiptDetailUnavailable && detailErrorClassifier(error)) {
             await repository.markSourceReceiptDetailUnavailable({ sourceId: sourceContext.sourceId, sourceReceiptId: summary.id, error: safeDetailErrorFields(error) });
