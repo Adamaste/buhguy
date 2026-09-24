@@ -157,3 +157,40 @@ test('future detail retry is skipped without calling FNS detail endpoint', async
   assert.equal(result.retryPending, 1);
   assert.equal(result.errors, 0);
 });
+
+test('resolved receipt with missing current normalization is recovered from canonical storage', async () => {
+  let detailCalls = 0;
+  let hasFacts = false;
+  let normalizerCalls = 0;
+  let ledgerCalls = 0;
+  const repository = {
+    async updateSyncState() {},
+    async updateSourceSyncState() {},
+    async upsertSourceReceiptReference() { return { status: 'RESOLVED', receipt_id: 42 }; },
+    async hasCurrentNormalization() { return hasFacts; },
+  };
+  const client = {
+    async listReceipts() { return { hasMore: false, receipts: [{ id: 'already-resolved' }] }; },
+    async getReceiptRaw() { detailCalls += 1; throw new Error('FNS detail must not be fetched'); },
+  };
+  const sync = () => syncReceipts({
+    client,
+    repository,
+    sourceContext: { sourceId: 457 },
+    normalizer: async (receiptId) => { normalizerCalls += 1; assert.equal(receiptId, 42); hasFacts = true; return { facts: { normalizationStatus: 'READY' } }; },
+    ledgerRefresher: async (receiptId) => { ledgerCalls += 1; assert.equal(receiptId, 42); return { bounded: true, eventIds: [42] }; },
+    logger: { info() {}, error() {} },
+  });
+
+  const first = await sync();
+  const second = await sync();
+  assert.equal(first.resolved, 1);
+  assert.equal(first.normalization_ready_count, 1);
+  assert.equal(second.resolved, 1);
+  assert.equal(second.normalization_ready_count, 0);
+  assert.equal(detailCalls, 0);
+  assert.equal(normalizerCalls, 1);
+  assert.equal(ledgerCalls, 1);
+  assert.equal(first.errors, 0);
+  assert.equal(second.errors, 0);
+});

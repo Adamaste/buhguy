@@ -146,6 +146,13 @@ export class ReceiptRepository {
           detail_http_status=NULL,detail_error_code=NULL,detail_error_signature=NULL,updated_at=NOW()
       WHERE fns_source_id=$1 AND source_receipt_id=$2`, [sourceId, sourceReceiptId, receiptId]);
   }
+  async hasCurrentNormalization(receiptId, normalizationVersion = 'fiscal-normalizer-v1') {
+    const result = await this.pool.query(
+      'SELECT 1 FROM receipt_fiscal_facts WHERE receipt_id=$1 AND normalization_version=$2 LIMIT 1',
+      [receiptId, normalizationVersion],
+    );
+    return result.rowCount > 0;
+  }
   async markSourceReceiptDetailUnavailable({ sourceId, sourceReceiptId, error }) {
     const result = await this.pool.query(`UPDATE fns_source_receipt_refs
       SET receipt_id=NULL,status='FNS_DETAIL_UNAVAILABLE',

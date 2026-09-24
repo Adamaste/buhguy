@@ -535,6 +535,58 @@ if (!connectionString) {
     assert.deepEqual(await counts(), { receipts: '2', items: '2', raw: '2' });
   });
 
+  test('resolved source receipt with missing normalization is recovered without FNS refetch', async () => {
+    await reset();
+    const repo = new ReceiptRepository(pool);
+    const source = await repo.ensureSource({ sourceKey: 'resolved-normalization-recovery', sessionRef: 'test:resolved-normalization-recovery' });
+    const raw = rawFixture('resolved-normalization-recovery-receipt', 'resolved-normalization-recovery', {
+      fiscalDocumentFormatVer: '4',
+      cashTotalSum: 32380,
+      ecashTotalSum: 0,
+      prepaidSum: 0,
+      creditSum: 0,
+      provisionSum: 0,
+      items: [{ name: 'Recovery item', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 4 }],
+    });
+    const saved = await repo.upsertObservedBundle({ sourceId: source.id, sourceReceiptId: raw.key, ...bundle(raw) });
+    await pool.query(`INSERT INTO fns_source_receipt_refs(fns_source_id,source_receipt_id,receipt_id,status,resolved_at)
+      VALUES($1,$2,$3,'RESOLVED',NOW())`, [source.id, raw.key, saved.id]);
+
+    let detailCalls = 0;
+    let normalizerCalls = 0;
+    let ledgerCalls = 0;
+    const client = {
+      async listReceipts() { return { hasMore: false, receipts: [{ id: raw.key }] }; },
+      async getReceiptRaw() { detailCalls += 1; throw new Error('FNS detail must not be fetched'); },
+    };
+    const run = () => syncReceipts({
+      client,
+      repository: repo,
+      sourceContext: { sourceId: source.id },
+      normalizer: async (receiptId) => { normalizerCalls += 1; const result = await normalizeAndStoreReceipt(pool, receiptId); return result; },
+      ledgerRefresher: async () => { ledgerCalls += 1; return { bounded: true, eventIds: [] }; },
+      logger: { info() {}, error() {} },
+    });
+
+    const first = await run();
+    const second = await run();
+    assert.equal(first.resolved, 1);
+    assert.equal(first.normalization_ready_count, 1);
+    assert.equal(second.resolved, 1);
+    assert.equal(second.normalization_ready_count, 0);
+    assert.equal(first.errors, 0);
+    assert.equal(second.errors, 0);
+    assert.equal(first.unclassified, 0);
+    assert.equal(second.unclassified, 0);
+    assert.equal(detailCalls, 0);
+    assert.equal(normalizerCalls, 1);
+    assert.equal(ledgerCalls, 1);
+    assert.equal((await pool.query('SELECT count(*) FROM receipts WHERE id=$1', [saved.id])).rows[0].count, '1');
+    assert.equal((await pool.query('SELECT count(*) FROM receipt_source_observations WHERE fns_source_id=$1 AND source_receipt_id=$2', [source.id, raw.key])).rows[0].count, '1');
+    assert.equal((await pool.query("SELECT count(*) FROM receipt_fiscal_facts WHERE receipt_id=$1 AND normalization_version='fiscal-normalizer-v1'", [saved.id])).rows[0].count, '1');
+    assert.equal((await pool.query("SELECT count(*) FROM receipt_item_fiscal_facts WHERE receipt_item_id IN (SELECT id FROM receipt_items WHERE receipt_id=$1) AND normalization_version='fiscal-normalizer-v1'", [saved.id])).rows[0].count, '1');
+  });
+
   test('transient metadata replay is harmless and Xiaomi two-document regression stays two', async () => {
     await reset();
     const repo = new ReceiptRepository(pool);
