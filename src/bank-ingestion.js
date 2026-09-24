@@ -130,7 +130,7 @@ export async function ingestBankEvent(pool, input) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const existing = await client.query('SELECT id,payload_sha256 FROM bank_event_observations WHERE bank_source_id=$1 AND dedup_key=$2 FOR SHARE', [source.id, dedupKey]);
+    const existing = await client.query('SELECT id,payload_sha256 FROM bank_event_observations WHERE bank_source_id=$1 AND dedup_key=$2', [source.id, dedupKey]);
     if (existing.rowCount) {
       await client.query('ROLLBACK');
       if (existing.rows[0].payload_sha256 !== payloadSha256) return { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' };
