@@ -31,6 +31,7 @@ const unitFiles = [
   'tests/bank-source-provisioning.test.js',
   'tests/bank-ingestion-http.test.js',
   'tests/bank-device-runtime.test.js',
+  'tests/bank-ingestion-privilege-scripts.test.js',
   'tests/runtime-schema.test.js',
   'tests/android-bank-envelope.test.js',
   'tests/chatgpt-accounting-semantic-layer.test.js',
