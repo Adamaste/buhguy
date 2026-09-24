@@ -95,3 +95,53 @@ Bank-specific parser work is separate from the current raw-only collector
 milestone. A bank notification with partial or unknown normalization is retained
 as evidence and must not be silently promoted to a fully classified accounting
 event.
+
+## Android bank collector
+
+The Android project is in `android/buhguy-bank-collector`. Use the committed
+Gradle Wrapper so local and CI builds use the same Gradle version:
+
+```text
+cd android/buhguy-bank-collector
+gradlew.bat test
+gradlew.bat assembleDebug
+```
+
+The current AGP/Kotlin configuration requires Java 17 and an Android SDK with
+the configured compile SDK. A wrapper version check can run without the SDK,
+but project tests and APK assembly require both Java 17 and the SDK.
+
+On Linux/macOS use `./gradlew test` and `./gradlew assembleDebug`. The debug APK
+is produced at:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+Before device testing, verify that a device is visible and authorized:
+
+```text
+adb devices
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Enable notification access for the collector in Android Settings under
+`Special app access` -> `Notification access`. The exact menu label can vary by
+Android version. Do not store device credentials, tokens, or source credentials
+in the repository, APK sources, shell history, or logs.
+
+The operational path is:
+
+```text
+bank notification
+-> NotificationListenerService
+-> Room outbox
+-> WorkManager delivery
+-> HTTPS /api/v1/bank/events
+-> authenticated bank observation
+-> bank transaction
+```
+
+The first E2E test should use a provisioned source and device credential from
+the supported provisioning flow. It must not create a financial operation just
+for testing.
