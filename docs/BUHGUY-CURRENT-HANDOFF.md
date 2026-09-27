@@ -17,12 +17,47 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-27
-- Current master: `c95658a8d8e93407e2732ca8cfa1b508ba729c0e`
-- Current phase: Android bank-notification transport validation completed for Alfa and Yandex
-- Current blocker: Yandex transport/delivery is proven, but persistent client diagnostics did not retain the captured Yandex event even though exact source-event correlation and backend ingestion succeeded
+- Current master: `bdf924f1d8a47ea9e5d204a3f1c25b7873e93801`
+- Current phase: Yandex bank normalization v1 deployed and production schema migration validated
+- Current blocker: no deployment blocker; persistent Android diagnostics remains a separate observability follow-up
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Next action: begin bank-specific parsing and normalization design from the proven raw Yandex evidence path; keep the persistent-diagnostics anomaly as a separate follow-up
+- Next action: validate future bank coverage and provider parsers without backfilling observation 18 or starting reconciliation/accounting work
+
+## Yandex normalization v1 production deployment
+
+The merged Yandex normalization release was promoted from master commit
+`bdf924f1d8a47ea9e5d204a3f1c25b7873e93801` using an immutable LF-normalized
+artifact. The deployed artifact SHA-256 was
+`03b1b5dd8578543a646c82c1b82dba97afc39ae72dffeab33911e1e5b8cb8469`.
+
+Production validation completed successfully:
+
+- runtime manifest hashes matched the staged artifact after promotion;
+- migration `012_bank_transaction_event_type.sql` was applied through the
+  existing migration implementation;
+- `bank_transactions.event_type` is present and existing transaction 16 is
+  `UNKNOWN`; no historical normalization backfill was performed;
+- observation 18 metadata and payload fingerprint remained unchanged;
+- observation and transaction counts remained 16 and 16;
+- an in-memory dry-run of observation 18 returned
+  `INCOMING_TRANSFER`, `CREDIT`, `RUB`, `READY`, using
+  `yandex-bank-normalizer-v1`;
+- `/healthz` returned HTTP 200;
+- runtime privileges remained least-privilege, including table-wide
+  `SELECT` denied on `bank_transactions` and column-level `SELECT(id)`
+  retained for `RETURNING`;
+- the FNS timer was restored as `enabled/active` after validation. No manual
+  sync or new bank operation was performed during this deployment.
+
+The deployment did not change phone state, Android configuration, device
+credentials, Datadog configuration, or database grants. Observation 18 was
+not backfilled; the dry-run only validated parser behavior in memory.
+
+PR #24 is merged. T-Bank remains policy-blocked by its notification permission
+state; this deployment did not change that device policy. The next functional
+stage is bank coverage and provider parsers for Alfa, Sber, VTB, Ozon, and
+T-Bank, with each parser kept fail-closed and evidence-preserving.
 
 ## Read next when needed
 
