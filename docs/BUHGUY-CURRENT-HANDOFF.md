@@ -54,6 +54,11 @@ The deployment did not change phone state, Android configuration, device
 credentials, Datadog configuration, or database grants. Observation 18 was
 not backfilled; the dry-run only validated parser behavior in memory.
 
+PR #24 is merged. T-Bank remains policy-blocked by its notification permission
+state; this deployment did not change that device policy. The next functional
+stage is bank coverage and provider parsers for Alfa, Sber, VTB, Ozon, and
+T-Bank, with each parser kept fail-closed and evidence-preserving.
+
 ## Read next when needed
 
 Detailed architecture and operating contracts already live in:
