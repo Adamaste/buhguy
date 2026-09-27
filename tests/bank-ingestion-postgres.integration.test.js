@@ -57,6 +57,24 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(yandexPurchase.normalization.eventType, 'PURCHASE');
     assert.equal(yandexIncoming.status, 'created');
     assert.equal(yandexIncoming.normalization.eventType, 'INCOMING_TRANSFER');
+    const yandexBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
+    const yandexReplay = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-purchase',
+      payload: { title: 'Покупка', description: 'Покупка на 42.10 RUB ТЕСТОВЫЙ МАГАЗИН' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(yandexReplay.status, 'duplicate');
+    assert.equal(yandexReplay.observationId, Number(yandexBefore.id));
+    const yandexConflict = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-purchase',
+      payload: { title: 'Покупка', description: 'Покупка на 43.10 RUB ТЕСТОВЫЙ МАГАЗИН' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.deepEqual(yandexConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
+    const yandexAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
+    assert.deepEqual(yandexAfter, yandexBefore);
     const counts = await pool.query(`SELECT (SELECT count(*) FROM bank_event_observations) AS observations,
       (SELECT count(*) FROM bank_transactions) AS transactions,
       (SELECT count(*) FROM information_schema.columns WHERE table_name='bank_transactions' AND column_name IN ('receipt_id','purchase_id')) AS forbidden_links`);

@@ -1,7 +1,7 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
-const RUB_AMOUNT = /^(\d+(?:[ \u00a0]\d{3})*)\.(\d{2})\s+RUB\b/i;
+const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -10,7 +10,7 @@ function normalizeWhitespace(value) {
 function normalizedAmount(value) {
   const match = normalizeWhitespace(value).match(RUB_AMOUNT);
   if (!match) return null;
-  return `${match[1].replace(/[ \u00a0]/g, '')}.${match[2]}`;
+  return `${match[1]}.${match[2]}`;
 }
 
 function occurredAt(value) {
