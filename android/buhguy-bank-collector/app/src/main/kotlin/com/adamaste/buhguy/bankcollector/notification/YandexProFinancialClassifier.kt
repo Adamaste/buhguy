@@ -67,7 +67,7 @@ class YandexProFinancialClassifier {
     private fun normalize(value: String?): String? = value?.trim()?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotEmpty() }
 
     private companion object {
-        val PURCHASE_AMOUNT = Regex("покупка на\\s+([0-9]+\\.[0-9]{2})\\s+RUB\\b", RegexOption.IGNORE_CASE)
-        val INCOMING_AMOUNT = Regex("пополнение на\\s+([0-9]+\\.[0-9]{2})\\s+RUB\\b", RegexOption.IGNORE_CASE)
+        val PURCHASE_AMOUNT = Regex("покупка на\\s+([0-9]+\\.[0-9]{2})\\s+RUB(?=\\s|$|[,.])", RegexOption.IGNORE_CASE)
+        val INCOMING_AMOUNT = Regex("пополнение на\\s+([0-9]+\\.[0-9]{2})\\s+RUB(?=\\s|$|[,.])", RegexOption.IGNORE_CASE)
     }
 }
