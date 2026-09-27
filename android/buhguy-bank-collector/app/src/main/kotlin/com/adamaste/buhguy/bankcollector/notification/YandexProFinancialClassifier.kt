@@ -28,7 +28,7 @@ class YandexProFinancialClassifier {
         if (title == null && body == null) return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_MISSING_REQUIRED_FIELD)
 
         val purchaseMarker = body?.startsWith("покупка на", ignoreCase = true) == true
-        val incomingTitle = title == "входящий перевод"
+        val incomingTitle = title?.equals("входящий перевод", ignoreCase = true) == true
         val incomingMarker = body?.startsWith("пополнение на", ignoreCase = true) == true
         val unsupportedMarker = listOf("перевод", "возврат", "комиссия", "снятие").any {
             title?.contains(it, ignoreCase = true) == true || body?.contains(it, ignoreCase = true) == true
