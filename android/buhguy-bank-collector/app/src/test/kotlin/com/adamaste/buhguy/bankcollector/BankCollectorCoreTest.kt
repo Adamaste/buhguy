@@ -37,6 +37,23 @@ class BankCollectorCoreTest {
         assertEquals(first.packageName, "com.demo.bank")
     }
 
+    @Test fun yandexAliasUsesCanonicalProviderAndActualTransportIdentity() {
+        val yandexRegistry = BankProviderRegistry.fromPackageAllowlist(setOf("com.yandex.bank"))
+        val yandexMapper = NotificationEventMapper(yandexRegistry, "android-yandex")
+        val yandexSnapshot = snapshot.copy(
+            packageName = "ru.yandex.taximeter",
+            channelId = "notification_channel_1",
+        )
+
+        val event = yandexMapper.map(yandexSnapshot)!!
+
+        assertEquals("com.yandex.bank", event.ingestionMetadata["provider"])
+        assertEquals(
+            yandexMapper.deterministicSourceEventId(yandexSnapshot),
+            yandexMapper.deterministicSourceEventId(yandexSnapshot.copy(channelId = "other")),
+        )
+    }
+
     @Test fun deliveryPolicyClassifiesOutcomes() {
         assertEquals(DeliveryDecision.Sent, deliveryDecision(201, false, "created"))
         assertEquals(DeliveryDecision.Sent, deliveryDecision(200, false, "duplicate"))

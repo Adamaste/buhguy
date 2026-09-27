@@ -6,6 +6,8 @@ import android.service.notification.StatusBarNotification
 import com.adamaste.buhguy.bankcollector.AppPreferences
 import com.adamaste.buhguy.bankcollector.BankCollectorApplication
 import com.adamaste.buhguy.bankcollector.config.BankProviderRegistry
+import com.adamaste.buhguy.bankcollector.config.YANDEX_BANK_PROVIDER
+import com.adamaste.buhguy.bankcollector.config.YANDEX_PRO_TRANSPORT_PACKAGE
 import com.adamaste.buhguy.bankcollector.outbox.OutboxEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,15 +34,58 @@ class BankNotificationListenerService : NotificationListenerService() {
         val preferences = AppPreferences(this)
         preferences.markLastCallback(callbackAt, sbn.packageName, "callback_entry")
         val registry = BankProviderRegistry.fromPackageAllowlist(preferences.allowedPackages())
-        if (!registry.isAllowed(sbn.packageName)) {
+        val channelId = sbn.notification.channelId
+        val sourceMatch = registry.match(sbn.packageName, channelId)
+        if (sourceMatch == null) {
             BankCaptureDiagnostics.log(
-                BankCaptureLogEvent(packageName = sbn.packageName, stage = "filtered", reason = "not_allowed"),
+                BankCaptureLogEvent(
+                    packageName = sbn.packageName,
+                    stage = "filtered",
+                    reason = if (sbn.packageName == YANDEX_PRO_TRANSPORT_PACKAGE && YANDEX_BANK_PROVIDER in preferences.allowedPackages()) {
+                        "channel_not_allowed"
+                    } else {
+                        "not_allowed"
+                    },
+                ),
             )
-            preferences.markLastCallback(callbackAt, sbn.packageName, "filtered_not_allowed")
+            preferences.markLastCallback(callbackAt, sbn.packageName, "filtered")
             return
         }
         val mapper = NotificationEventMapper(registry, preferences.sourceKey())
-        val snapshot = sbn.toSnapshot()
+        val snapshot = sbn.toSnapshot(channelId)
+        if (sourceMatch.requiresClassifier) {
+            val classification = try {
+                YandexProFinancialClassifier().classify(snapshot)
+            } catch (error: Exception) {
+                BankCaptureDiagnostics.log(
+                    BankCaptureLogEvent(
+                        packageName = sbn.packageName,
+                        stage = "classifier_error",
+                        reason = error::class.java.simpleName,
+                    ),
+                )
+                return
+            }
+            when (classification) {
+                is YandexProClassification.Financial -> {
+                    BankCaptureDiagnostics.log(
+                        BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_financial", reason = classification.type.name),
+                    )
+                }
+                is YandexProClassification.NonFinancial -> {
+                    BankCaptureDiagnostics.log(
+                        BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_non_financial", reason = classification.reason.name),
+                    )
+                    return
+                }
+                is YandexProClassification.Unknown -> {
+                    BankCaptureDiagnostics.log(
+                        BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_unknown", reason = classification.reason.name),
+                    )
+                    return
+                }
+            }
+        }
         val captured = NotificationCapture(mapper).capture(snapshot, Instant.now())
         if (captured == null) {
             BankCaptureDiagnostics.log(
@@ -128,7 +173,7 @@ class BankNotificationListenerService : NotificationListenerService() {
         super.onDestroy()
     }
 
-    private fun StatusBarNotification.toSnapshot(): NotificationSnapshot {
+    private fun StatusBarNotification.toSnapshot(channelId: String?): NotificationSnapshot {
         val extras = notification.extras
         return NotificationSnapshot(
             packageName = packageName,
@@ -140,6 +185,7 @@ class BankNotificationListenerService : NotificationListenerService() {
             text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.take(4096),
             bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.take(4096),
             subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.take(4096),
+            channelId = channelId,
         )
     }
 }
