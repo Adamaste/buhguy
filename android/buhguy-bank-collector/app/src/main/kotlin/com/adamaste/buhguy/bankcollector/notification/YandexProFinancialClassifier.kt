@@ -27,9 +27,9 @@ class YandexProFinancialClassifier {
         val body = normalize(snapshot.bigText?.takeIf { it.isNotBlank() } ?: snapshot.text)
         if (title == null && body == null) return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_MISSING_REQUIRED_FIELD)
 
-        val purchaseMarker = body?.contains("покупка на", ignoreCase = true) == true
+        val purchaseMarker = body?.startsWith("покупка на", ignoreCase = true) == true
         val incomingTitle = title == "входящий перевод"
-        val incomingMarker = body?.contains("пополнение на", ignoreCase = true) == true
+        val incomingMarker = body?.startsWith("пополнение на", ignoreCase = true) == true
         val unsupportedMarker = listOf("перевод", "возврат", "комиссия", "снятие").any {
             title?.contains(it, ignoreCase = true) == true || body?.contains(it, ignoreCase = true) == true
         }
@@ -67,7 +67,7 @@ class YandexProFinancialClassifier {
     private fun normalize(value: String?): String? = value?.trim()?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotEmpty() }
 
     private companion object {
-        val PURCHASE_AMOUNT = Regex("покупка на\\s+([0-9]+\\.[0-9]{2})\\s+RUB(?=\\s|$|[,.])", RegexOption.IGNORE_CASE)
-        val INCOMING_AMOUNT = Regex("пополнение на\\s+([0-9]+\\.[0-9]{2})\\s+RUB(?=\\s|$|[,.])", RegexOption.IGNORE_CASE)
+        val PURCHASE_AMOUNT = Regex("([0-9]+\\.[0-9]{2})\\s+RUB", RegexOption.IGNORE_CASE)
+        val INCOMING_AMOUNT = Regex("([0-9]+\\.[0-9]{2})\\s+RUB", RegexOption.IGNORE_CASE)
     }
 }
