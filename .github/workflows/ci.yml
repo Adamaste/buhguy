@@ -100,3 +100,71 @@ jobs:
           path: android/buhguy-bank-collector/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+
+  android-signed:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Reconstruct signing keystore
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.BUHGUY_ANDROID_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/buhguy-bank-collector.jks"
+          chmod 600 "$RUNNER_TEMP/buhguy-bank-collector.jks"
+
+      - name: Build signed APK
+        working-directory: android/buhguy-bank-collector
+        env:
+          BUHGUY_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/buhguy-bank-collector.jks
+          BUHGUY_ANDROID_STORE_PASSWORD: ${{ secrets.BUHGUY_ANDROID_STORE_PASSWORD }}
+          BUHGUY_ANDROID_KEY_ALIAS: ${{ secrets.BUHGUY_ANDROID_KEY_ALIAS }}
+          BUHGUY_ANDROID_KEY_PASSWORD: ${{ secrets.BUHGUY_ANDROID_KEY_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Verify signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/buhguy-bank-collector/app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          apksigner verify --print-certs "$apk"
+          sha256sum "$apk"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: buhguy-bank-collector-signed
+          path: android/buhguy-bank-collector/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/buhguy-bank-collector.jks"

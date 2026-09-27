@@ -5,6 +5,25 @@ plugins {
     kotlin("plugin.serialization")
 }
 
+val releaseSigningValues = listOf(
+    "BUHGUY_ANDROID_KEYSTORE_PATH",
+    "BUHGUY_ANDROID_STORE_PASSWORD",
+    "BUHGUY_ANDROID_KEY_ALIAS",
+    "BUHGUY_ANDROID_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull }
+val releaseSigningReady = releaseSigningValues.values.all { !it.isNullOrBlank() }
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (releaseTaskRequested && !releaseSigningReady) {
+    throw GradleException(
+        "Release signing requires BUHGUY_ANDROID_KEYSTORE_PATH, " +
+            "BUHGUY_ANDROID_STORE_PASSWORD, BUHGUY_ANDROID_KEY_ALIAS, and " +
+            "BUHGUY_ANDROID_KEY_PASSWORD"
+    )
+}
+
 android {
     namespace = "com.adamaste.buhguy.bankcollector"
     compileSdk = 35
@@ -16,6 +35,25 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = file(releaseSigningValues.getValue("BUHGUY_ANDROID_KEYSTORE_PATH"))
+                storePassword = releaseSigningValues.getValue("BUHGUY_ANDROID_STORE_PASSWORD")
+                keyAlias = releaseSigningValues.getValue("BUHGUY_ANDROID_KEY_ALIAS")
+                keyPassword = releaseSigningValues.getValue("BUHGUY_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     compileOptions {
