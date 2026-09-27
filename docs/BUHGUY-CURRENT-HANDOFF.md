@@ -17,12 +17,12 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-27
-- Current master: `77be9493d78076247f590935fd02865e7f175da3`
-- Current phase: Android bank-notification real-device diagnostics
-- Current blocker: REAL2 strongly indicates that Yandex financial notifications are actually posted by `ru.yandex.taximeter` (Yandex Pro), not `com.yandex.bank`; the collector received that package and rejected it as `FILTERED_NOT_ALLOWED`
-- Current Yandex evidence: REAL2 callback `ru.yandex.taximeter`, notification id `52091223`, callback time 17:28:11; a saved live NotificationManager record has the same package/id on `notification_channel_1`; six active `ru.yandex.taximeter` records were on that channel while the visible Yandex Pro shade showed six financial cards
-- Current uncertainty: privacy-safe metadata analysis found only a positive-set candidate (`notification_channel_1` + common icon/group metadata); no negative set or static proof establishes finance-only usage, so metadata-only filtering remains unsafe
-- Next action: close the forensic branch and prepare a design-only Yandex Pro provider-specific financial classifier with sanitized regression fixtures; implementation should follow only after the fixture contract is reviewed
+- Current master: `c95658a8d8e93407e2732ca8cfa1b508ba729c0e`
+- Current phase: Android bank-notification transport validation completed for Alfa and Yandex
+- Current blocker: Yandex transport/delivery is proven, but persistent client diagnostics did not retain the captured Yandex event even though exact source-event correlation and backend ingestion succeeded
+- Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
+- Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
+- Next action: begin bank-specific parsing and normalization design from the proven raw Yandex evidence path; keep the persistent-diagnostics anomaly as a separate follow-up
 
 ## Read next when needed
 
@@ -440,43 +440,14 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-Do **not** perform another bank transfer yet.
+The Yandex real-device transport milestone is closed with an observability gap:
 
-The next stage is read-only static forensics of the installed Yandex Bank application (`com.yandex.bank`) to reconstruct the narrow push-to-notification path.
+- `ru.yandex.taximeter` -> `notification_channel_1` -> provider-specific financial classifier -> authenticated backend is proven by exact source-event correlation;
+- backend observation 18 and transaction 16 were created without manual backend mutation;
+- Tinkoff remains separately policy-blocked by notification permission/AppOps;
+- persistent `lastCapture` and `lastSuccessfulDelivery` did not reflect the Yandex event and should be investigated separately without another financial operation.
 
-Use the already installed APK/split APK set and inspect only notification-related metadata/code. The target questions are:
-
-1. Which Firebase/AppMetrica/Yandex components receive push messages?
-2. What are the actual push entrypoints and call chains?
-3. Where does Yandex create Android notifications (`NotificationManager.notify`, `NotificationManagerCompat.notify`, wrappers, or equivalent)?
-4. Which channel IDs are selected for which paths?
-5. Which explicit conditions can suppress notification creation after a push has been received?
-6. Are there silent/data-only, foreground, duplicate, TTL/freshness, feature-flag, or payload-dependent branches?
-7. Does any path use notification delegation or an alternate posting package?
-8. Are there safe log tags/stages that can be captured in a future runtime test without exposing financial content?
-
-Keep the static analysis narrowly scoped to push -> notification behavior. Do not inspect banking protocols, authentication, transaction signing, private keys, TLS pinning, account data, or unrelated application internals.
-
-Important interpretation rule:
-
-- finding a static suppression branch proves that the branch exists;
-- it does **not** prove REAL2 used that branch;
-- the REAL2 root cause remains unproven until runtime evidence connects the event to one path.
-
-### Do not do before this static forensic stage is complete
-
-- no second bank transfer
-- no new financial operation
-- no `adb logcat -c`
-- no phone reboot
-- no force-stop/restart of collector
-- no Notification Access toggle/rebind
-- no app reinstall/update
-- no permission/AppOps/channel mutation
-- no credential rotation
-- no backend/DB mutation
-- no DB grant changes
-- no APK patching/runtime hooks/instrumentation
+The next roadmap stage is bank-specific parsing and normalization. Keep raw evidence immutable, preserve `UNKNOWN`/`PARTIAL` when notification facts are insufficient, and do not start reconciliation or ledger integration in the same change.
 
 ## How to interpret the next evidence
 
