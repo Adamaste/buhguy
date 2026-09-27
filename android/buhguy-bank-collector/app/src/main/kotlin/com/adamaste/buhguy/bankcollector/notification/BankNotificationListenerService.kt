@@ -7,6 +7,7 @@ import com.adamaste.buhguy.bankcollector.AppPreferences
 import com.adamaste.buhguy.bankcollector.BankCollectorApplication
 import com.adamaste.buhguy.bankcollector.config.BankProviderRegistry
 import com.adamaste.buhguy.bankcollector.outbox.OutboxEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,13 +20,51 @@ class BankNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val preferences = AppPreferences(this)
-        val mapper = NotificationEventMapper(BankProviderRegistry.fromPackageAllowlist(preferences.allowedPackages()), preferences.sourceKey())
-        val captured = NotificationCapture(mapper).capture(sbn.toSnapshot(), Instant.now()) ?: return
+        val registry = BankProviderRegistry.fromPackageAllowlist(preferences.allowedPackages())
+        if (!registry.isAllowed(sbn.packageName)) return
+        val mapper = NotificationEventMapper(registry, preferences.sourceKey())
+        val snapshot = sbn.toSnapshot()
+        val captured = NotificationCapture(mapper).capture(snapshot, Instant.now()) ?: return
+        val eventPrefix = BankCaptureDiagnostics.eventPrefix(captured.sourceEventId)
+        BankCaptureDiagnostics.log(
+            BankCaptureLogEvent(
+                packageName = captured.packageName,
+                outcome = BankCaptureOutcome.CAPTURED,
+                eventPrefix = eventPrefix,
+                postTime = snapshot.postTime,
+                notificationId = snapshot.notificationId,
+                hasTag = snapshot.notificationTag != null,
+            ),
+        )
         serviceScope.launch {
-            (application as BankCollectorApplication).database.outbox().insert(
-                OutboxEntity(sourceEventId = captured.sourceEventId, packageName = captured.packageName, eventJson = captured.eventJson),
-            )
-            com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@BankNotificationListenerService)
+            try {
+                val rowId = (application as BankCollectorApplication).database.outbox().insert(
+                    OutboxEntity(sourceEventId = captured.sourceEventId, packageName = captured.packageName, eventJson = captured.eventJson),
+                )
+                val outcome = BankCaptureDiagnostics.insertOutcome(rowId)
+                BankCaptureDiagnostics.log(
+                    BankCaptureLogEvent(
+                        packageName = captured.packageName,
+                        outcome = outcome,
+                        eventPrefix = eventPrefix,
+                        rowId = rowId.takeIf { outcome == BankCaptureOutcome.INSERTED },
+                    ),
+                )
+                preferences.markLastCapture(Instant.now().toString(), captured.packageName, outcome.name, eventPrefix)
+                com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@BankNotificationListenerService)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                BankCaptureDiagnostics.log(
+                    BankCaptureLogEvent(
+                        packageName = captured.packageName,
+                        outcome = BankCaptureOutcome.ERROR,
+                        eventPrefix = eventPrefix,
+                        stage = "room_insert",
+                        errorType = error::class.java.simpleName,
+                    ),
+                )
+                preferences.markLastCapture(Instant.now().toString(), captured.packageName, BankCaptureOutcome.ERROR.name, eventPrefix)
+            }
         }
     }
 
