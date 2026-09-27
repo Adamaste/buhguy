@@ -6,6 +6,8 @@ import android.service.notification.StatusBarNotification
 import com.adamaste.buhguy.bankcollector.AppPreferences
 import com.adamaste.buhguy.bankcollector.BankCollectorApplication
 import com.adamaste.buhguy.bankcollector.config.BankProviderRegistry
+import com.adamaste.buhguy.bankcollector.config.YANDEX_BANK_PROVIDER
+import com.adamaste.buhguy.bankcollector.config.YANDEX_PRO_TRANSPORT_PACKAGE
 import com.adamaste.buhguy.bankcollector.outbox.OutboxEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
