@@ -27,6 +27,8 @@ const unitFiles = [
   'tests/fns-user-onboarding.test.js',
   'tests/accounting-pipeline.test.js',
   'tests/bank-ingestion.test.js',
+  'tests/yandex-bank-normalization.test.js',
+  'tests/bank-event-type-migration.test.js',
   'tests/bank-device-auth.test.js',
   'tests/bank-source-provisioning.test.js',
   'tests/bank-ingestion-http.test.js',

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isYandexBankProvider, normalizeYandexBankEvent } from './bank-normalization.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
@@ -66,6 +67,7 @@ function normalizeAmount(value) {
 }
 
 export function normalizeBankEvent(input) {
+  if (isYandexBankProvider(input)) return normalizeYandexBankEvent(input);
   const payload = input.payload;
   const amount = normalizeAmount(payload.amount);
   const currency = typeof payload.currency === 'string' && /^[A-Z]{3}$/.test(payload.currency) ? payload.currency : null;
@@ -81,6 +83,7 @@ export function normalizeBankEvent(input) {
     merchant: payload.merchant ?? null,
     counterparty: payload.counterparty ?? null,
     accountReference: payload.accountReference ?? null,
+    eventType: 'UNKNOWN',
     normalizationStatus: complete ? 'READY' : partial ? 'PARTIAL' : 'UNKNOWN',
     evidenceQuality: complete ? 'EXACT' : partial ? 'PARTIAL' : 'INSUFFICIENT',
     normalizationVersion: BANK_NORMALIZATION_VERSION,
@@ -138,8 +141,8 @@ export async function ingestBankEvent(pool, input) {
     }
     const observation = (await client.query(`INSERT INTO bank_event_observations(bank_source_id,source_event_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalJson(event.ingestionMetadata)])).rows[0];
-    const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,normalization_status,normalization_version,evidence_quality)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
+    const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,event_type,normalization_status,normalization_version,evidence_quality)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
     await client.query('COMMIT');
     return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized };
   } catch (error) {

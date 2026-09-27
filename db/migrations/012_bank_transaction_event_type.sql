@@ -1,0 +1,2 @@
+ALTER TABLE bank_transactions
+  ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'UNKNOWN';

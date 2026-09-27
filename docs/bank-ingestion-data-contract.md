@@ -45,7 +45,24 @@ contains no receipt or purchase foreign key by design. Normalization statuses
 are `READY`, `PARTIAL`, `UNKNOWN`, and `REJECTED`; direction is `DEBIT`,
 `CREDIT`, or `UNKNOWN`. An internal account reference may be retained for
 future controlled reconciliation, but it is intentionally excluded from the
-ChatGPT semantic view.
+ChatGPT semantic view. `event_type` is an evidence-level classification, not a
+future accounting business event; the initial values are `UNKNOWN`, `PURCHASE`,
+and `INCOMING_TRANSFER`.
+
+## Versioned provider normalization
+
+Provider-specific parsing is selected only from the structured ingestion
+metadata. The first versioned parser supports `com.yandex.bank` notification
+evidence with exact, deterministic forms for `PURCHASE` and
+`INCOMING_TRANSFER`. It prefers the notification description over text,
+normalizes whitespace, and accepts only the observed two-decimal RUB amount
+format. Missing, malformed, unsupported, or partial evidence remains
+`UNKNOWN`/`PARTIAL`; the parser never guesses merchant, counterparty, or
+direction.
+
+Raw observations remain immutable. Re-normalization is an explicit, versioned
+projection operation; this change does not rewrite historical observations or
+run a production backfill.
 
 ## Ingestion boundary
 
