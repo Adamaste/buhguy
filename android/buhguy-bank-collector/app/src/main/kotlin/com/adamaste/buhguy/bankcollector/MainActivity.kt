@@ -61,7 +61,16 @@ class MainActivity : AppCompatActivity() {
         layout.addView(pending)
         lifecycleScope.launch(Dispatchers.IO) {
             val count = (application as BankCollectorApplication).database.outbox().pendingCount()
-            launch(Dispatchers.Main) { pending.text = "Pending events: $count\nLast successful delivery: ${preferences.lastSuccessfulDelivery()}\nAuth provisioning is separate." }
+            launch(Dispatchers.Main) {
+                pending.text = listOf(
+                    "Pending events: $count",
+                    "Last successful delivery: ${preferences.lastSuccessfulDelivery()}",
+                    "Last capture: ${preferences.lastCaptureOutcome()} ${preferences.lastCapturePackage()} ${preferences.lastCaptureEventPrefix()} at ${preferences.lastCaptureAt()}",
+                    "Last callback: ${preferences.lastCallbackStage()} ${preferences.lastCallbackPackage()} at ${preferences.lastCallbackAt()}",
+                    "Listener lifecycle: ${preferences.lastListenerState()} at ${preferences.lastListenerStateAt()}",
+                    "Auth provisioning is separate.",
+                ).joinToString("\n")
+            }
         }
         setContentView(layout)
     }

@@ -9,10 +9,40 @@ class AppPreferences(context: Context) {
     fun allowedPackages(): Set<String> = preferences.getStringSet("allowedPackages", emptySet()) ?: emptySet()
     fun serverUrl(): String = preferences.getString("serverUrl", "")!!
     fun lastSuccessfulDelivery(): String = preferences.getString("lastSuccessfulDelivery", "never")!!
+    fun lastCaptureAt(): String = preferences.getString("lastCaptureAt", "never")!!
+    fun lastCapturePackage(): String = preferences.getString("lastCapturePackage", "never")!!
+    fun lastCaptureOutcome(): String = preferences.getString("lastCaptureOutcome", "never")!!
+    fun lastCaptureEventPrefix(): String = preferences.getString("lastCaptureEventPrefix", "never")!!
+    fun lastCallbackAt(): String = preferences.getString("lastCallbackAt", "never")!!
+    fun lastCallbackPackage(): String = preferences.getString("lastCallbackPackage", "never")!!
+    fun lastCallbackStage(): String = preferences.getString("lastCallbackStage", "never")!!
+    fun lastListenerState(): String = preferences.getString("lastListenerState", "never")!!
+    fun lastListenerStateAt(): String = preferences.getString("lastListenerStateAt", "never")!!
     fun save(serverUrl: String, sourceKey: String, allowedPackages: Set<String>) {
         preferences.edit().putString("serverUrl", serverUrl.trim()).putString("sourceKey", sourceKey.trim())
             .putStringSet("allowedPackages", allowedPackages.map(String::trim).filter(String::isNotEmpty).toSet()).apply()
     }
 
     fun markSuccessfulDelivery(timestamp: String) = preferences.edit().putString("lastSuccessfulDelivery", timestamp).apply()
+
+    fun markLastCapture(timestamp: String, packageName: String, outcome: String, eventPrefix: String) =
+        preferences.edit()
+            .putString("lastCaptureAt", timestamp)
+            .putString("lastCapturePackage", packageName)
+            .putString("lastCaptureOutcome", outcome)
+            .putString("lastCaptureEventPrefix", eventPrefix)
+            .apply()
+
+    fun markLastCallback(timestamp: String, packageName: String, stage: String) =
+        preferences.edit()
+            .putString("lastCallbackAt", timestamp)
+            .putString("lastCallbackPackage", packageName)
+            .putString("lastCallbackStage", stage)
+            .apply()
+
+    fun markListenerState(timestamp: String, state: String) =
+        preferences.edit()
+            .putString("lastListenerState", state)
+            .putString("lastListenerStateAt", timestamp)
+            .apply()
 }
