@@ -166,8 +166,19 @@ jobs:
         run: |
           set -euo pipefail
           apk=android/buhguy-bank-collector/app/build/outputs/apk/release/app-release.apk
+          apksigner="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
           test -f "$apk"
-          apksigner verify --print-certs "$apk"
+          test -x "$apksigner"
+          cert_output="$($apksigner verify --print-certs "$apk")"
+          printf '%s\n' "$cert_output"
+          actual_cert="$(printf '%s\n' "$cert_output" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          expected_cert="cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a"
+          test -n "$actual_cert"
+          printf 'Signed certificate SHA-256: %s\n' "$actual_cert"
+          if [[ "$actual_cert" != "$expected_cert" ]]; then
+            echo "Unexpected signed certificate fingerprint"
+            exit 1
+          fi
           sha256sum "$apk"
 
       - name: Upload signed APK
