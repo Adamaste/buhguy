@@ -21,8 +21,8 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current phase: Android bank-notification real-device diagnostics
 - Current blocker: REAL2 strongly indicates that Yandex financial notifications are actually posted by `ru.yandex.taximeter` (Yandex Pro), not `com.yandex.bank`; the collector received that package and rejected it as `FILTERED_NOT_ALLOWED`
 - Current Yandex evidence: REAL2 callback `ru.yandex.taximeter`, notification id `52091223`, callback time 17:28:11; a saved live NotificationManager record has the same package/id on `notification_channel_1`; six active `ru.yandex.taximeter` records were on that channel while the visible Yandex Pro shade showed six financial cards
-- Current uncertainty: `notification_channel_1` is used by all six currently observed financial Yandex Pro cards, but static analysis of the Flutter/AOT `ru.yandex.taximeter` APK could not prove that the channel is finance-exclusive; channel-only filtering is therefore not safe yet
-- Next action: inspect privacy-safe per-notification metadata for the six known financial `ru.yandex.taximeter` records (tag/group/category/intent/other stable metadata) to find a provider-specific discriminator; only if a reliable discriminator exists should the collector be changed
+- Current uncertainty: privacy-safe metadata analysis found only a positive-set candidate (`notification_channel_1` + common icon/group metadata); no negative set or static proof establishes finance-only usage, so metadata-only filtering remains unsafe
+- Next action: close the forensic branch and prepare a design-only Yandex Pro provider-specific financial classifier with sanitized regression fixtures; implementation should follow only after the fixture contract is reviewed
 
 ## Read next when needed
 
@@ -402,6 +402,33 @@ Result:
 - therefore `FINANCIAL_CHANNEL_ISOLATION=NOT_PROVEN`
 
 Do not implement a channel-only allow rule yet. The next useful evidence is a privacy-safe discriminator available on the `StatusBarNotification`/Notification metadata of the six known financial records (for example tag shape/prefix, group, category, creator/intent identity, or another stable non-content field). If no reliable metadata discriminator exists, a deliberately scoped provider-specific content classifier with regression fixtures may be required, but do not introduce brittle regex heuristics without evidence.
+
+
+### Yandex Pro metadata-discriminator follow-up
+
+Privacy-safe metadata analysis of the six known financial active records found the following common positive-set features:
+
+- package/opPkg: `ru.yandex.taximeter`
+- channel: `notification_channel_1`
+- importance: 4
+- flags: auto-cancel
+- visibility: private
+- small icon: resource `0x7f110000`
+- common group pattern: `0|ru.yandex.taximeter|g:Aggregate_NormalNotificationSection`
+- active records had no retained tag value, although the earlier REAL2 callback reported `hasTag=true`
+
+No negative set of known non-financial Yandex Pro notifications was available. Static correlation inside Flutter/AOT code did not prove that channel/icon/group metadata belongs only to financial notifications.
+
+Result:
+
+- `METADATA_DISCRIMINATOR_DECISION=CANDIDATE_ONLY`
+- metadata-only filtering is not sufficiently proven for production
+- further generic reverse engineering is not justified by the available evidence
+- the next design should use a narrow Yandex Pro transport match plus a provider-specific local financial classifier before persistence/backend delivery
+- `FINANCIAL` may proceed to mapping/outbox
+- `NON_FINANCIAL` and `UNKNOWN` must be dropped locally with safe diagnostics and no raw-content logging
+- classifier behavior must be defined from sanitized regression fixtures before implementation
+
 
 ## Samsung Freecess / MARs
 
