@@ -21,8 +21,8 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current phase: Android bank-notification real-device diagnostics
 - Current blocker: REAL2 strongly indicates that Yandex financial notifications are actually posted by `ru.yandex.taximeter` (Yandex Pro), not `com.yandex.bank`; the collector received that package and rejected it as `FILTERED_NOT_ALLOWED`
 - Current Yandex evidence: REAL2 callback `ru.yandex.taximeter`, notification id `52091223`, callback time 17:28:11; a saved live NotificationManager record has the same package/id on `notification_channel_1`; six active `ru.yandex.taximeter` records were on that channel while the visible Yandex Pro shade showed six financial cards
-- Current uncertainty: channel isolation is not yet proven historically; do not allow all of `ru.yandex.taximeter` until `notification_channel_1` is shown to be sufficiently finance-specific
-- Next action: read-only channel-usage isolation for `ru.yandex.taximeter` / `notification_channel_1`; if isolation is proven, implement a backward-compatible package+optional-channel collector rule in a reviewed PR
+- Current uncertainty: `notification_channel_1` is used by all six currently observed financial Yandex Pro cards, but static analysis of the Flutter/AOT `ru.yandex.taximeter` APK could not prove that the channel is finance-exclusive; channel-only filtering is therefore not safe yet
+- Next action: inspect privacy-safe per-notification metadata for the six known financial `ru.yandex.taximeter` records (tag/group/category/intent/other stable metadata) to find a provider-specific discriminator; only if a reliable discriminator exists should the collector be changed
 
 ## Read next when needed
 
@@ -382,6 +382,26 @@ Operational interpretation:
 Do not simply add all of `ru.yandex.taximeter` to the allowlist. First establish whether `notification_channel_1` is sufficiently finance-specific. If it is, prefer a backward-compatible package+optional-channel rule while preserving existing package-only behavior for normal bank apps.
 
 The earlier static-analysis branch for `com.yandex.bank` is suspended unless later evidence makes it relevant again.
+
+
+### Yandex Pro channel-isolation follow-up
+
+Read-only APK analysis of the installed Yandex Pro package used the complete local APK set:
+
+- `base.apk` SHA-256 `d75f5191e1ba887441fb65f084f3090414b344171dbbdb3d1d3186ff2da19278`
+- `split_config.arm64_v8a.apk` SHA-256 `f4f8332c43704c355bee19941b1faea7fc651859ce96c7045ecfd57157ae8331`
+- `split_config.xxhdpi.apk` SHA-256 `3ab753390bdc0bfa8c02713226bf03ee9e7ba9e74f05f788da8a2ac5d970724d`
+
+Result:
+
+- all six currently visible/active Yandex Pro financial cards used `notification_channel_1`
+- no non-financial use of the channel was observed in the captured current set
+- historical channel usage was unavailable
+- exact static xrefs for `notification_channel_1` were not recovered
+- the app uses Flutter/AOT code in `libapp.so`; generic notification-channel APIs were visible but did not prove module exclusivity
+- therefore `FINANCIAL_CHANNEL_ISOLATION=NOT_PROVEN`
+
+Do not implement a channel-only allow rule yet. The next useful evidence is a privacy-safe discriminator available on the `StatusBarNotification`/Notification metadata of the six known financial records (for example tag shape/prefix, group, category, creator/intent identity, or another stable non-content field). If no reliable metadata discriminator exists, a deliberately scoped provider-specific content classifier with regression fixtures may be required, but do not introduce brittle regex heuristics without evidence.
 
 ## Samsung Freecess / MARs
 
