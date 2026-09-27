@@ -66,6 +66,8 @@ class MainActivity : AppCompatActivity() {
                     "Pending events: $count",
                     "Last successful delivery: ${preferences.lastSuccessfulDelivery()}",
                     "Last capture: ${preferences.lastCaptureOutcome()} ${preferences.lastCapturePackage()} ${preferences.lastCaptureEventPrefix()} at ${preferences.lastCaptureAt()}",
+                    "Last callback: ${preferences.lastCallbackStage()} ${preferences.lastCallbackPackage()} at ${preferences.lastCallbackAt()}",
+                    "Listener lifecycle: ${preferences.lastListenerState()} at ${preferences.lastListenerStateAt()}",
                     "Auth provisioning is separate.",
                 ).joinToString("\n")
             }

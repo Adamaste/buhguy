@@ -14,14 +14,16 @@ enum class BankCaptureOutcome {
 }
 
 data class BankCaptureLogEvent(
-    val packageName: String,
-    val outcome: BankCaptureOutcome,
-    val eventPrefix: String,
+    val packageName: String? = null,
+    val outcome: BankCaptureOutcome? = null,
+    val eventPrefix: String? = null,
     val postTime: Long? = null,
     val notificationId: Int? = null,
     val hasTag: Boolean? = null,
     val rowId: Long? = null,
     val stage: String? = null,
+    val reason: String? = null,
+    val listenerState: String? = null,
     val errorType: String? = null,
 )
 
@@ -32,22 +34,22 @@ object BankCaptureDiagnostics {
         if (rowId == -1L) BankCaptureOutcome.DUPLICATE else BankCaptureOutcome.INSERTED
 
     fun message(event: BankCaptureLogEvent): String = buildString {
-        append("package=").append(event.packageName)
-        append(" outcome=").append(event.outcome.name)
-        append(" event=").append(event.eventPrefix)
-        event.postTime?.let { append(" postTime=").append(it) }
-        event.notificationId?.let { append(" notificationId=").append(it) }
-        event.hasTag?.let { append(" hasTag=").append(it) }
-        event.rowId?.let { append(" row=").append(it) }
-        event.stage?.let { append(" stage=").append(it) }
-        event.errorType?.let { append(" error=").append(it) }
-    }
+        event.stage?.let { append("stage=").append(it).append(' ') }
+        event.packageName?.let { append("package=").append(it).append(' ') }
+        event.outcome?.let { append("outcome=").append(it.name).append(' ') }
+        event.reason?.let { append("reason=").append(it).append(' ') }
+        event.listenerState?.let { append("state=").append(it).append(' ') }
+        event.eventPrefix?.let { append("event=").append(it).append(' ') }
+        event.postTime?.let { append("postTime=").append(it).append(' ') }
+        event.notificationId?.let { append("notificationId=").append(it).append(' ') }
+        event.hasTag?.let { append("hasTag=").append(it).append(' ') }
+        event.rowId?.let { append("row=").append(it).append(' ') }
+        event.errorType?.let { append("error=").append(it) }
+    }.trim()
 
     fun log(event: BankCaptureLogEvent) {
         val message = message(event)
-        when (event.outcome) {
-            BankCaptureOutcome.ERROR -> Log.e(BANK_CAPTURE_LOG_TAG, message)
-            else -> Log.i(BANK_CAPTURE_LOG_TAG, message)
-        }
+        if (event.outcome == BankCaptureOutcome.ERROR) Log.e(BANK_CAPTURE_LOG_TAG, message)
+        else Log.i(BANK_CAPTURE_LOG_TAG, message)
     }
 }
