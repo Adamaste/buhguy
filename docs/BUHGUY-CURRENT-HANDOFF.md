@@ -19,9 +19,10 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-09-27
 - Current master: `77be9493d78076247f590935fd02865e7f175da3`
 - Current phase: Android bank-notification real-device diagnostics
-- Current blocker: T-Bank's missing callback is explained by Android notification policy, while Yandex Bank has healthy Android permission/AppOps/channel policy but no proven notification post for the REAL2 transfer
-- Current Yandex uncertainty: remote push delivery -> Yandex Bank push handling -> Android NotificationManager publication
-- Next action: read-only static forensics of the installed Yandex Bank APK/splits to reconstruct the push-to-notification path and identify suppression branches; do **not** perform another transfer yet
+- Current blocker: REAL2 strongly indicates that Yandex financial notifications are actually posted by `ru.yandex.taximeter` (Yandex Pro), not `com.yandex.bank`; the collector received that package and rejected it as `FILTERED_NOT_ALLOWED`
+- Current Yandex evidence: REAL2 callback `ru.yandex.taximeter`, notification id `52091223`, callback time 17:28:11; a saved live NotificationManager record has the same package/id on `notification_channel_1`; six active `ru.yandex.taximeter` records were on that channel while the visible Yandex Pro shade showed six financial cards
+- Current uncertainty: channel isolation is not yet proven historically; do not allow all of `ru.yandex.taximeter` until `notification_channel_1` is shown to be sufficiently finance-specific
+- Next action: read-only channel-usage isolation for `ru.yandex.taximeter` / `notification_channel_1`; if isolation is proven, implement a backward-compatible package+optional-channel collector rule in a reviewed PR
 
 ## Read next when needed
 
@@ -343,6 +344,44 @@ Therefore:
   remote push delivery -> Firebase/AppMetrica/Yandex push handling -> Yandex application decision/suppression -> Android NotificationManager publication
 
 Do not claim that the Yandex push definitely arrived at the app. That runtime fact has not been proven.
+
+## Latest Yandex Pro live-notification finding
+
+A later live NotificationManager capture materially changed the Yandex diagnosis.
+
+While the notification shade visibly contained six Yandex Pro financial cards (purchases/incoming transfers), a read-only active notification capture found exactly six active records for:
+
+- package: `ru.yandex.taximeter`
+- Android user: 0
+- channel: `notification_channel_1`
+- importance: 4
+
+Active ids included `52091223`.
+
+The preserved REAL2 collector log contains:
+
+- callback package: `ru.yandex.taximeter`
+- notification id: `52091223`
+- callback wall-clock time: 17:28:11
+- result: `FILTERED_NOT_ALLOWED`
+
+The visible shade also contained an incoming-transfer card timestamped 17:28.
+
+The saved live `dumpsys notification` record does not expose `postTime`, so the previously defined strict package+id+postTime join cannot be completed from preserved metadata. For that reason, the formal forensic label remains a strong/partial causal match rather than a mathematically exact two-field join.
+
+Operational interpretation:
+
+- the old assumption that REAL2 should appear as `com.yandex.bank` is no longer the leading hypothesis
+- there is strong evidence that the relevant Yandex financial notifications are posted by `ru.yandex.taximeter` / Yandex Pro
+- current collector filtering is package-only
+- `ru.yandex.taximeter` is not in the configured allowlist
+- the callback is therefore rejected before capture/Room/backend
+- all six currently observed `ru.yandex.taximeter` active records used `notification_channel_1`
+- however, historical exclusivity of that channel to financial notifications is not yet proven
+
+Do not simply add all of `ru.yandex.taximeter` to the allowlist. First establish whether `notification_channel_1` is sufficiently finance-specific. If it is, prefer a backward-compatible package+optional-channel rule while preserving existing package-only behavior for normal bank apps.
+
+The earlier static-analysis branch for `com.yandex.bank` is suspended unless later evidence makes it relevant again.
 
 ## Samsung Freecess / MARs
 
