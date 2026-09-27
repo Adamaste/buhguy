@@ -2,15 +2,26 @@
 
 This document is the operational starting point for a new ChatGPT/Codex session.
 
-## Session rule
+## Session bootstrap rule
 
-Do not repeat closed stages. Read this document first, then verify the current GitHub `master`, relevant PRs, CI, and detailed docs. If this document disagrees with GitHub about code, merge status, or artifacts, GitHub wins.
+This file is the authoritative operational handoff for a new ChatGPT/Codex session. A new session must not ask the user to reconstruct project history that is available here or in GitHub.
+
+At the start of any technical work on `Adamaste/buhguy`:
+
+1. read this file completely;
+2. read `docs/BUHGUY-ROADMAP.md`;
+3. verify the current GitHub `master`;
+4. inspect only the relevant detailed docs/code/PR/CI needed for the active task;
+5. continue from the explicit current blocker/next action below rather than restarting diagnostics.
+
+Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-27
 - Current master: `77be9493d78076247f590935fd02865e7f175da3`
 - Current phase: Android bank-notification real-device diagnostics
-- Current blocker: a real T-Bank -> Yandex Bank transfer produced user-visible bank activity, but no collector callback was observed for either expected bank package
-- Next action: read-only Android NotificationManager/package/delegation forensics on the already completed `real2` test; do **not** perform another transfer yet
+- Current blocker: T-Bank's missing callback is explained by Android notification policy, while Yandex Bank has healthy Android permission/AppOps/channel policy but no proven notification post for the REAL2 transfer
+- Current Yandex uncertainty: remote push delivery -> Yandex Bank push handling -> Android NotificationManager publication
+- Next action: read-only static forensics of the installed Yandex Bank APK/splits to reconstruct the push-to-notification path and identify suppression branches; do **not** perform another transfer yet
 
 ## Read next when needed
 
@@ -233,7 +244,7 @@ Baseline immediately before the second Yandex/T-Bank real test included:
 
 This proves the real-device collector, Room, WorkManager, HTTPS transport, authentication, and backend ingestion can work end-to-end. The current issue is narrower than “collector is broken”.
 
-## Real2 test: current evidence
+## Real2 test and completed post-test forensics
 
 A controlled real transfer was performed:
 
@@ -244,33 +255,94 @@ A controlled real transfer was performed:
 
 Evidence log:
 
-`C:\Users\Адам\Documents\Codex\bank-collector-real2-20260927-171721.log`
+`C:\\Users\\Адам\\Documents\\Codex\\bank-collector-real2-20260927-171721.log`
 
-Result from the completed test:
+Preserved evidence metadata:
 
-### `com.yandex.bank`
+- log size: 5475 bytes
+- SHA-256: `37692bc4639520fe3f7f1952bec54fb98ee400a1642c65e4775c57de81f48392`
 
-- expected callback entry: **not found**
-- no capture/insert evidence
-- no Room change attributable to the transfer
-- no backend observation/transaction attributable to the transfer
+### Collector/backend result
 
-### `com.idamob.tinkoff.android`
+For both `com.yandex.bank` and `com.idamob.tinkoff.android` during REAL2:
 
-- expected callback entry: **not found**
-- no capture/insert evidence
-- no Room/backend change attributable to the transfer
-
-### Other observations
-
+- `CALLBACK_ENTRY`: not found
+- capture/insert: not observed
+- Room: unchanged
+- backend observations: unchanged
+- backend transactions: unchanged
+- replacement credential `last_used_at`: unchanged
 - pending remained 0
-- replacement credential `last_used_at` did not advance for this test
 - no Android runtime crash was found
-- only `ru.yandex.taximeter` was observed in the relevant listener log and it was correctly `filtered_not_allowed`
-- synthetic callback path had already passed
-- a real Alfa notification had already passed the full path
 
-Therefore the strongest current boundary is **before the collector’s bank-specific capture logic** for this real2 event. There is currently no evidence that either expected bank package reached `onNotificationPosted()`.
+Only `ru.yandex.taximeter` was seen in the relevant collector log and was correctly filtered as `not_allowed`.
+
+This placed the REAL2 failure before the collector's bank-specific capture logic.
+
+### T-Bank: concrete system policy blocker found
+
+Package:
+
+- `com.idamob.tinkoff.android`
+- Android user: 0
+- version observed during forensics: 8.3.0 / 13196
+
+Read-only Android policy inspection found:
+
+- `POST_NOTIFICATIONS=DENIED`
+- notification AppOps: `POST_NOTIFICATION=IGNORE`
+
+This is a concrete explanation for why T-Bank produced no NotificationManager record and no collector callback in REAL2.
+
+Treat the T-Bank branch of this test as **policy-blocked**, not as evidence of a collector failure.
+
+Do not continue T-Bank callback debugging unless notification policy is intentionally changed in a separately reviewed/user-approved step and a later test is needed.
+
+### Yandex Bank: Android notification policy looks healthy, post still not proven
+
+Package:
+
+- `com.yandex.bank`
+- Android user: 0
+- version: 0.241.2 / 11917
+- stopped: false
+- suspended: false
+
+Read-only policy evidence:
+
+- `POST_NOTIFICATIONS=GRANTED`
+- AppOps: default/allow
+- app importance: default
+- app user-set importance: false
+- no package/channel group block was found
+- no profile/user boundary was found
+- no notification delegation evidence was found
+- collector listener remained enabled/live under user 0
+
+Observed Yandex channels included:
+
+- `appmetrica_push`: importance 2, not deleted
+- `notification_channel_1`: importance 5, not deleted
+- `notification_channel_2`: importance 5, not deleted
+- security/sign-in channels: importance 4, not deleted
+
+Push-related components are present, including Firebase Messaging and AppMetrica push components/receivers.
+
+However:
+
+- no Yandex NotificationManager record for the REAL2 event was found
+- no current Yandex notification key was found
+- no Yandex collector callback was found
+- system notification post evidence for the REAL2 event remains absent
+
+Therefore:
+
+- collector callback/capture/Room/backend are not the current Yandex investigation boundary
+- Android permission/AppOps/channel policy is not showing a blocker
+- the unresolved interval is now specifically:
+  remote push delivery -> Firebase/AppMetrica/Yandex push handling -> Yandex application decision/suppression -> Android NotificationManager publication
+
+Do not claim that the Yandex push definitely arrived at the app. That runtime fact has not been proven.
 
 ## Samsung Freecess / MARs
 
@@ -282,57 +354,59 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-Do **not** perform another transfer yet.
+Do **not** perform another bank transfer yet.
 
-Preserve the current test evidence and perform read-only Android NotificationManager/package/delegation forensics around the already completed real2 event.
+The next stage is read-only static forensics of the installed Yandex Bank application (`com.yandex.bank`) to reconstruct the narrow push-to-notification path.
 
-The purpose is to determine whether the user-visible banking notifications were represented by Android under:
+Use the already installed APK/split APK set and inspect only notification-related metadata/code. The target questions are:
 
-- `com.yandex.bank`
-- `com.idamob.tinkoff.android`
-- another package/delegate
-- another Android user/profile
-- or no retained system notification record
+1. Which Firebase/AppMetrica/Yandex components receive push messages?
+2. What are the actual push entrypoints and call chains?
+3. Where does Yandex create Android notifications (`NotificationManager.notify`, `NotificationManagerCompat.notify`, wrappers, or equivalent)?
+4. Which channel IDs are selected for which paths?
+5. Which explicit conditions can suppress notification creation after a push has been received?
+6. Are there silent/data-only, foreground, duplicate, TTL/freshness, feature-flag, or payload-dependent branches?
+7. Does any path use notification delegation or an alternate posting package?
+8. Are there safe log tags/stages that can be captured in a future runtime test without exposing financial content?
 
-Investigate, without changing settings:
+Keep the static analysis narrowly scoped to push -> notification behavior. Do not inspect banking protocols, authentication, transaction signing, private keys, TLS pinning, account data, or unrelated application internals.
 
-- NotificationManager current/history metadata where available
-- actual posting package identity
-- notification delegate information
-- app notification permission/AppOps state
-- channels and block state
-- Android user/profile identity
-- listener binding state
-- relevant Samsung notification/freezer metadata
-- timestamp correlation with the existing real2 log
+Important interpretation rule:
 
-Do not expose notification text or credentials in reports.
+- finding a static suppression branch proves that the branch exists;
+- it does **not** prove REAL2 used that branch;
+- the REAL2 root cause remains unproven until runtime evidence connects the event to one path.
 
-### Do not do before the forensic snapshot is complete
+### Do not do before this static forensic stage is complete
 
 - no second bank transfer
+- no new financial operation
 - no `adb logcat -c`
 - no phone reboot
 - no force-stop/restart of collector
 - no Notification Access toggle/rebind
-- no app reinstall
+- no app reinstall/update
+- no permission/AppOps/channel mutation
 - no credential rotation
 - no backend/DB mutation
 - no DB grant changes
+- no APK patching/runtime hooks/instrumentation
 
 ## How to interpret the next evidence
 
-If Android shows the notification was posted under a different package or delegate, fix package identity/allowlist assumptions.
+For Yandex static APK forensics:
 
-If Android shows the expected bank package posted a notification but no listener dispatch occurred, investigate Android/Samsung dispatch/lifecycle behavior.
+- if explicit received-push -> no-notification branches exist, record them as candidate suppression paths, not as the REAL2 root cause
+- if the relevant push path can be shown to always publish a notification, identify what runtime evidence would be required to distinguish push non-delivery from an unexpected alternate path
+- if notification delegation/alternate posting identity exists, document the exact mechanism without changing the collector allowlist yet
+- if static analysis is inconclusive, state exactly which code boundary is opaque/obfuscated and design the smallest safe runtime observation needed next
 
-If a future bank callback reaches `CALLBACK_ENTRY` but stops at `FILTERED_NOT_ALLOWED`, investigate actual package identity.
+For future collector evidence, the already established stage interpretation remains:
 
-If it reaches `CAPTURE_NULL`, investigate capture conversion.
-
-If it reaches `CAPTURED` but not Room insert, investigate Room/duplicate/error.
-
-If it reaches `INSERTED` but not backend, investigate WorkManager/network/auth; note that this path has already succeeded for Alfa.
+- `CALLBACK_ENTRY -> FILTERED_NOT_ALLOWED`: actual package identity/allowlist issue
+- `CALLBACK_ENTRY -> CAPTURE_NULL`: capture conversion issue
+- `CAPTURED` without Room insert: Room/duplicate/error issue
+- `INSERTED` without backend: WorkManager/network/auth issue; this path has already succeeded for Alfa
 
 ## What comes after the current blocker
 
