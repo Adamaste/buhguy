@@ -41,17 +41,60 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal([conflictFirst, conflictSecond].filter((result) => result.code === 'SOURCE_EVENT_CONFLICT').length, 1);
     assert.equal((await ingestBankEvent(pool, event)).status, 'duplicate');
     assert.equal((await ingestBankEvent(pool, { ...event, sourceKey: 'android-bank-test-b' })).status, 'created');
+    const yandexPurchase = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-purchase',
+      payload: { title: 'Покупка', description: 'Покупка на 42.10 RUB ТЕСТОВЫЙ МАГАЗИН' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    const yandexIncoming = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-incoming',
+      payload: { title: 'Входящий перевод', description: 'Пополнение на 100.00 RUB ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(yandexPurchase.status, 'created');
+    assert.equal(yandexPurchase.normalization.eventType, 'PURCHASE');
+    assert.equal(yandexIncoming.status, 'created');
+    assert.equal(yandexIncoming.normalization.eventType, 'INCOMING_TRANSFER');
+    const yandexBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
+    const yandexReplay = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-purchase',
+      payload: { title: 'Покупка', description: 'Покупка на 42.10 RUB ТЕСТОВЫЙ МАГАЗИН' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(yandexReplay.status, 'duplicate');
+    assert.equal(yandexReplay.observationId, Number(yandexBefore.id));
+    const yandexConflict = await ingestBankEvent(pool, {
+      ...event,
+      sourceEventId: 'evt-yandex-purchase',
+      payload: { title: 'Покупка', description: 'Покупка на 43.10 RUB ТЕСТОВЫЙ МАГАЗИН' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.deepEqual(yandexConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
+    const yandexAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
+    assert.deepEqual(yandexAfter, yandexBefore);
     const counts = await pool.query(`SELECT (SELECT count(*) FROM bank_event_observations) AS observations,
       (SELECT count(*) FROM bank_transactions) AS transactions,
       (SELECT count(*) FROM information_schema.columns WHERE table_name='bank_transactions' AND column_name IN ('receipt_id','purchase_id')) AS forbidden_links`);
-    assert.equal(Number(counts.rows[0].observations), 3);
-    assert.equal(Number(counts.rows[0].transactions), 3);
+    assert.equal(Number(counts.rows[0].observations), 5);
+    assert.equal(Number(counts.rows[0].transactions), 5);
     assert.equal(Number(counts.rows[0].forbidden_links), 0);
-    const row = await pool.query('SELECT amount, currency, direction, normalization_status FROM bank_transactions ORDER BY id LIMIT 1');
+    const row = await pool.query('SELECT amount, currency, direction, event_type, normalization_status FROM bank_transactions ORDER BY id LIMIT 1');
     assert.equal(row.rows[0].amount, '125.50');
     assert.equal(row.rows[0].currency, 'RUB');
     assert.equal(row.rows[0].direction, 'DEBIT');
+    assert.equal(row.rows[0].event_type, 'UNKNOWN');
     assert.equal(row.rows[0].normalization_status, 'READY');
+    const yandexRows = await pool.query(`SELECT event_type,amount,currency,direction,normalization_status
+      FROM bank_transactions WHERE observation_id IN
+      (SELECT id FROM bank_event_observations WHERE source_event_id IN ('evt-yandex-purchase','evt-yandex-incoming'))
+      ORDER BY event_type`);
+    assert.deepEqual(yandexRows.rows, [
+      { event_type: 'INCOMING_TRANSFER', amount: '100.00', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
+      { event_type: 'PURCHASE', amount: '42.10', currency: 'RUB', direction: 'DEBIT', normalization_status: 'READY' },
+    ]);
   } finally {
     await pool.end();
   }
