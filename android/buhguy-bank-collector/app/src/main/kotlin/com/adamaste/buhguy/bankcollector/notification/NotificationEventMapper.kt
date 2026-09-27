@@ -16,6 +16,7 @@ data class NotificationSnapshot(
     val text: String?,
     val bigText: String?,
     val subText: String?,
+    val channelId: String? = null,
 )
 
 class NotificationEventMapper(
@@ -23,7 +24,7 @@ class NotificationEventMapper(
     private val sourceKey: String,
 ) {
     fun map(snapshot: NotificationSnapshot, capturedAt: Instant = Instant.now()): BankNotificationEvent? {
-        val provider = registry.providerFor(snapshot.packageName) ?: return null
+        val provider = registry.match(snapshot.packageName, snapshot.channelId)?.provider ?: return null
         val payload = linkedMapOf<String, String?>().apply {
             put("title", snapshot.title)
             put("text", snapshot.text)

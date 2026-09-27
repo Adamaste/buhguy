@@ -20,9 +20,12 @@ Android bank app
 
 ## Privacy boundary
 
-Only explicitly configured package names are accepted. Notifications from all
-other applications, including SMS, email, messaging, and system packages, are
-ignored before persistence. V1 stores title, text, optional bigText/subText,
+Explicitly configured package-only sources are accepted. A logical provider may
+also define a narrowly scoped transport alias with a channel gate and local
+provider-specific classifier. Non-financial and unknown alias notifications
+are discarded before persistence. Notifications from all other applications,
+including SMS, email, messaging, and system packages, are ignored before
+persistence. V1 stores title, text, optional bigText/subText,
 package name, notification identity, post time, and capture time. Arbitrary
 Android extras and images are not collected.
 
