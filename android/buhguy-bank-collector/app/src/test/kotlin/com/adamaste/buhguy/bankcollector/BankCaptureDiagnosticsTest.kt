@@ -1,6 +1,8 @@
 package com.adamaste.buhguy.bankcollector
 
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureDiagnostics
+import com.adamaste.buhguy.bankcollector.notification.BANK_CAPTURE_ENQUEUE_STAGE
+import com.adamaste.buhguy.bankcollector.notification.BANK_CAPTURE_ROOM_INSERT_STAGE
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureLogEvent
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureOutcome
 import org.junit.Assert.assertEquals
@@ -38,9 +40,17 @@ class BankCaptureDiagnosticsTest {
     @Test fun insertedDuplicateAndErrorOutcomesRemainSupported() {
         assertEquals(BankCaptureOutcome.INSERTED, BankCaptureDiagnostics.insertOutcome(12L))
         assertEquals(BankCaptureOutcome.DUPLICATE, BankCaptureDiagnostics.insertOutcome(-1L))
-        val error = BankCaptureDiagnostics.message(BankCaptureLogEvent(packageName = "com.yandex.bank", outcome = BankCaptureOutcome.ERROR, stage = "room_insert", errorType = "SQLiteException"))
-        assertTrue(error.contains("stage=room_insert"))
+        val error = BankCaptureDiagnostics.message(BankCaptureLogEvent(packageName = "com.yandex.bank", outcome = BankCaptureOutcome.ERROR, stage = BANK_CAPTURE_ROOM_INSERT_STAGE, errorType = "SQLiteException"))
+        assertTrue(error.contains("stage=$BANK_CAPTURE_ROOM_INSERT_STAGE"))
         assertTrue(error.contains("error=SQLiteException"))
+    }
+
+    @Test fun enqueueFailureIsNotReportedAsRoomInsertFailure() {
+        val error = BankCaptureDiagnostics.message(
+            BankCaptureLogEvent(packageName = "com.yandex.bank", outcome = BankCaptureOutcome.ERROR, stage = BANK_CAPTURE_ENQUEUE_STAGE, errorType = "IllegalStateException"),
+        )
+        assertTrue(error.contains("stage=$BANK_CAPTURE_ENQUEUE_STAGE"))
+        assertFalse(error.contains("stage=$BANK_CAPTURE_ROOM_INSERT_STAGE"))
     }
 
     @Test fun diagnosticsNeverContainNotificationContentOrSecrets() {

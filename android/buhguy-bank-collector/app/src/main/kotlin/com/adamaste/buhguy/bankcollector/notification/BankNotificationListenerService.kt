@@ -74,7 +74,7 @@ class BankNotificationListenerService : NotificationListenerService() {
                         packageName = captured.packageName,
                         outcome = BankCaptureOutcome.ERROR,
                         eventPrefix = eventPrefix,
-                        stage = "room_insert",
+                        stage = BANK_CAPTURE_ROOM_INSERT_STAGE,
                         errorType = error::class.java.simpleName,
                     ),
                 )
@@ -91,7 +91,21 @@ class BankNotificationListenerService : NotificationListenerService() {
                 ),
             )
             preferences.markLastCapture(callbackAt, captured.packageName, outcome.name, eventPrefix)
-            com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@BankNotificationListenerService)
+            try {
+                com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@BankNotificationListenerService)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                BankCaptureDiagnostics.log(
+                    BankCaptureLogEvent(
+                        packageName = captured.packageName,
+                        outcome = BankCaptureOutcome.ERROR,
+                        eventPrefix = eventPrefix,
+                        stage = BANK_CAPTURE_ENQUEUE_STAGE,
+                        errorType = error::class.java.simpleName,
+                    ),
+                )
+                throw error
+            }
         }
     }
 
