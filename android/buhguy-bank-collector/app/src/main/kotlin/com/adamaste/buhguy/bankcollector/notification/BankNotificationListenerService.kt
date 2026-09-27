@@ -26,6 +26,7 @@ class BankNotificationListenerService : NotificationListenerService() {
         val snapshot = sbn.toSnapshot()
         val captured = NotificationCapture(mapper).capture(snapshot, Instant.now()) ?: return
         val eventPrefix = BankCaptureDiagnostics.eventPrefix(captured.sourceEventId)
+        val capturedAt = Instant.now().toString()
         BankCaptureDiagnostics.log(
             BankCaptureLogEvent(
                 packageName = captured.packageName,
@@ -36,21 +37,38 @@ class BankNotificationListenerService : NotificationListenerService() {
                 hasTag = snapshot.notificationTag != null,
             ),
         )
+        preferences.markLastCapture(capturedAt, captured.packageName, BankCaptureOutcome.CAPTURED.name, eventPrefix)
         serviceScope.launch {
-            try {
+            val rowId = try {
                 val rowId = (application as BankCollectorApplication).database.outbox().insert(
                     OutboxEntity(sourceEventId = captured.sourceEventId, packageName = captured.packageName, eventJson = captured.eventJson),
                 )
-                val outcome = BankCaptureDiagnostics.insertOutcome(rowId)
+                rowId
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 BankCaptureDiagnostics.log(
                     BankCaptureLogEvent(
                         packageName = captured.packageName,
-                        outcome = outcome,
+                        outcome = BankCaptureOutcome.ERROR,
                         eventPrefix = eventPrefix,
-                        rowId = rowId.takeIf { outcome == BankCaptureOutcome.INSERTED },
+                        stage = BANK_CAPTURE_ROOM_INSERT_STAGE,
+                        errorType = error::class.java.simpleName,
                     ),
                 )
-                preferences.markLastCapture(Instant.now().toString(), captured.packageName, outcome.name, eventPrefix)
+                preferences.markLastCapture(Instant.now().toString(), captured.packageName, BankCaptureOutcome.ERROR.name, eventPrefix)
+                return@launch
+            }
+            val outcome = BankCaptureDiagnostics.insertOutcome(rowId)
+            BankCaptureDiagnostics.log(
+                BankCaptureLogEvent(
+                    packageName = captured.packageName,
+                    outcome = outcome,
+                    eventPrefix = eventPrefix,
+                    rowId = rowId.takeIf { outcome == BankCaptureOutcome.INSERTED },
+                ),
+            )
+            preferences.markLastCapture(Instant.now().toString(), captured.packageName, outcome.name, eventPrefix)
+            try {
                 com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@BankNotificationListenerService)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -59,11 +77,11 @@ class BankNotificationListenerService : NotificationListenerService() {
                         packageName = captured.packageName,
                         outcome = BankCaptureOutcome.ERROR,
                         eventPrefix = eventPrefix,
-                        stage = "room_insert",
+                        stage = BANK_CAPTURE_ENQUEUE_STAGE,
                         errorType = error::class.java.simpleName,
                     ),
                 )
-                preferences.markLastCapture(Instant.now().toString(), captured.packageName, BankCaptureOutcome.ERROR.name, eventPrefix)
+                throw error
             }
         }
     }

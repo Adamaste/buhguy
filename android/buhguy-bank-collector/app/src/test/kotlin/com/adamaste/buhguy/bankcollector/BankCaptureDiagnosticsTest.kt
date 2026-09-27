@@ -3,6 +3,8 @@ package com.adamaste.buhguy.bankcollector
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureDiagnostics
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureLogEvent
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureOutcome
+import com.adamaste.buhguy.bankcollector.notification.BANK_CAPTURE_ENQUEUE_STAGE
+import com.adamaste.buhguy.bankcollector.notification.BANK_CAPTURE_ROOM_INSERT_STAGE
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,7 +25,7 @@ class BankCaptureDiagnosticsTest {
                 packageName = "com.yandex.bank",
                 outcome = BankCaptureOutcome.ERROR,
                 eventPrefix = "abcdef123456",
-                stage = "room_insert",
+                stage = BANK_CAPTURE_ROOM_INSERT_STAGE,
                 errorType = "SQLiteException",
             ),
         )
@@ -31,6 +33,21 @@ class BankCaptureDiagnosticsTest {
         assertTrue(message.contains("outcome=ERROR"))
         assertTrue(message.contains("stage=room_insert"))
         assertTrue(message.contains("error=SQLiteException"))
+    }
+
+    @Test fun enqueueFailureIsNotReportedAsRoomInsertFailure() {
+        val message = BankCaptureDiagnostics.message(
+            BankCaptureLogEvent(
+                packageName = "com.yandex.bank",
+                outcome = BankCaptureOutcome.ERROR,
+                eventPrefix = "abcdef123456",
+                stage = BANK_CAPTURE_ENQUEUE_STAGE,
+                errorType = "IllegalStateException",
+            ),
+        )
+
+        assertTrue(message.contains("stage=enqueue"))
+        assertFalse(message.contains("stage=room_insert"))
     }
 
     @Test fun capturedMessageContainsSafeMetadataOnly() {

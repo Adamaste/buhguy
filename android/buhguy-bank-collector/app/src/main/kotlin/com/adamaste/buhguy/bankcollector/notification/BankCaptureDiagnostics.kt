@@ -3,6 +3,8 @@ package com.adamaste.buhguy.bankcollector.notification
 import android.util.Log
 
 const val BANK_CAPTURE_LOG_TAG = "BankCapture"
+const val BANK_CAPTURE_ROOM_INSERT_STAGE = "room_insert"
+const val BANK_CAPTURE_ENQUEUE_STAGE = "enqueue"
 
 enum class BankCaptureOutcome {
     CAPTURED,
