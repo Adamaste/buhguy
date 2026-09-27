@@ -89,6 +89,20 @@ jobs:
         working-directory: android/buhguy-bank-collector
         run: gradle --no-daemon testDebugUnitTest assembleDebug
 
+      - name: Verify release signing fails closed without secrets
+        working-directory: android/buhguy-bank-collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          for task in assembleRelease assemble; do
+            log="$RUNNER_TEMP/release-signing-negative-${task}.log"
+            if gradle --no-daemon "$task" >"$log" 2>&1; then
+              echo "$task unexpectedly succeeded without release signing secrets"
+              exit 1
+            fi
+            grep -Fq "Release signing requires BUHGUY_ANDROID_KEYSTORE_PATH" "$log"
+          done
+
       - name: Verify debug APK
         shell: bash
         run: test -f android/buhguy-bank-collector/app/build/outputs/apk/debug/app-debug.apk

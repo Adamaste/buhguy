@@ -12,16 +12,19 @@ val releaseSigningValues = listOf(
     "BUHGUY_ANDROID_KEY_PASSWORD",
 ).associateWith { providers.environmentVariable(it).orNull }
 val releaseSigningReady = releaseSigningValues.values.all { !it.isNullOrBlank() }
-val releaseTaskRequested = gradle.startParameter.taskNames.any {
-    it.contains("release", ignoreCase = true)
-}
+val releaseSigningError =
+    "Release signing requires BUHGUY_ANDROID_KEYSTORE_PATH, " +
+        "BUHGUY_ANDROID_STORE_PASSWORD, BUHGUY_ANDROID_KEY_ALIAS, and " +
+        "BUHGUY_ANDROID_KEY_PASSWORD"
 
-if (releaseTaskRequested && !releaseSigningReady) {
-    throw GradleException(
-        "Release signing requires BUHGUY_ANDROID_KEYSTORE_PATH, " +
-            "BUHGUY_ANDROID_STORE_PASSWORD, BUHGUY_ANDROID_KEY_ALIAS, and " +
-            "BUHGUY_ANDROID_KEY_PASSWORD"
-    )
+gradle.taskGraph.whenReady {
+    if (!releaseSigningReady && allTasks.any {
+            it.name.contains("release", ignoreCase = true) ||
+                it.path.contains("release", ignoreCase = true)
+        }
+    ) {
+        throw GradleException(releaseSigningError)
+    }
 }
 
 android {
