@@ -1,6 +1,8 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
+export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v1';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
+const ALFA_PROVIDER = 'ru.alfabank.mobile.android';
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
@@ -19,7 +21,7 @@ function occurredAt(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function incomplete({ occurred, amount, hasCurrency, hasFinancialMarker }) {
+function incomplete({ occurred, amount = null, hasCurrency, hasFinancialMarker, normalizationVersion }) {
   const partial = occurred !== null || amount !== null || hasCurrency || hasFinancialMarker;
   return {
     eventType: 'UNKNOWN',
@@ -32,7 +34,7 @@ function incomplete({ occurred, amount, hasCurrency, hasFinancialMarker }) {
     accountReference: null,
     normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
     evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
-    normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
+    normalizationVersion,
   };
 }
 
@@ -48,8 +50,8 @@ export function normalizeYandexBankEvent(input) {
   const amount = normalizedAmount(body.slice(isPurchase ? 'Покупка на '.length : isIncoming ? 'Пополнение на '.length : 0));
   const hasCurrency = /\bRUB\b/i.test(body);
 
-  if (!isPurchase && !isIncoming) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker });
-  if (!amount || !occurred || !hasCurrency) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker: true });
+  if (!isPurchase && !isIncoming) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker, normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION });
+  if (!amount || !occurred || !hasCurrency) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker: true, normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION });
 
   return {
     eventType: isPurchase ? 'PURCHASE' : 'INCOMING_TRANSFER',
@@ -66,6 +68,24 @@ export function normalizeYandexBankEvent(input) {
   };
 }
 
+// Current Alfa evidence has no deterministic amount/currency/direction grammar.
+// Keep the provider boundary explicit without promoting ambiguous notifications.
+export function normalizeAlfaBankEvent(input) {
+  const payload = input.payload ?? {};
+  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text) || normalizeWhitespace(payload.title);
+  const occurred = occurredAt(input.eventTime ?? payload.occurredAt);
+  return incomplete({
+    occurred,
+    hasCurrency: false,
+    hasFinancialMarker: body.length > 0,
+    normalizationVersion: ALFA_BANK_NORMALIZATION_VERSION,
+  });
+}
+
 export function isYandexBankProvider(input) {
   return input.ingestionMetadata?.provider === YANDEX_PROVIDER;
+}
+
+export function isAlfaBankProvider(input) {
+  return input.ingestionMetadata?.provider === ALFA_PROVIDER;
 }

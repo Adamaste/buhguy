@@ -64,6 +64,14 @@ Raw observations remain immutable. Re-normalization is an explicit, versioned
 projection operation; this change does not rewrite historical observations or
 run a production backfill.
 
+The `ru.alfabank.mobile.android` parser is currently fail-closed at
+`alfa-bank-normalizer-v1`. The three reviewed production observations do not
+provide a deterministic amount/currency grammar or unambiguous direction, so
+they remain `UNKNOWN`/`PARTIAL`; no Alfa format is promoted to `READY` by this
+change. The provider boundary is versioned now so a future evidence-backed
+format can be added without changing generic normalization or historical raw
+observations.
+
 ## Ingestion boundary
 
 The internal handler is `createBankIngestionHandler({ pool })`. It accepts a
