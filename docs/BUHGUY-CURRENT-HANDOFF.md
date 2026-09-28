@@ -16,13 +16,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-09-27
-- Current master: `bdf924f1d8a47ea9e5d204a3f1c25b7873e93801`
-- Current phase: Yandex bank normalization v1 deployed and production schema migration validated
-- Current blocker: no deployment blocker; persistent Android diagnostics remains a separate observability follow-up
+- Last updated: 2026-09-28
+- Current master: `d77eaf0cf3e2d3d9da17e46452f4b55a948e62ba`
+- Current phase: multi-bank transport evidence reviewed; sanitized fixture research complete
+- Current blocker: T-Bank, Sber, and Ozon transport is proven, but their captured evidence is still `PARTIAL` with event type and direction not proven; Alfa and VTB are deferred for parser work
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Next action: validate future bank coverage and provider parsers without backfilling observation 18 or starting reconciliation/accounting work
+- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; all current provider clusters remain fail-closed and not parser-ready
+- Current Yandex status: normalizer v1 is deployed and unchanged
+- Next action: implement a parser only after a provider has a sanitized deterministic positive format with event type, direction, amount, currency, and event-time facts proven
 
 ## Yandex normalization v1 production deployment
 
@@ -474,6 +476,31 @@ However, Freecess is **not** a proven root cause.
 Do not state that Samsung Freecess caused the missed bank callback unless new evidence directly supports that conclusion.
 
 ## Immediate next action
+
+The September 2026 multi-bank evidence campaign is complete for the currently
+reviewed providers:
+
+- T-Bank transport E2E is **PROVEN** after notification policy was enabled;
+- Sber transport E2E is **PROVEN**;
+- Ozon Finance transport E2E is **PROVEN**;
+- Alfa transport is historically **PROVEN**, but current parser evidence is insufficient and is **DEFERRED**;
+- VTB transport remains **NOT_PROVEN** because no current notification/callback was observed and is **DEFERRED**;
+- Yandex normalizer v1 remains **DEPLOYED**.
+
+The sanitized fixture research branch records structural clusters for T-Bank,
+Sber, and Ozon. It deliberately does not register runtime parsers because no
+cluster proves both event type and direction together with amount, currency, and
+event time. Raw notification text, real amounts, names, recipients, account/card
+identifiers, and source-event identifiers must remain out of Git.
+
+PR #26 was closed without merge with reason
+`ALFA_DETERMINISTIC_FORMAT_NOT_PROVEN`. Its runtime Alfa dispatch must not enter
+master until a deterministic format is proven and generic structured normalization
+regression coverage is preserved.
+
+The active next step is provider-specific parser implementation only for a future
+provider with deterministic sanitized fixtures. Do not start reconciliation,
+accounting, or new phone operations in that parser step.
 
 The Yandex real-device transport milestone is closed with an observability gap:
 

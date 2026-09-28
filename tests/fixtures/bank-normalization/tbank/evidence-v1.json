@@ -1,0 +1,93 @@
+{
+  "provider": "com.idamob.tinkoff.android",
+  "source": "real-derived-sanitized",
+  "clusters": [
+    {
+      "id": "tbank-ruble-amount-notification",
+      "observationCount": 11,
+      "fields": {
+        "title": { "present": true, "shape": "word[-word] or word" },
+        "description": { "present": true, "shape": "words, NBSP, decimal-comma, RUB-symbol, punctuation" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "comma-decimal followed by RUB symbol",
+        "currencyGrammar": "RUB symbol present",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {
+        "title": "ТЕСТОВЫЙ-СТАТУС",
+        "description": "ТЕСТОВОЕ ОПИСАНИЕ\u00a0123,45 ₽, ТЕСТОВАЯ СТОРОНА. ТЕСТОВЫЙ БАНК *0000 67,89 ₽",
+        "text": "ТЕСТОВОЕ ОПИСАНИЕ\u00a0123,45 ₽, ТЕСТОВАЯ СТОРОНА. ТЕСТОВЫЙ БАНК *0000 67,89 ₽"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-informational-percent",
+      "observationCount": 2,
+      "fields": {
+        "title": { "present": true, "shape": "word em-dash word" },
+        "description": { "present": true, "shape": "words, punctuation, percent" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_APPLICABLE",
+        "currencyGrammar": "NOT_PROVEN",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {
+        "title": "ТЕСТОВОЕ — ИНФО",
+        "description": "ТЕСТОВОЕ СООБЩЕНИЕ ОПИСАНИЕ — ТЕСТОВЫЕ УСЛОВИЯ 5%",
+        "text": "ТЕСТОВОЕ СООБЩЕНИЕ ОПИСАНИЕ — ТЕСТОВЫЕ УСЛОВИЯ 5%"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-empty-payload",
+      "observationCount": 3,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "none",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {},
+      "readyCapable": false
+    }
+  ],
+  "acceptance": {
+    "positiveFormats": "NOT_PROVEN",
+    "whitespaceVariants": "NOT_APPLICABLE",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
