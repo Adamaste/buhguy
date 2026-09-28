@@ -1,0 +1,67 @@
+{
+  "provider": "ru.ozon.fintech.finance",
+  "source": "real-derived-sanitized",
+  "clusters": [
+    {
+      "id": "ozon-ruble-decimal-notification",
+      "observationCount": 2,
+      "fields": {
+        "title": { "present": true, "shape": "two words" },
+        "description": { "present": true, "shape": "words, RUB symbol, punctuation, decimal-dot, RUB symbol" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "decimal-dot and RUB symbol observed",
+        "currencyGrammar": "RUB symbol present",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {
+        "title": "ТЕСТОВАЯ ОПЕРАЦИЯ",
+        "description": "ТЕСТОВОЕ ОПИСАНИЕ ТЕСТОВОЕ ЗНАЧЕНИЕ 123 ₽. ТЕСТОВЫЙ МАГАЗИН-ТЕСТ. ТЕСТОВЫЙ *0000 67.89 ₽",
+        "text": "ТЕСТОВОЕ ОПИСАНИЕ ТЕСТОВОЕ ЗНАЧЕНИЕ 123 ₽. ТЕСТОВЫЙ МАГАЗИН-ТЕСТ. ТЕСТОВЫЙ *0000 67.89 ₽"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "ozon-empty-payload",
+      "observationCount": 2,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "none",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {},
+      "readyCapable": false
+    }
+  ],
+  "acceptance": {
+    "positiveFormats": "NOT_PROVEN",
+    "whitespaceVariants": "NOT_APPLICABLE",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}

@@ -1,0 +1,39 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const providers = [
+  ['tbank', 'com.idamob.tinkoff.android'],
+  ['sber', 'ru.sberbankmobile'],
+  ['ozon', 'ru.ozon.fintech.finance'],
+];
+
+const loadFixture = async (name) => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', name, 'evidence-v1.json'),
+  'utf8',
+));
+
+test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
+  for (const [name, provider] of providers) {
+    const fixture = await loadFixture(name);
+    assert.equal(fixture.provider, provider);
+    assert.equal(fixture.source, 'real-derived-sanitized');
+    assert.ok(fixture.clusters.length > 0);
+    assert.ok(fixture.clusters.every((cluster) => cluster.readyCapable === false));
+    assert.ok(fixture.clusters.every((cluster) => cluster.evidence.eventType === 'NOT_PROVEN'));
+    assert.ok(fixture.clusters.every((cluster) => cluster.evidence.direction === 'NOT_PROVEN'));
+    assert.equal(fixture.acceptance.dedup, 'EXISTING_CONTRACT_UNCHANGED');
+    assert.equal(fixture.acceptance.sourceEventIdConflict, 'EXISTING_CONTRACT_UNCHANGED');
+  }
+});
+
+test('sanitized fixtures contain no production provider payload identifiers', async () => {
+  for (const [name] of providers) {
+    const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, 'evidence-v1.json'), 'utf8');
+    assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
+    assert.doesNotMatch(text, /Т-Банк|Сбербанк|Озон|Альфа|Яндекс/i);
+  }
+});

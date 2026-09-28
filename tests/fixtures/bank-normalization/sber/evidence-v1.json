@@ -1,0 +1,69 @@
+{
+  "provider": "ru.sberbankmobile",
+  "source": "real-derived-sanitized",
+  "clusters": [
+    {
+      "id": "sber-ruble-plus-notification",
+      "observationCount": 1,
+      "fields": {
+        "title": { "present": true, "shape": "words ending with period" },
+        "description": { "present": true, "shape": "plus, amount, RUB symbol, dash, words, colon, decimal-comma, RUB symbol, masked suffix" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "decimal-comma followed by RUB symbol",
+        "currencyGrammar": "RUB symbol present",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "masked suffix present, semantics NOT_PROVEN"
+      },
+      "syntheticPayload": {
+        "title": "ТЕСТОВОЕ ФИНАНСОВОЕ СООБЩЕНИЕ.",
+        "description": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 67,89 ₽ ТЕСТОВЫЙ ••0000",
+        "text": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 67,89 ₽ ТЕСТОВЫЙ ••0000"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "sber-reference-only",
+      "observationCount": 1,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": true, "shape": "words NBSP words" }
+      },
+      "effectiveBodySource": "reference",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "merchantStructure": "NOT_PROVEN",
+        "counterpartyStructure": "NOT_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "syntheticPayload": {
+        "reference": "ТЕСТОВАЯ ССЫЛКА"
+      },
+      "readyCapable": false
+    }
+  ],
+  "acceptance": {
+    "positiveFormats": "NOT_PROVEN",
+    "whitespaceVariants": "NOT_APPLICABLE",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
