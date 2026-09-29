@@ -41,7 +41,7 @@ integration('historical bank account replay is dry-run, fail-closed, and idempot
       FROM bank_transactions WHERE id=$1`, [created.transactionId])).rows[0];
     const observationBefore = (await pool.query('SELECT payload_sha256,payload FROM bank_event_observations WHERE id=$1', [created.observationId])).rows[0];
     const dryRun = await resolveHistoricalBankTransactionAccountFromObservation(pool, { observationId: created.observationId });
-    assert.equal(dryRun.status, 'DRY_RUN');
+    assert.equal(dryRun.status, 'DRY_RUN', JSON.stringify(dryRun));
     assert.equal(dryRun.resolutionState, 'RECONCILED');
     assert.equal(dryRun.provenance, 'HISTORICAL_OBSERVATION_REPLAY');
     assert.equal(dryRun.audit.compatibilityGate, 'PASS');
