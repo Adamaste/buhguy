@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `e8940ff67ceefa1127729e0325abe5df65e68fb8`
-- Current phase: bank account resolution foundation deployed and production-validated
-- Current blocker: internal-transfer reconciliation and later business-event/ledger integration remain intentionally unimplemented. The next separately reviewed stage is `INTERNAL_TRANSFER` reconciliation; UI is not the current target
+- Current master: `b439b61db8b58310583795895f09a785009bbbd0`
+- Current phase: bank account resolution foundation is deployed and production-validated; operational account identity/reference activation is the current implementation stage
+- Current blocker: operator account provisioning/mapping must become safely usable before `INTERNAL_TRANSFER` reconciliation; business events, ledger integration, and UI remain intentionally unimplemented
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: separately review and implement the `INTERNAL_TRANSFER` reconciliation stage. T-Bank and Ozon parser coverage remain future incremental work; Alfa and VTB remain deferred
+- Next action: review the bank account operationalization PR, then validate administrative account provisioning/reference resolution before the separately reviewed `INTERNAL_TRANSFER` stage. UI is not the current target
 
 ## Sber normalization v1 production validation
 
@@ -149,6 +149,30 @@ repository `migrate()` implementation from the exact immutable release using
 administrative PostgreSQL peer access. The wrapper defect remains a follow-up
 before the next production migration; this docs-only update does not change
 the wrapper.
+
+## Bank account resolution operationalization
+
+The deployed foundation remains intentionally separate from parser and ledger
+work. The next reviewed stage adds an administrative operator surface for
+financial accounts, explicit `OWNER`/`AUTHORIZED_USER` relations, payment
+instruments, masked references, evidence-derived reference resolution, and
+safe coverage reporting.
+
+Migration 014 adds nullable `bank_transactions.account_reference_kind` with
+controlled values `MASKED_ACCOUNT`, `MASKED_CARD`, and `OTHER`; historical rows
+remain valid and no backfill is permitted. Sber's proven `Плат. счёт ••dddd`
+structure is canonicalized as four digits plus `MASKED_ACCOUNT`; Yandex remains
+without account-reference evidence.
+
+The operator CLI must use an administrative/peer-access identity, never the
+`receipt_collector` runtime role. `EXACT` remains restricted to provider,
+reference kind, reference value, and unique accounting-scope evidence;
+missing, zero, or multiple candidates fail closed. Manual resolution requires
+an explicit reason and cannot assert `EXACT`.
+
+The migration wrapper defect is fixed in this branch before the next
+production migration and is covered for non-repository caller cwd. Migration
+014 is not to be applied to production by this PR.
 
 ## Read next when needed
 

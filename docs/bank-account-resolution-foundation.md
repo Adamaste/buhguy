@@ -16,6 +16,9 @@ capture context only; they do not establish ownership of a financial account.
   references only when explicitly observed or supplied. Duplicate visible
   masks are allowed because they can be ambiguous. No reference is guessed
   from a person, source, or display name.
+- `bank_transactions.account_reference_kind` preserves whether a proven
+  transaction reference is `MASKED_ACCOUNT`, `MASKED_CARD`, or `OTHER`.
+  Historical rows may keep both reference fields NULL.
 - `bank_transaction_account_resolution` stores `EXACT`, `MANUAL`,
   `RECONCILED`, or explicit `UNKNOWN` resolution with provenance and reason.
 
@@ -25,14 +28,28 @@ replace it with an explicit account resolution. No ledger posting, business
 event, transfer matching, or ownership inference is performed here.
 
 `resolveBankTransactionAccountFromReference()` is the only `EXACT` path. It
-uses the observation provider and the transaction's stored account reference:
-zero candidates stays `UNKNOWN`, one candidate becomes `EXACT`, and multiple
-candidates stay `UNKNOWN` with an ambiguity reason. The generic resolver only
+uses the observation provider, stored reference kind and value, and the
+transaction's unique accounting scope: zero candidates stays `UNKNOWN`, one
+candidate becomes `EXACT`, and multiple candidates stay `UNKNOWN` with an
+ambiguity reason. A missing kind also fails closed. The generic resolver only
 allows `MANUAL`, `RECONCILED`, and `UNKNOWN`.
 
 Resolution requires exactly one accounting scope among the source's linked
 context persons. Zero or multiple scopes fail closed; source context is never
 used as financial-account ownership.
+
+## Administrative operator surface
+
+The `receipt-collector bank-account` CLI is an administrative operation. It
+supports `create`, `list`, `link-person`, `add-instrument`, `add-reference`,
+`resolve-reference`, `resolve-manual`, and `coverage`. It must run through the
+existing administrative/peer-access model; the `receipt_collector` runtime role
+does not receive account provisioning or resolution mutation privileges.
+
+`list` and `coverage` emit safe account/resolution metadata only. They do not
+emit raw notification payloads, source event ids, credentials, or secret
+material. `resolve-manual` requires an explicit reason and the CLI has no
+manual `EXACT` operation.
 
 The exported `bankTransactionAccountCoverage()` report enforces:
 

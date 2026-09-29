@@ -14,9 +14,9 @@ integration('bank account resolution keeps ownership, references, and unknown co
   const personKey = `resolution-person-${suffix}`;
   const secondPersonKey = `resolution-person-two-${suffix}`;
   let accountIds = [];
-  const event = (sourceEventId, amount, accountReference = null, eventSourceKey = sourceKey) => ({
+  const event = (sourceEventId, amount, accountReference = null, eventSourceKey = sourceKey, accountReferenceKind = accountReference ? 'MASKED_CARD' : null) => ({
     sourceKey: eventSourceKey, sourceEventId, observedAt: '2026-09-18T10:00:00Z', eventTime: '2026-09-18T09:59:00Z',
-    payload: { amount, currency: 'RUB', direction: 'DEBIT', merchant: 'Synthetic account resolution', ...(accountReference ? { accountReference } : {}) },
+    payload: { amount, currency: 'RUB', direction: 'DEBIT', merchant: 'Synthetic account resolution', ...(accountReference ? { accountReference, accountReferenceKind } : {}) },
     ingestionMetadata: { adapter: 'test', provider: 'synthetic.provider', schemaVersion: '1' },
   });
   try {
@@ -38,6 +38,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     await createPaymentInstrument(pool, { financialAccountId: account.id, instrumentType: 'CARD', provider: 'synthetic.provider', displayName: 'Masked test card' });
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1111' });
     await createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1111' });
+    await createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****1111' });
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****2222' });
 
     const first = await ingestBankEvent(pool, event('resolution-ambiguous', '10.00', '****1111'));
@@ -54,13 +55,21 @@ integration('bank account resolution keeps ownership, references, and unknown co
     const exact = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: second.transactionId });
     assert.equal(exact.resolution_state, 'EXACT');
     assert.equal(exact.financial_account_id, account.id);
+    const kindSpecific = await ingestBankEvent(pool, event('resolution-kind-specific', '25.00', '****1111', sourceKey, 'MASKED_ACCOUNT'));
+    const kindSpecificResolution = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: kindSpecific.transactionId });
+    assert.equal(kindSpecificResolution.resolution_state, 'EXACT');
+    assert.equal(kindSpecificResolution.financial_account_id, secondAccount.id);
     const unmatched = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: third.transactionId });
     assert.equal(unmatched.resolution_state, 'UNKNOWN');
     assert.equal(unmatched.candidateCount, 0);
+    const missingKind = await ingestBankEvent(pool, event('resolution-missing-kind', '35.00', '****2222', sourceKey, null));
+    const missingKindResolution = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: missingKind.transactionId });
+    assert.equal(missingKindResolution.resolution_state, 'UNKNOWN');
+    assert.equal(missingKindResolution.candidateCount, 0);
     await resolveBankTransactionAccount(pool, { bankTransactionId: fourth.transactionId, financialAccountId: secondAccount.id, resolutionState: 'MANUAL', provenance: 'TEST_MANUAL', reason: 'Explicit operator mapping' });
     await resolveBankTransactionAccount(pool, { bankTransactionId: fifth.transactionId, financialAccountId: account.id, resolutionState: 'RECONCILED', provenance: 'TEST_RECONCILIATION', reason: 'Explicit later reconciliation' });
     const coverage = await bankTransactionAccountCoverage(pool);
-    assert.deepEqual(coverage, { totalBankTransactions: 5, resolvedAccount: 3, unresolvedAccount: 2, exact: 1, manual: 1, reconciled: 1, unknown: 2, invariant: true });
+    assert.deepEqual(coverage, { totalBankTransactions: 7, resolvedAccount: 4, unresolvedAccount: 3, exact: 2, manual: 1, reconciled: 1, unknown: 3, invariant: true });
 
     await assert.rejects(() => resolveBankTransactionAccount(pool, { bankTransactionId: first.transactionId, financialAccountId: account.id, resolutionState: 'EXACT', provenance: 'TEST', reason: 'arbitrary exact mapping' }), /proven account reference evidence/);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM financial_account_person_relations WHERE financial_account_id=$1`, [account.id])).rows[0].count, 2);

@@ -26,6 +26,7 @@ import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
 import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
 import { createProvisionedBankSource, listProvisionedBankSources, linkProvisionedBankSourcePerson, setProvisionedBankSourceEnabled } from './bank-source-provisioning.js';
+import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, listFinancialAccounts, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference } from './bank-account-resolution.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -121,6 +122,78 @@ export async function runBankSourceCommand(args, { pool, write = printJson } = {
   throw new ReceiptCollectorError('Bank source command must be create, list, enable, disable or link-person');
 }
 
+export async function runBankAccountCommand(args, { pool, write = printJson } = {}) {
+  const subcommand = args._[0];
+  if (subcommand === 'create') {
+    const account = await createFinancialAccount(pool, {
+      scopeKey: args['scope-key'] ?? 'default',
+      institution: args.institution,
+      provider: args.provider ?? null,
+      displayName: args['display-name'],
+      currency: args.currency ?? 'RUB',
+    });
+    write({ ok: true, account });
+    return 0;
+  }
+  if (subcommand === 'list') {
+    write({ accounts: await listFinancialAccounts(pool, { scopeKey: args['scope-key'] ?? null }) });
+    return 0;
+  }
+  if (subcommand === 'link-person') {
+    const relation = await relateFinancialAccountPerson(pool, {
+      financialAccountId: args['account-id'],
+      personId: args['person-id'],
+      relationType: args['relation-type'] ?? 'OWNER',
+      provenance: args.provenance ?? 'ADMIN_CLI',
+      reason: args.reason,
+    });
+    write({ ok: true, relation });
+    return 0;
+  }
+  if (subcommand === 'add-instrument') {
+    const instrument = await createPaymentInstrument(pool, {
+      financialAccountId: args['account-id'],
+      instrumentType: args['instrument-type'],
+      provider: args.provider ?? null,
+      displayName: args['display-name'],
+    });
+    write({ ok: true, instrument });
+    return 0;
+  }
+  if (subcommand === 'add-reference') {
+    const reference = await createBankAccountReference(pool, {
+      financialAccountId: args['account-id'],
+      provider: args.provider,
+      referenceKind: args['reference-kind'],
+      referenceValue: args['reference-value'],
+    });
+    write({ ok: true, reference });
+    return 0;
+  }
+  if (subcommand === 'resolve-reference') {
+    const result = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: args['transaction-id'] });
+    write({ ok: true, resolution: result });
+    return 0;
+  }
+  if (subcommand === 'resolve-manual') {
+    if (!args.reason) throw new ReceiptCollectorError('Manual resolution requires --reason');
+    const result = await resolveBankTransactionAccount(pool, {
+      bankTransactionId: args['transaction-id'],
+      financialAccountId: args['account-id'],
+      resolutionState: 'MANUAL',
+      provenance: args.provenance ?? 'ADMIN_CLI',
+      reason: args.reason,
+    });
+    write({ ok: true, resolution: result });
+    return 0;
+  }
+  if (subcommand === 'coverage') {
+    write({ coverage: await bankTransactionAccountCoverage(pool) });
+    return 0;
+  }
+  throw new ReceiptCollectorError('Bank account command must be create, list, link-person, add-instrument, add-reference, resolve-reference, resolve-manual or coverage');
+}
+
 export function normalizePhone(value) {
   const phone = String(value ?? '').replace(/[^\d+]/g, '');
   if (phone.startsWith('+7')) {
@@ -207,7 +280,7 @@ export async function main(argv = process.argv.slice(2), {
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     printJson({
-      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device|bank-source>',
+      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device|bank-source|bank-account>',
       examples: [
         'receipt-collector login',
         'receipt-collector list',
@@ -533,6 +606,14 @@ export async function main(argv = process.argv.slice(2), {
     try {
       await assertSchemaCurrent(pool);
       return await runBankSourceCommand(args, { pool });
+    } finally { await pool.end(); }
+  }
+
+  if (command === 'bank-account') {
+    const pool = createPool();
+    try {
+      await assertSchemaCurrent(pool);
+      return await runBankAccountCommand(args, { pool });
     } finally { await pool.end(); }
   }
 

@@ -3,6 +3,30 @@
 ## Production FNS sync
 
 The production application is installed under `/opt/accountant/receipt-collector`.
+
+## Bank account mapping administration
+
+Financial-account provisioning and mapping are administrative operations, not
+runtime ingestion. Run the following commands only through the existing
+administrative/peer-access path, never with the `receipt_collector` service
+role:
+
+```text
+receipt-collector bank-account create --scope-key default --institution <name> --provider <provider> --display-name <name> --currency RUB
+receipt-collector bank-account link-person --account-id <id> --person-id <id> --relation-type OWNER --reason "explicit account ownership evidence"
+receipt-collector bank-account add-instrument --account-id <id> --instrument-type CARD --provider <provider> --display-name <name>
+receipt-collector bank-account add-reference --account-id <id> --provider <provider> --reference-kind MASKED_ACCOUNT --reference-value <masked-value>
+receipt-collector bank-account resolve-reference --transaction-id <id>
+receipt-collector bank-account resolve-manual --transaction-id <id> --account-id <id> --reason "explicit operator evidence"
+receipt-collector bank-account list --scope-key default
+receipt-collector bank-account coverage
+```
+
+The CLI never infers financial-account ownership from a bank-source `OWNER`
+link. `EXACT` is available only through proven provider/reference/scope
+evidence; zero or multiple candidates remain unresolved. Manual resolution
+requires a reason and cannot assert `EXACT`. Do not pass notification payloads,
+source event ids, credentials, or secrets as command arguments.
 The FNS sync is managed by:
 
 - `receipt-collector-sync.service`
