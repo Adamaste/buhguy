@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `b439b61db8b58310583795895f09a785009bbbd0`
-- Current phase: bank account resolution foundation is deployed and production-validated; operational account identity/reference activation is the current implementation stage
-- Current blocker: operator account provisioning/mapping must become safely usable before `INTERNAL_TRANSFER` reconciliation; business events, ledger integration, and UI remain intentionally unimplemented
+- Current master: `d4b6f1337fcd450569868127d7b144eb7d14e7c3`
+- Current phase: bank account resolution operationalization is deployed and production-validated; explicit account identity/reference confirmation is now required
+- Current blocker: no financial-account mappings exist, so ownership confirmation is required before any account provisioning or `INTERNAL_TRANSFER` reconciliation; business events, ledger integration, and UI remain intentionally unimplemented
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review the bank account operationalization PR, then validate administrative account provisioning/reference resolution before the separately reviewed `INTERNAL_TRANSFER` stage. UI is not the current target
+- Next action: obtain explicit financial-account ownership/reference confirmation, then run the reviewed administrative provisioning flow. Do not infer ownership from a bank source or device. UI is not the current target
 
 ## Sber normalization v1 production validation
 
@@ -143,20 +143,34 @@ bank transaction
 -> ChatGPT semantic access
 ```
 
-Operational note: `scripts/migrate-prod-only.mjs` has a path defect discovered
-during migration 013 deployment. The migration succeeded through the same
-repository `migrate()` implementation from the exact immutable release using
-administrative PostgreSQL peer access. The wrapper defect remains a follow-up
-before the next production migration; this docs-only update does not change
-the wrapper.
+Operational note: `scripts/migrate-prod-only.mjs` had a path defect discovered
+during migration 013 deployment. PR #34 corrected the wrapper to resolve the
+repository migrations directory independently of caller cwd; migration 014
+was subsequently applied through that corrected wrapper using administrative
+PostgreSQL peer access.
 
 ## Bank account resolution operationalization
 
-The deployed foundation remains intentionally separate from parser and ledger
-work. The next reviewed stage adds an administrative operator surface for
-financial accounts, explicit `OWNER`/`AUTHORIZED_USER` relations, payment
-instruments, masked references, evidence-derived reference resolution, and
-safe coverage reporting.
+PR #34 is merged in master commit
+`d4b6f1337fcd450569868127d7b144eb7d14e7c3`. Its immutable LF-normalized
+production artifact has archive SHA-256
+`0b8a103d9ad988be4ce4abd1f10b49ee1edf28934afb89d3a5a15e640d0dd7e6` and is
+deployed at `/opt/accountant/releases/d4b6f1337fcd450569868127d7b144eb7d14e7c3`.
+
+Production validation completed successfully:
+
+- migration `014_bank_transaction_account_reference_kind.sql` was applied
+  through the corrected `scripts/migrate-prod-only.mjs` wrapper using the
+  administrative peer path;
+- the wrapper was validated from a non-repository caller context and the
+  staged/installed manifest hashes matched the exact master artifact;
+- `finance-bank-ingestion.service` is active and `/healthz` returns HTTP 200;
+- the FNS timer was restored to `enabled/active`, with no manual sync run;
+- `bank_transactions` and `bank_event_observations` remained at 81/81;
+- all 81 historical `account_reference_kind` values remain NULL; no historical
+  reference projection or backfill was performed;
+- runtime grants were not broadened and remain limited to `INSERT` on
+  `bank_transaction_account_resolution` for unresolved ingestion rows.
 
 Migration 014 adds nullable `bank_transactions.account_reference_kind` with
 controlled values `MASKED_ACCOUNT`, `MASKED_CARD`, and `OTHER`; historical rows
@@ -170,9 +184,23 @@ reference kind, reference value, and unique accounting-scope evidence;
 missing, zero, or multiple candidates fail closed. Manual resolution requires
 an explicit reason and cannot assert `EXACT`.
 
-The migration wrapper defect is fixed in this branch before the next
-production migration and is covered for non-repository caller cwd. Migration
-014 is not to be applied to production by this PR.
+Read-only deployed CLI smoke passed for `bank-account list` and
+`bank-account coverage`. Coverage reports 81 unresolved `UNKNOWN` transactions
+and no financial accounts, account-person relations, bank references, or
+payment instruments exist yet.
+
+In-memory validation of the stored controlled Sber observations 72/75/79
+returned `INCOMING_TRANSFER`, `CREDIT`, RUB, `READY`,
+`sber-bank-normalizer-v1`, and `MASKED_ACCOUNT` with the same safe masked
+reference. Summary observations 74/76/80 remained fail-closed `PARTIAL`/
+`UNKNOWN` without an invented reference. Yandex behavior remains unchanged.
+
+The ownership barrier is active: source/device `OWNER` context is capture and
+accounting context only, not financial-account ownership proof. No financial
+account, ownership relation, reference, instrument, or manual resolution was
+created. The next action is explicit owner confirmation and only then reviewed
+administrative provisioning; `INTERNAL_TRANSFER` reconciliation remains out of
+scope until account identity is established.
 
 ## Read next when needed
 
