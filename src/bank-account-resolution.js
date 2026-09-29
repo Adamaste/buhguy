@@ -203,16 +203,24 @@ function compatibilityField(persisted, replayed, unknownValues = []) {
   return replayed != null && sameValue(persisted, replayed) ? 'MATCH' : 'CONFLICT';
 }
 
+function normalizedState(value) {
+  return value == null ? value : String(value).trim().toUpperCase();
+}
+
 const QUALITY_RANK = Object.freeze({ INSUFFICIENT: 0, PARTIAL: 1, EXACT: 2 });
 const STATUS_RANK = Object.freeze({ UNKNOWN: 0, PARTIAL: 1, READY: 2 });
 
 function monotonicQuality(persisted, replayed) {
+  persisted = normalizedState(persisted);
+  replayed = normalizedState(replayed);
   if (persisted === replayed) return 'MATCH';
   if (QUALITY_RANK[persisted] != null && QUALITY_RANK[replayed] != null && QUALITY_RANK[replayed] > QUALITY_RANK[persisted]) return 'REFINEMENT';
   return 'CONFLICT';
 }
 
 function monotonicStatus(persisted, replayed) {
+  persisted = normalizedState(persisted);
+  replayed = normalizedState(replayed);
   if (persisted === replayed) return 'MATCH';
   if (STATUS_RANK[persisted] != null && STATUS_RANK[replayed] != null && STATUS_RANK[replayed] > STATUS_RANK[persisted]) return 'REFINEMENT';
   return 'CONFLICT';
@@ -220,7 +228,8 @@ function monotonicStatus(persisted, replayed) {
 
 function historicalCompatibility(row, normalized) {
   const fields = {
-    occurredAt: compatibilityField(row.occurred_at, normalized.occurredAt),
+    occurredAt: sameTimestamp(row.occurred_at, normalized.occurredAt) ? 'MATCH'
+      : row.occurred_at == null ? 'REFINEMENT' : 'CONFLICT',
     amount: compatibilityField(row.amount, normalized.amount),
     currency: compatibilityField(row.currency, normalized.currency),
     direction: compatibilityField(row.direction, normalized.direction, ['UNKNOWN']),
