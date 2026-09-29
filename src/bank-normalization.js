@@ -5,10 +5,10 @@ const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
-const SBER_INCOMING_TITLES = new Set([
-  'Баланс увеличился благодаря переводу',
-  '⭐ Баланс увеличился благодаря переводу',
-]);
+const SBER_INCOMING_TITLE_PATTERNS = [
+  /^💳 Он пришёл! Перевод от [\p{L}\p{M} .'-]+$/u,
+  /^⭐ Баланс увеличился благодаря переводу от [\p{L}\p{M} .'-]+$/u,
+];
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
@@ -100,17 +100,15 @@ export function normalizeSberBankEvent(input) {
   const title = normalizeWhitespace(payload.title);
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
-  const hasIncomingMarker = SBER_INCOMING_TITLES.has(title) && body.startsWith('+');
-  const amountMatch = body.match(/^\+\s*(\d+),(\d{2})\s*₽\s*/u);
+  const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERNS.some((pattern) => pattern.test(title));
+  const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
   const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
-  const separatorIndex = afterAmount.indexOf(':');
-  const hasIncomingStructure = separatorIndex > 0
-    && afterAmount.slice(0, separatorIndex).includes('—')
-    && afterAmount.slice(separatorIndex + 1).includes('₽');
-  const amount = amountMatch ? `${amountMatch[1]}.${amountMatch[2]}` : null;
+  const hasIncomingStructure = /^—\s*Теперь у вас:\s*\d+(?:[\s\u00a0]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*\d{4}\b/u.test(afterAmount);
+  const hasIncomingMarker = hasIncomingTitle && body.startsWith('+');
+  const amount = amountMatch ? `${amountMatch[1]}.00` : null;
   const hasCurrency = body.includes('\u20bd');
 
-  if (!hasIncomingMarker || !amountMatch || !hasIncomingStructure || !occurred || !hasCurrency) {
+  if (!hasIncomingTitle || !hasIncomingMarker || !amountMatch || !hasIncomingStructure || !occurred || !hasCurrency) {
     return incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount });
   }
 
