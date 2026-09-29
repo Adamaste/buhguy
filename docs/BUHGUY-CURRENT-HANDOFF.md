@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `9bd1b393e43df20f8522f85ca054a72ab26bb0ce`
-- Current phase: reviewed historical bank-account evidence resolution is implemented on a separate branch and awaits CI/review; production remains unchanged
-- Current blocker: historical Sber transactions remain `UNKNOWN` until the resolver is deployed and dry-run/persist gates are explicitly passed
+- Current master: `9426cdf374416ea1e7de7b0ef806a63d3f8445e6`
+- Current phase: historical Sber account resolution is deployed and validated for the three controlled observations
+- Current blocker: the second own financial account involved in a known own-account transfer is not yet provisioned/proven; do not start INTERNAL_TRANSFER reconciliation
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
+- Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review and deploy the historical resolver, dry-run observations 72/75/79, then persist only after all fail-closed gates pass. Do not infer ownership from a bank source or device. UI is not the current target
+- Next action: find/provision the second proven own financial account, then consider INTERNAL_TRANSFER reconciliation only after both sides pass explicit evidence gates. Do not infer ownership from a bank source or device
 
 ## Historical bank-account evidence resolution
 
@@ -39,9 +39,25 @@ An explicit `--persist` can change only an existing `UNKNOWN` resolution to
 `RECONCILED`, with provenance `HISTORICAL_OBSERVATION_REPLAY`. It never changes
 the observation or bank transaction, creates ownership/reference evidence,
 backfills, posts ledger entries, or performs internal-transfer matching.
-Missing, ambiguous, hash-mismatched, non-READY, parity-mismatched, and
-multi-scope cases fail closed. No production historical resolution has been
-performed from this branch.
+Missing, ambiguous, hash-mismatched, non-READY, compatibility-conflicting, and
+multi-scope cases fail closed. The resolver was deployed from master
+`9426cdf374416ea1e7de7b0ef806a63d3f8445e6` using immutable artifact SHA-256
+`e28f1486ef63ac8d2eb9a77d4f361520275724628a6a56164b0f40e59b575636`.
+
+Production validation completed with schema migration `014` unchanged and no
+grant changes. Read-only dry-runs for observations `72`, `75`, and `79` all
+passed with provider `ru.sberbankmobile`, reference `MASKED_ACCOUNT ••0271`,
+one candidate, account `1`, and compatibility `PASS`. Controlled persistence
+then changed only their account-resolution rows to `RECONCILED` with
+provenance `HISTORICAL_OBSERVATION_REPLAY`. The immutable observation payload
+hashes and selected bank-transaction fingerprints were unchanged. A repeated
+persist for observation `72` returned `ALREADY_RECONCILED` and preserved
+`resolved_at`.
+
+Coverage after validation is 81 total, 3 resolved, 78 unresolved, with 3
+`RECONCILED`, 0 `EXACT`, 0 `MANUAL`, and 78 `UNKNOWN`; the coverage invariant
+passes. No bank transaction backfill, INTERNAL_TRANSFER, business event, or
+ledger posting was performed.
 
 ## Sber normalization v1 production validation
 
