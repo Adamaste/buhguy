@@ -257,8 +257,6 @@ function historicalAudit(row, normalized, compatibility, current, candidates, pr
     provider,
     persistedNormalizationVersion: row.normalization_version,
     replayNormalizationVersion: normalized.normalizationVersion,
-    persistedEvidenceQuality: row.evidence_quality,
-    replayEvidenceQuality: normalized.evidenceQuality,
     referenceKind: normalized.accountReferenceKind,
     maskedReference: safeReference(normalized.accountReference),
     currentResolutionState: current?.resolution_state ?? 'UNKNOWN',
@@ -277,7 +275,7 @@ async function loadHistoricalContext(client, observationId) {
     SELECT eo.id AS observation_id, eo.payload, eo.payload_sha256, eo.event_time, eo.ingestion_metadata,
       bt.id AS transaction_id, bt.occurred_at, bt.amount, bt.currency, bt.direction,
       bt.merchant, bt.counterparty, bt.account_reference, bt.account_reference_kind,
-      bt.event_type, bt.normalization_status, bt.normalization_version,
+      bt.event_type, bt.normalization_status, bt.normalization_version, bt.evidence_quality,
       COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
     FROM bank_event_observations eo
     LEFT JOIN bank_transactions bt ON bt.observation_id=eo.id
