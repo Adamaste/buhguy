@@ -42,6 +42,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****1111' });
     await createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****1111' });
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****2222' });
+    await createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****3333' });
 
     const first = await ingestBankEvent(pool, event('resolution-ambiguous', '10.00', '****1111'));
     const second = await ingestBankEvent(pool, event('resolution-exact', '20.00', '****2222'));
@@ -57,7 +58,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     const exact = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: second.transactionId });
     assert.equal(exact.resolution_state, 'EXACT');
     assert.equal(exact.financial_account_id, account.id);
-    const kindSpecific = await ingestBankEvent(pool, event('resolution-kind-specific', '25.00', '****1111', sourceKey, 'MASKED_ACCOUNT'));
+    const kindSpecific = await ingestBankEvent(pool, event('resolution-kind-specific', '25.00', '****3333', sourceKey, 'MASKED_ACCOUNT'));
     const kindSpecificResolution = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: kindSpecific.transactionId });
     assert.equal(kindSpecificResolution.resolution_state, 'EXACT');
     assert.equal(kindSpecificResolution.financial_account_id, secondAccount.id);
