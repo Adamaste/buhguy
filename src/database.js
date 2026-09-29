@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } from './fiscal-evidence.js';
 import { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from './fiscal-errors.js';
@@ -14,7 +15,9 @@ export function createPool(config = {}) {
   return new Pool({ connectionString, host: config.host, port: config.port, database: config.database, user: config.user, password: config.password, max: config.max ?? 5, ssl: config.ssl ?? (process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined) });
 }
 
-export async function migrate(pool, migrationsDir = path.join(process.cwd(), 'db', 'migrations')) {
+export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL('../db/migrations/', import.meta.url));
+
+export async function migrate(pool, migrationsDir = DEFAULT_MIGRATIONS_DIR) {
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   const files = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
   for (const filename of files) {
@@ -25,7 +28,7 @@ export async function migrate(pool, migrationsDir = path.join(process.cwd(), 'db
   }
 }
 
-export async function assertSchemaCurrent(pool, migrationsDir = path.join(process.cwd(), 'db', 'migrations')) {
+export async function assertSchemaCurrent(pool, migrationsDir = DEFAULT_MIGRATIONS_DIR) {
   let applied;
   try {
     applied = new Set((await pool.query('SELECT filename FROM schema_migrations')).rows.map((row) => row.filename));

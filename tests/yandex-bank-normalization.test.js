@@ -25,6 +25,7 @@ test('Yandex purchase is normalized from exact title and description markers', (
     merchant: null,
     counterparty: null,
     accountReference: null,
+    accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
     normalizationVersion: 'yandex-bank-normalizer-v1',

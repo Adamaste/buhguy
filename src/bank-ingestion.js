@@ -4,7 +4,7 @@ import { isSberBankAndroidNotification, isYandexBankProvider, normalizeSberBankE
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
 const DIRECTIONS = new Set(['DEBIT', 'CREDIT', 'UNKNOWN']);
-const PAYLOAD_KEYS = new Set(['amount', 'currency', 'direction', 'merchant', 'counterparty', 'accountReference', 'occurredAt', 'description', 'title', 'text', 'eventType', 'reference']);
+const PAYLOAD_KEYS = new Set(['amount', 'currency', 'direction', 'merchant', 'counterparty', 'accountReference', 'accountReferenceKind', 'occurredAt', 'description', 'title', 'text', 'eventType', 'reference']);
 const METADATA_KEYS = new Set(['adapter', 'provider', 'deviceType', 'schemaVersion']);
 const SECRET_KEY = /(token|cookie|password|secret|authorization|credential|session|private.?key)/i;
 const MAX_SCALAR_LENGTH = 4096;
@@ -84,6 +84,7 @@ export function normalizeBankEvent(input) {
     merchant: payload.merchant ?? null,
     counterparty: payload.counterparty ?? null,
     accountReference: payload.accountReference ?? null,
+    accountReferenceKind: payload.accountReferenceKind ?? null,
     eventType: 'UNKNOWN',
     normalizationStatus: complete ? 'READY' : partial ? 'PARTIAL' : 'UNKNOWN',
     evidenceQuality: complete ? 'EXACT' : partial ? 'PARTIAL' : 'INSUFFICIENT',
@@ -142,8 +143,8 @@ export async function ingestBankEvent(pool, input) {
     }
     const observation = (await client.query(`INSERT INTO bank_event_observations(bank_source_id,source_event_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalJson(event.ingestionMetadata)])).rows[0];
-    const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,event_type,normalization_status,normalization_version,evidence_quality)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
+    const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,account_reference_kind,event_type,normalization_status,normalization_version,evidence_quality)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.accountReferenceKind, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
     await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,resolution_state,provenance,reason)
       VALUES($1,'UNKNOWN','INGESTION_DEFAULT','No explicit financial account mapping evidence')`, [transaction.id]);
     await client.query('COMMIT');

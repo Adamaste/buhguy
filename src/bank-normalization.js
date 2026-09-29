@@ -38,6 +38,7 @@ function incomplete({ occurred, amount, hasCurrency, hasFinancialMarker }) {
     merchant: null,
     counterparty: null,
     accountReference: null,
+    accountReferenceKind: null,
     normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
     evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
     normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
@@ -68,6 +69,7 @@ export function normalizeYandexBankEvent(input) {
     merchant: null,
     counterparty: null,
     accountReference: null,
+    accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
     normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
@@ -89,6 +91,7 @@ function incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount }) {
     merchant: null,
     counterparty: null,
     accountReference: null,
+    accountReferenceKind: null,
     normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
     evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
     normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
@@ -103,7 +106,8 @@ export function normalizeSberBankEvent(input) {
   const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERNS.some((pattern) => pattern.test(title));
   const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
   const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
-  const hasIncomingStructure = /^—\s*Теперь у вас:\s*\d+(?:[\s\u00a0]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*\d{4}\b/u.test(afterAmount);
+  const accountReferenceMatch = afterAmount.match(/^—\s*Теперь у вас:\s*\d+(?:[\s\u00a0]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*(\d{4})\b/u);
+  const hasIncomingStructure = Boolean(accountReferenceMatch);
   const hasIncomingMarker = hasIncomingTitle && body.startsWith('+');
   const amount = amountMatch ? `${amountMatch[1]}.00` : null;
   const hasCurrency = body.includes('\u20bd');
@@ -120,7 +124,8 @@ export function normalizeSberBankEvent(input) {
     direction: 'CREDIT',
     merchant: null,
     counterparty: null,
-    accountReference: null,
+    accountReference: accountReferenceMatch[1],
+    accountReferenceKind: 'MASKED_ACCOUNT',
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
     normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,

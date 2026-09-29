@@ -81,6 +81,21 @@ export async function createBankAccountReference(pool, { financialAccountId, pro
   return result.rows[0];
 }
 
+export async function listFinancialAccounts(pool, { scopeKey = null } = {}) {
+  const result = await pool.query(`SELECT a.id, s.scope_key AS "scopeKey", a.institution, a.provider,
+      a.display_name AS "displayName", a.currency, a.active,
+      COALESCE((SELECT json_agg(json_build_object('personId', r.person_id, 'relationType', r.relation_type, 'provenance', r.provenance, 'reason', r.reason) ORDER BY r.person_id, r.relation_type)
+        FROM financial_account_person_relations r WHERE r.financial_account_id=a.id), '[]'::json) AS relations,
+      COALESCE((SELECT json_agg(json_build_object('provider', br.provider, 'referenceKind', br.reference_kind, 'referenceValue', br.reference_value) ORDER BY br.provider, br.reference_kind, br.reference_value)
+        FROM bank_account_references br WHERE br.financial_account_id=a.id), '[]'::json) AS references,
+      COALESCE((SELECT json_agg(json_build_object('instrumentType', pi.instrument_type, 'provider', pi.provider, 'displayName', pi.display_name, 'active', pi.active) ORDER BY pi.id)
+        FROM payment_instruments pi WHERE pi.financial_account_id=a.id), '[]'::json) AS instruments
+    FROM financial_accounts a JOIN accounting_scopes s ON s.id=a.scope_id
+    WHERE ($1::text IS NULL OR s.scope_key=$1)
+    ORDER BY a.id`, [scopeKey]);
+  return result.rows;
+}
+
 export async function resolveBankTransactionAccount(pool, { bankTransactionId, financialAccountId = null, resolutionState, provenance, reason }) {
   const state = requireState(resolutionState);
   if (state === 'EXACT') throw new Error('EXACT resolution requires proven account reference evidence');
@@ -110,7 +125,7 @@ export async function resolveBankTransactionAccount(pool, { bankTransactionId, f
 }
 
 async function loadTransactionContext(client, transactionId) {
-  const result = await client.query(`SELECT bt.id, bt.account_reference AS "accountReference",
+  const result = await client.query(`SELECT bt.id, bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
       eo.ingestion_metadata->>'provider' AS provider,
       COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
     FROM bank_transactions bt
@@ -140,18 +155,22 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
   try {
     await client.query('BEGIN');
     const context = await loadTransactionContext(client, transactionId);
-    const candidates = context.provider && context.accountReference
+    const candidates = context.provider && context.accountReference && context.accountReferenceKind
       ? (await client.query(`SELECT DISTINCT r.financial_account_id
           FROM bank_account_references r
           JOIN financial_accounts a ON a.id=r.financial_account_id
-          WHERE r.provider=$1 AND r.reference_value=$2 AND a.scope_id=$3
-          ORDER BY r.financial_account_id`, [context.provider, context.accountReference, context.scopeId])).rows
+          WHERE r.provider=$1 AND r.reference_kind=$2 AND r.reference_value=$3 AND a.scope_id=$4
+          ORDER BY r.financial_account_id`, [context.provider, context.accountReferenceKind, context.accountReference, context.scopeId])).rows
       : [];
     let result;
     if (candidates.length === 1) {
       result = await persistResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' });
     } else {
-      const reason = candidates.length > 1 ? 'Ambiguous provider-scoped account reference candidates' : 'No provider-scoped account reference candidate';
+      const reason = candidates.length > 1
+        ? 'Ambiguous provider, reference kind, and scope candidates'
+        : !context.accountReferenceKind
+          ? 'Observed account reference has no supported reference kind'
+          : 'No provider, reference kind, and scope candidate';
       result = await persistResolution(client, { transactionId, resolutionState: 'UNKNOWN', provenance: candidates.length > 1 ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason });
     }
     await client.query('COMMIT');

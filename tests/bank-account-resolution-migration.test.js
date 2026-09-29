@@ -14,3 +14,12 @@ test('bank account resolution migration keeps account ownership and resolution e
   assert.doesNotMatch(sql, /UNIQUE \(provider, reference_kind, reference_value\)/);
   assert.doesNotMatch(sql, /CREATE TABLE IF NOT EXISTS .*ledger/i);
 });
+
+test('reference-kind migration preserves historical null compatibility', async () => {
+  const sql = await readFile(new URL('../db/migrations/014_bank_transaction_account_reference_kind.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS account_reference_kind TEXT/);
+  assert.match(sql, /account_reference_kind IS NULL/);
+  assert.match(sql, /account_reference_kind IN \('MASKED_CARD', 'MASKED_ACCOUNT', 'OTHER'\)/);
+  assert.match(sql, /MASKED_CARD.*MASKED_ACCOUNT.*OTHER/);
+  assert.doesNotMatch(sql, /UPDATE\s+bank_transactions/i);
+});
