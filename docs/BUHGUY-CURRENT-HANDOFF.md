@@ -16,15 +16,51 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-09-28
-- Current master: `d77eaf0cf3e2d3d9da17e46452f4b55a948e62ba`
-- Current phase: multi-bank transport evidence reviewed; sanitized fixture research complete
-- Current blocker: T-Bank, Sber, and Ozon transport is proven, but their captured evidence is still `PARTIAL` with event type and direction not proven; Alfa and VTB are deferred for parser work
+- Last updated: 2026-09-29
+- Current master: `adb4451a2d2019e4628ba70edff0440aa457cecd`
+- Current phase: Sber normalizer v1 deployed; production read-only validation remains fail-closed for the saved real observations
+- Current blocker: the saved Sber rows use an integer-ruble amount shape not accepted by the proven comma-decimal v1 grammar, so they remain `PARTIAL`; no backfill was performed. T-Bank/Ozon remain parser-not-ready, and Alfa/VTB are deferred
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; all current provider clusters remain fail-closed and not parser-ready
+- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; Sber parser code is deployed but the saved real rows remain fail-closed because their amount grammar is outside the v1 envelope
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: implement a parser only after a provider has a sanitized deterministic positive format with event type, direction, amount, currency, and event-time facts proven
+- Next action: obtain a new controlled positive capture for T-Bank or Ozon; do not widen Sber grammar without new reviewed evidence
+
+## Sber normalization v1 production deployment
+
+PR #28 is merged in master commit `adb4451a2d2019e4628ba70edff0440aa457cecd`.
+The runtime was promoted from an immutable LF-normalized 39-file closure with
+artifact SHA-256 `724c49cfb58d0c80803ef6b62c6993ddb2e7dcc8f8851740e2b86eb65098b02`.
+
+Deployment validation completed for:
+
+- exact staged and installed manifest hashes;
+- `/healthz` HTTP 200 with `{"status":"ok"}`;
+- JavaScript syntax, module imports, and CLI smoke;
+- schema unchanged with migration `012_bank_transaction_event_type.sql` already current;
+- timer restored to `enabled/active` and sync service left inactive after deployment;
+- no migration execution, backfill, phone use, credential mutation, grant change, or new bank operation.
+
+The deployed Sber envelope is intentionally narrow:
+
+- provider `ru.sberbankmobile`;
+- adapter `android-notification`;
+- schemaVersion `1`;
+- exact proven incoming-transfer title forms only;
+- first comma-decimal amount token followed by the RUB symbol;
+- event time from Android notification `postTime`.
+
+Read-only in-memory validation against saved production observations is available
+without exposing payload text. The real saved Sber observations are structurally
+incoming candidates, but their observed amount shape is integer rubles, not the
+proven comma-decimal v1 shape, so the new parser returns `UNKNOWN/PARTIAL` rather
+than `READY`. Reference-only observations also remain fail-closed. No observation
+was updated or re-ingested.
+
+Yandex normalizer v1 remains deployed and its regression suite remains passing.
+T-Bank and Ozon still need deterministic parser evidence; Alfa and VTB remain
+deferred. The next likely minimal step is a controlled positive capture for
+T-Bank or Ozon, with no grammar widening based only on the existing Sber rows.
 
 ## Yandex normalization v1 production deployment
 
