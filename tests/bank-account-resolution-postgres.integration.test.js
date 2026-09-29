@@ -67,7 +67,8 @@ integration('bank account resolution keeps ownership, references, and unknown co
     assert.equal(cardResolution.resolution_state, 'UNKNOWN');
     assert.equal(cardResolution.candidateCount, 2);
     const accountResolutionForCard = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: cardEvent.transactionId });
-    assert.equal(accountResolutionForCard.resolution_state, 'UNKNOWN');
+    assert.equal(accountResolutionForCard.status, 'NOT_APPLICABLE');
+    assert.equal(accountResolutionForCard.changed, false);
     assert.equal(accountResolutionForCard.candidateCount, 0);
     const unmatched = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: third.transactionId });
     assert.equal(unmatched.resolution_state, 'UNKNOWN');
