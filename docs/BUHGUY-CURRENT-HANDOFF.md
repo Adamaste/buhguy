@@ -17,9 +17,9 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `019b89102ca91d91cd9f6b2db1647e74cc7bad95`
-- Current phase: usable MVP; corrective Sber normalizer v1 is deployed and production-validated
-- Current blocker: provider parser research no longer blocks product use. The next product work is a daily-use interface for receipts, bank transactions, and explicit READY/PARTIAL/UNKNOWN evidence states
+- Current master: `2b5c350aa250f9d921849162900b97e6d34f7cfe`
+- Current phase: bank account resolution foundation in review; corrective Sber normalizer v1 remains deployed and production-validated
+- Current blocker: account resolution is not yet merged or deployed. The next product path is explicit bank transaction -> financial account resolution -> reconciliation/business event -> ledger Dr/Cr -> ChatGPT semantic access; UI is not the current target
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
@@ -103,6 +103,18 @@ PR #24 is merged. T-Bank remains policy-blocked by its notification permission
 state; this deployment did not change that device policy. The next functional
 stage is bank coverage and provider parsers for Alfa, Sber, VTB, Ozon, and
 T-Bank, with each parser kept fail-closed and evidence-preserving.
+
+## Bank account resolution foundation
+
+The next foundation change is intentionally separate from parser and ledger
+work. It introduces financial accounts, explicit account-person relations,
+payment instruments, provider-scoped masked references, and transaction
+resolution states `EXACT`, `MANUAL`, `RECONCILED`, and `UNKNOWN`.
+
+Every new bank transaction is recorded as explicit `UNKNOWN` until a separate
+operator or reconciliation action supplies an account. Source `OWNER` links
+are never treated as financial-account ownership. No automatic inference,
+historical backfill, ledger posting, or UI is part of this step.
 
 ## Read next when needed
 

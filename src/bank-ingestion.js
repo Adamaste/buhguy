@@ -144,6 +144,8 @@ export async function ingestBankEvent(pool, input) {
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalJson(event.ingestionMetadata)])).rows[0];
     const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,event_type,normalization_status,normalization_version,evidence_quality)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
+    await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,resolution_state,provenance,reason)
+      VALUES($1,'UNKNOWN','INGESTION_DEFAULT','No explicit financial account mapping evidence')`, [transaction.id]);
     await client.query('COMMIT');
     return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized };
   } catch (error) {

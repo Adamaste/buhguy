@@ -27,6 +27,8 @@ const unitFiles = [
   'tests/fns-user-onboarding.test.js',
   'tests/accounting-pipeline.test.js',
   'tests/bank-ingestion.test.js',
+  'tests/bank-account-resolution.test.js',
+  'tests/bank-account-resolution-migration.test.js',
   'tests/bank-provider-fixtures.test.js',
   'tests/yandex-bank-normalization.test.js',
   'tests/sber-bank-normalization.test.js',
@@ -48,6 +50,7 @@ const postgresFiles = [
   'tests/purchase-details-analytics-postgres.integration.test.js',
   'tests/bank-ingestion-postgres.integration.test.js',
   'tests/bank-device-auth-postgres.integration.test.js',
+  'tests/bank-account-resolution-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(
