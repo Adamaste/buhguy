@@ -4,6 +4,11 @@ export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v1';
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
+const SBER_ANDROID_SCHEMA_VERSION = '1';
+const SBER_INCOMING_TITLES = new Set([
+  'Баланс увеличился благодаря переводу',
+  '⭐ Баланс увеличился благодаря переводу',
+]);
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
@@ -95,7 +100,7 @@ export function normalizeSberBankEvent(input) {
   const title = normalizeWhitespace(payload.title);
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
-  const hasIncomingMarker = title.includes('Баланс увеличился благодаря переводу') && body.startsWith('+');
+  const hasIncomingMarker = SBER_INCOMING_TITLES.has(title) && body.startsWith('+');
   const amountMatch = body.match(/^\+\s*(\d+),(\d{2})\s*₽\s*/u);
   const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
   const separatorIndex = afterAmount.indexOf(':');
@@ -126,5 +131,6 @@ export function normalizeSberBankEvent(input) {
 
 export function isSberBankAndroidNotification(input) {
   return input.ingestionMetadata?.provider === SBER_PROVIDER
-    && input.ingestionMetadata?.adapter === ANDROID_NOTIFICATION_ADAPTER;
+    && input.ingestionMetadata?.adapter === ANDROID_NOTIFICATION_ADAPTER
+    && input.ingestionMetadata?.schemaVersion === SBER_ANDROID_SCHEMA_VERSION;
 }

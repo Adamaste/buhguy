@@ -34,6 +34,14 @@ test('Sber controlled incoming format is normalized exactly', () => {
   });
 });
 
+test('Sber accepts only the two proven exact title forms', () => {
+  for (const title of ['Баланс увеличился благодаря переводу', '⭐ Баланс увеличился благодаря переводу']) {
+    const result = normalizeBankEvent({ ...base, payload: incoming({ title }) });
+    assert.equal(result.normalizationStatus, 'READY');
+    assert.equal(result.eventType, 'INCOMING_TRANSFER');
+  }
+});
+
 test('Sber parser uses description before text and normalizes supported whitespace', () => {
   const result = normalizeBankEvent({ ...base, payload: incoming({
     description: '  ⭐ Баланс\nувеличился благодаря переводу  ',
@@ -51,6 +59,9 @@ test('Sber parser uses description before text and normalizes supported whitespa
 
 test('Sber parser fails closed for missing or malformed evidence', () => {
   const cases = [
+    { title: 'ТЕСТ Баланс увеличился благодаря переводу', description: '+ 12,34 ₽ — ТЕСТ: 56,78 ₽' },
+    { title: 'Баланс увеличился благодаря переводу ТЕСТ', description: '+ 12,34 ₽ — ТЕСТ: 56,78 ₽' },
+    { title: '⭐ Баланс увеличился благодаря переводу ТЕСТ', description: '+ 12,34 ₽ — ТЕСТ: 56,78 ₽' },
     { title: 'Новости', description: '+ 12,34 ₽ — ТЕСТ: 56,78 ₽' },
     { title: '⭐ Баланс увеличился благодаря переводу', description: 'Перевод: 12,34 ₽' },
     { title: '⭐ Баланс увеличился благодаря переводу', description: '+ 12 ₽ — ТЕСТ: 56,78 ₽' },
@@ -98,6 +109,24 @@ test('Sber parser is provider and adapter scoped; generic normalization remains 
   assert.equal(nonAndroid.amount, '12.34');
   assert.equal(nonAndroid.direction, 'CREDIT');
   assert.equal(nonAndroid.normalizationStatus, 'READY');
+});
+
+test('Sber parser requires schemaVersion 1 and other versions use generic normalization', () => {
+  for (const schemaVersion of ['2', undefined]) {
+    const ingestionMetadata = { ...base.ingestionMetadata };
+    if (schemaVersion === undefined) delete ingestionMetadata.schemaVersion;
+    else ingestionMetadata.schemaVersion = schemaVersion;
+    const result = normalizeBankEvent({
+      ...base,
+      ingestionMetadata,
+      payload: { amount: '12.34', currency: 'RUB', direction: 'CREDIT', ...incoming() },
+    });
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.amount, '12.34');
+    assert.equal(result.direction, 'CREDIT');
+    assert.equal(result.normalizationStatus, 'READY');
+    assert.equal(result.normalizationVersion, 'bank-normalizer-v1');
+  }
 });
 
 test('Sber normalization uses envelope eventTime and does not mutate raw observation payload', () => {

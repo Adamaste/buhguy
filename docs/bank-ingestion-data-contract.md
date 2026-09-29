@@ -80,8 +80,9 @@ contract.
 ## Sber Android normalization v1
 
 The provider-specific `sber-bank-normalizer-v1` applies only when ingestion
-metadata identifies provider `ru.sberbankmobile` and adapter
-`android-notification`. It supports the one controlled, real-derived incoming
+metadata identifies provider `ru.sberbankmobile`, adapter
+`android-notification`, and schema version `1`. It supports the one controlled,
+real-derived incoming
 transfer format proven by two samples: the first comma-decimal RUB-symbol
 amount after the incoming marker is normalized as `INCOMING_TRANSFER` / `CREDIT`
 with `RUB`. A second monetary field in the same notification is treated as a
