@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `adb4451a2d2019e4628ba70edff0440aa457cecd`
-- Current phase: Sber normalizer v1 deployed; exact controlled production validation fails due to parser-evidence mismatch
-- Current blocker: exact source-event correlation for the controlled Sber captures found the production observations, but both incoming observations use an integer-ruble amount shape and title forms outside the committed comma-decimal fixture/parser contract. The deployed parser correctly remains fail-closed (`UNKNOWN/PARTIAL`). No backfill was performed. Fix the Sber fixture/evidence contract before moving to another provider parser
+- Current master: `91868464ffdd3ffa994e88024d9dc8aa3087943c`
+- Current phase: Sber normalizer v1 deployed; follow-up fix aligns parser/fixtures with exact controlled production evidence
+- Current blocker: production currently remains on the fail-closed deployed parser until the Sber evidence-contract fix is reviewed, merged, and deployed. The fix must use exact controlled observations only, preserve raw evidence, and perform no backfill
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; exact controlled Sber observations are now correlated by source-event prefix and remain fail-closed because their real amount/title grammar is outside the committed v1 envelope
+- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; exact controlled Sber observations are now correlated by source-event prefix and prove the integer-ruble incoming-transfer shape used by the follow-up fixture/parser contract
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: repair the Sber normalization evidence contract from sanitized exact controlled observations before starting another provider parser. Do not widen grammar without reviewed fixtures derived from exact controlled evidence
+- Next action: review and merge the Sber evidence-contract fix, then deploy it through the normal immutable release path. Do not start another provider parser or perform Sber backfill before this is closed
 
 ## Sber normalization v1 production deployment
 
@@ -77,17 +77,27 @@ Controlled capture 2:
 - the deployed parser returns `UNKNOWN/PARTIAL` with
   `sber-bank-normalizer-v1`.
 
-This is `SBER_PRODUCTION_VALIDATION=FAIL_EVIDENCE_MISMATCH`: transport and exact
-backend correlation are proven, but the committed sanitized fixture/parser
-contract does not faithfully describe the exact controlled production payloads.
+This was `SBER_PRODUCTION_VALIDATION=FAIL_EVIDENCE_MISMATCH` for the deployed
+PR #28 parser: transport and exact backend correlation were proven, but the
+committed sanitized fixture/parser contract did not faithfully describe the
+exact controlled production payloads. The follow-up fix must align the fixture
+and parser with these facts only:
+
+- exact provider `ru.sberbankmobile`;
+- adapter `android-notification`;
+- schemaVersion `1`;
+- the two controlled incoming title structures with sender tail;
+- integer-ruble transaction amount as the first monetary token;
+- separate balance monetary field ignored for transaction amount;
+- event time from Android notification `postTime`.
+
 Reference-only observations also remain fail-closed. No observation was updated
 or re-ingested.
 
 Yandex normalizer v1 remains deployed and its regression suite remains passing.
 T-Bank and Ozon still need deterministic parser evidence; Alfa and VTB remain
-deferred. The next minimal step is to fix the Sber fixture/evidence contract
-from sanitized exact controlled observations before beginning another provider
-parser.
+deferred. The next minimal step is to review the Sber follow-up parser fix and,
+after merge, deploy it without historical backfill.
 
 ## Yandex normalization v1 production deployment
 

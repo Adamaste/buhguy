@@ -4,10 +4,10 @@
   "clusters": [
     {
       "id": "sber-incoming-transfer-v1",
-      "observationCount": 2,
+      "observationCount": 3,
       "fields": {
-        "title": { "present": true, "shape": "incoming-balance marker with optional leading star" },
-        "description": { "present": true, "shape": "plus, comma-decimal amount, RUB symbol, dash, sender marker, colon, distinct balance value" },
+        "title": { "present": true, "shape": "two proven title structures with sender tail: 💳 Он пришёл! Перевод от <sender> or ⭐ Баланс увеличился благодаря переводу от <sender>" },
+        "description": { "present": true, "shape": "plus, integer RUB-symbol amount, dash, balance marker, distinct comma-decimal balance value, payment-account suffix" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
       },
@@ -15,7 +15,7 @@
       "evidence": {
         "eventType": "INCOMING_TRANSFER",
         "direction": "CREDIT",
-        "amountGrammar": "first comma-decimal token followed by RUB symbol after plus marker",
+        "amountGrammar": "first integer-ruble token followed by RUB symbol after plus marker",
         "currencyGrammar": "RUB symbol present",
         "transactionAmountPosition": "first monetary token",
         "secondMonetaryField": "distinct balance field, ignored",
@@ -25,9 +25,9 @@
         "accountReferenceStructure": "NOT_EXTRACTED"
       },
       "syntheticPayload": {
-        "title": "⭐ Баланс увеличился благодаря переводу",
-        "description": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС",
-        "text": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС"
+        "title": "⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ",
+        "description": "+ 123 ₽ — Теперь у вас: 6 789,01 ₽ Плат. счёт •• 0000",
+        "text": "+ 123 ₽ — Теперь у вас: 6 789,01 ₽ Плат. счёт •• 0000"
       },
       "readyCapable": true
     },

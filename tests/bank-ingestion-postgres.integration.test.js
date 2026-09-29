@@ -78,19 +78,19 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     const sberEvent = {
       ...event,
       sourceEventId: 'evt-sber-incoming',
-      payload: { title: '⭐ Баланс увеличился благодаря переводу', description: '+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС' },
+      payload: { title: '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 123 ₽ — Теперь у вас: 6 789,01 ₽ Плат. счёт •• 0000' },
       ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', deviceType: 'android', schemaVersion: '1' },
     };
     const sberCreated = await ingestBankEvent(pool, sberEvent);
     assert.equal(sberCreated.status, 'created');
     assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
     assert.equal(sberCreated.normalization.direction, 'CREDIT');
-    assert.equal(sberCreated.normalization.amount, '123.45');
+    assert.equal(sberCreated.normalization.amount, '123.00');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
     assert.equal(sberReplay.status, 'duplicate');
     assert.equal(sberReplay.observationId, Number(sberBefore.id));
-    const sberConflict = await ingestBankEvent(pool, { ...sberEvent, payload: { ...sberEvent.payload, description: '+ 124,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 790,01 ₽ ТЕСТОВЫЙ БАЛАНС' } });
+    const sberConflict = await ingestBankEvent(pool, { ...sberEvent, payload: { ...sberEvent.payload, description: '+ 124 ₽ — Теперь у вас: 6 790,01 ₽ Плат. счёт •• 0000' } });
     assert.deepEqual(sberConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
     const sberAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     assert.deepEqual(sberAfter, sberBefore);
@@ -112,7 +112,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
       ORDER BY event_type, amount`);
     assert.deepEqual(yandexRows.rows, [
       { event_type: 'INCOMING_TRANSFER', amount: '100.00', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
-      { event_type: 'INCOMING_TRANSFER', amount: '123.45', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
+      { event_type: 'INCOMING_TRANSFER', amount: '123.00', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
       { event_type: 'PURCHASE', amount: '42.10', currency: 'RUB', direction: 'DEBIT', normalization_status: 'READY' },
     ]);
   } finally {
