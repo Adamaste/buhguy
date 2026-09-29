@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `d4b6f1337fcd450569868127d7b144eb7d14e7c3`
-- Current phase: bank account resolution operationalization is deployed and production-validated; explicit account identity/reference confirmation is now required
-- Current blocker: no financial-account mappings exist, so ownership confirmation is required before any account provisioning or `INTERNAL_TRANSFER` reconciliation; business events, ledger integration, and UI remain intentionally unimplemented
+- Current master: `0d84fff53d424b7878c215ec5bc5be0e070054a3`
+- Current phase: Sber account identity/reference provisioning is complete for the explicitly confirmed first user; historical resolution remains a separate reviewed step
+- Current blocker: historical Sber transactions still lack persisted reference fields and remain `UNKNOWN`; reviewed historical evidence resolution is required before any `INTERNAL_TRANSFER` reconciliation
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: obtain explicit financial-account ownership/reference confirmation, then run the reviewed administrative provisioning flow. Do not infer ownership from a bank source or device. UI is not the current target
+- Next action: review explicit historical Sber resolution for observations 72/75/79, without backfilling transaction evidence. Do not infer ownership from a bank source or device. UI is not the current target
 
 ## Sber normalization v1 production validation
 
@@ -185,9 +185,8 @@ missing, zero, or multiple candidates fail closed. Manual resolution requires
 an explicit reason and cannot assert `EXACT`.
 
 Read-only deployed CLI smoke passed for `bank-account list` and
-`bank-account coverage`. Coverage reports 81 unresolved `UNKNOWN` transactions
-and no financial accounts, account-person relations, bank references, or
-payment instruments exist yet.
+`bank-account coverage` before provisioning. The account inventory was empty
+at precheck and coverage reported 81 unresolved `UNKNOWN` transactions.
 
 In-memory validation of the stored controlled Sber observations 72/75/79
 returned `INCOMING_TRANSFER`, `CREDIT`, RUB, `READY`,
@@ -195,12 +194,33 @@ returned `INCOMING_TRANSFER`, `CREDIT`, RUB, `READY`,
 reference. Summary observations 74/76/80 remained fail-closed `PARTIAL`/
 `UNKNOWN` without an invented reference. Yandex behavior remains unchanged.
 
-The ownership barrier is active: source/device `OWNER` context is capture and
-accounting context only, not financial-account ownership proof. No financial
-account, ownership relation, reference, instrument, or manual resolution was
-created. The next action is explicit owner confirmation and only then reviewed
-administrative provisioning; `INTERNAL_TRANSFER` reconciliation remains out of
-scope until account identity is established.
+The ownership barrier remains active for all unconfirmed accounts: source/device
+`OWNER` context is capture and accounting context only, not financial-account
+ownership proof. No payment instrument or manual resolution was created.
+
+## Sber account provisioning
+
+On 2026-09-29 the user explicitly confirmed that `person_id=1`,
+`legacy-current-user`, is Adam in this accounting context and that Sber masked
+account `••0271` belongs to Adam. This is manual user evidence, not an
+inference from device or bank-source ownership.
+
+One atomic administrative transaction provisioned:
+
+- financial account `1`: Sber, provider `ru.sberbankmobile`, currency `RUB`,
+  display `Sber ••0271`;
+- one `OWNER` relation to person `1` with provenance `USER_CONFIRMED`;
+- one account reference `ru.sberbankmobile / MASKED_ACCOUNT / 0271`.
+
+No payment instrument was created because the evidence proves an account
+reference, not a specific card. Historical bank transactions and immutable
+observations were not updated, re-ingested, or backfilled. Coverage remains
+81 total and 81 `UNKNOWN`; historical resolution rows remain unchanged.
+
+The next step is reviewed historical resolution for controlled Sber
+observations 72/75/79 using immutable observation evidence and explicit
+provenance. `INTERNAL_TRANSFER` reconciliation remains out of scope until
+both sides of an own-account transfer have proven account identity.
 
 ## Read next when needed
 
