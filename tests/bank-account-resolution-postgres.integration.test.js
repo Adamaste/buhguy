@@ -78,7 +78,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [noScopeKey]);
     await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [noScopeKey]);
 
-    const replay = await ingestBankEvent(pool, event('resolution-exact', '10.00'));
+    const replay = await ingestBankEvent(pool, event('resolution-exact', '20.00', '****2222'));
     const conflict = await ingestBankEvent(pool, { ...event('resolution-exact', '10.00'), payload: { ...event('resolution-exact', '11.00').payload } });
     assert.equal(replay.status, 'duplicate');
     assert.deepEqual(conflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
