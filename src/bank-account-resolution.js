@@ -1,7 +1,10 @@
+import { bankPayloadSha256, normalizeBankEvent } from './bank-ingestion.js';
+
 const RELATION_TYPES = new Set(['OWNER', 'AUTHORIZED_USER']);
 const INSTRUMENT_TYPES = new Set(['CARD', 'VIRTUAL_CARD', 'OTHER']);
 const REFERENCE_KINDS = new Set(['MASKED_CARD', 'MASKED_ACCOUNT', 'OTHER']);
 const RESOLUTION_STATES = new Set(['EXACT', 'MANUAL', 'RECONCILED', 'UNKNOWN']);
+export const HISTORICAL_REPLAY_PROVENANCE = 'HISTORICAL_OBSERVATION_REPLAY';
 
 function requiredText(value, field, max = 200) {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${field} is required`);
@@ -179,6 +182,138 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
     await client.query('ROLLBACK');
     throw error;
   } finally { client.release(); }
+}
+
+function historicalFailure(reason, extra = {}) {
+  return { status: 'FAIL_CLOSED', resolutionState: 'UNKNOWN', reason, ...extra };
+}
+
+function sameValue(left, right) {
+  return (left == null && right == null) || String(left) === String(right);
+}
+
+function sameTimestamp(left, right) {
+  if (left == null || right == null) return left == null && right == null;
+  return new Date(left).toISOString() === new Date(right).toISOString();
+}
+
+function parityMatches(row, normalized) {
+  return sameTimestamp(row.occurred_at, normalized.occurredAt)
+    && sameValue(row.amount, normalized.amount)
+    && sameValue(row.currency, normalized.currency)
+    && sameValue(row.direction, normalized.direction)
+    && sameValue(row.merchant, normalized.merchant)
+    && sameValue(row.counterparty, normalized.counterparty)
+    && sameValue(row.account_reference, normalized.accountReference)
+    && sameValue(row.account_reference_kind, normalized.accountReferenceKind)
+    && sameValue(row.event_type, normalized.eventType)
+    && sameValue(row.normalization_status, normalized.normalizationStatus)
+    && sameValue(row.normalization_version, normalized.normalizationVersion);
+}
+
+async function loadHistoricalContext(client, observationId) {
+  const result = await client.query(`
+    SELECT eo.id AS observation_id, eo.payload, eo.payload_sha256, eo.event_time, eo.ingestion_metadata,
+      bt.id AS transaction_id, bt.occurred_at, bt.amount, bt.currency, bt.direction,
+      bt.merchant, bt.counterparty, bt.account_reference, bt.account_reference_kind,
+      bt.event_type, bt.normalization_status, bt.normalization_version,
+      COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
+    FROM bank_event_observations eo
+    LEFT JOIN bank_transactions bt ON bt.observation_id=eo.id
+    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
+    LEFT JOIN persons p ON p.id=sp.person_id
+    WHERE eo.id=$1
+    GROUP BY eo.id, bt.id
+    ORDER BY bt.id`, [observationId]);
+  if (!result.rowCount) return { missing: 'observation' };
+  if (result.rows.length !== 1) return { missing: 'transaction' };
+  const row = result.rows[0];
+  if (row.transaction_id == null) return { missing: 'transaction' };
+  if (row.scope_ids.length !== 1) return { scopeAmbiguous: true, row };
+  return { row, scopeId: Number(row.scope_ids[0]) };
+}
+
+async function findHistoricalCandidates(client, context) {
+  const metadata = context.row.ingestion_metadata ?? {};
+  const provider = metadata.provider;
+  const referenceValue = context.normalized.accountReference;
+  const referenceKind = context.normalized.accountReferenceKind;
+  if (!provider || !referenceValue || !referenceKind) return [];
+  return (await client.query(`
+    SELECT DISTINCT r.financial_account_id
+    FROM bank_account_references r
+    JOIN financial_accounts a ON a.id=r.financial_account_id
+    WHERE r.provider=$1 AND r.reference_kind=$2 AND r.reference_value=$3 AND a.scope_id=$4
+    ORDER BY r.financial_account_id`, [provider, referenceKind, referenceValue, context.scopeId])).rows;
+}
+
+async function currentHistoricalResolution(client, transactionId, lock = false) {
+  const suffix = lock ? ' FOR UPDATE' : '';
+  const result = await client.query(`SELECT financial_account_id, resolution_state, provenance, reason
+    FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1${suffix}`, [transactionId]);
+  return result.rows[0] ?? null;
+}
+
+export async function resolveHistoricalBankTransactionAccountFromObservation(pool, { observationId, persist = false }) {
+  const id = requiredId(observationId, 'observationId');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const context = await loadHistoricalContext(client, id);
+    if (context.missing === 'observation') return await rollbackHistorical(client, historicalFailure('Observation was not found'));
+    if (context.missing === 'transaction') return await rollbackHistorical(client, historicalFailure('Observation does not have exactly one transaction'));
+    if (context.scopeAmbiguous) return await rollbackHistorical(client, historicalFailure('Source accounting scope is not unique'));
+
+    const { row } = context;
+    if (bankPayloadSha256(row.payload) !== row.payload_sha256) return await rollbackHistorical(client, historicalFailure('Immutable payload hash mismatch'));
+    let normalized;
+    try {
+      normalized = normalizeBankEvent({ eventTime: row.event_time, payload: row.payload, ingestionMetadata: row.ingestion_metadata ?? {} });
+    } catch {
+      return await rollbackHistorical(client, historicalFailure('Historical payload is not normalizable'));
+    }
+    context.normalized = normalized;
+    if (normalized.normalizationStatus !== 'READY' || normalized.evidenceQuality !== 'EXACT') return await rollbackHistorical(client, historicalFailure('Historical normalization is not READY/EXACT'));
+    if (!parityMatches(row, normalized)) return await rollbackHistorical(client, historicalFailure('Historical normalization parity mismatch'));
+    const candidates = await findHistoricalCandidates(client, context);
+    if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { candidateCount: candidates.length }));
+
+    if (persist) await client.query('SELECT pg_advisory_xact_lock($1)', [Number(row.transaction_id)]);
+    const current = await currentHistoricalResolution(client, Number(row.transaction_id), persist);
+    const accountId = Number(candidates[0].financial_account_id);
+    if (current?.resolution_state === 'RECONCILED') {
+      if (Number(current.financial_account_id) === accountId && current.provenance === HISTORICAL_REPLAY_PROVENANCE) {
+        return await rollbackHistorical(client, { status: 'ALREADY_RECONCILED', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1 });
+      }
+      return await rollbackHistorical(client, historicalFailure('Existing reconciliation conflicts with historical replay'));
+    }
+    if (current && current.resolution_state !== 'UNKNOWN') return await rollbackHistorical(client, historicalFailure('Existing resolution is not UNKNOWN'));
+    if (!persist) return await rollbackHistorical(client, { status: 'DRY_RUN', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1, provenance: HISTORICAL_REPLAY_PROVENANCE });
+
+    const reason = 'One proven account-reference candidate from immutable observation replay';
+    const result = current
+      ? await client.query(`UPDATE bank_transaction_account_resolution
+          SET financial_account_id=$2, resolution_state='RECONCILED', provenance=$3, reason=$4, resolved_at=NOW()
+          WHERE bank_transaction_id=$1 AND resolution_state='UNKNOWN'
+          RETURNING bank_transaction_id, financial_account_id, resolution_state, provenance, reason`, [row.transaction_id, accountId, HISTORICAL_REPLAY_PROVENANCE, reason])
+      : await client.query(`INSERT INTO bank_transaction_account_resolution
+          (bank_transaction_id, financial_account_id, resolution_state, provenance, reason)
+          VALUES($1,$2,'RECONCILED',$3,$4)
+          RETURNING bank_transaction_id, financial_account_id, resolution_state, provenance, reason`, [row.transaction_id, accountId, HISTORICAL_REPLAY_PROVENANCE, reason]);
+    if (!result.rowCount) return await rollbackHistorical(client, historicalFailure('Concurrent resolution changed before persistence'));
+    await client.query('COMMIT');
+    return { status: 'RECONCILED', ...result.rows[0], candidateCount: 1 };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function rollbackHistorical(client, result) {
+  await client.query('ROLLBACK');
+  return result;
 }
 
 export const BANK_ACCOUNT_RESOLUTION_STATES = Object.freeze([...RESOLUTION_STATES]);

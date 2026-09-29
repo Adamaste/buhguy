@@ -20,8 +20,12 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-function canonicalJson(value) {
+export function canonicalBankJson(value) {
   return JSON.stringify(stableValue(value));
+}
+
+export function bankPayloadSha256(payload) {
+  return sha256(canonicalBankJson(payload));
 }
 
 function asIsoDate(value, field, { required = false } = {}) {
@@ -46,7 +50,7 @@ function validatePayload(payload) {
     if (payload[key] !== null && typeof payload[key] !== 'string' && typeof payload[key] !== 'number') throw new Error(`payload field must be scalar: ${key}`);
     if (typeof payload[key] === 'string' && payload[key].length > MAX_SCALAR_LENGTH) throw new Error(`payload field is too long: ${key}`);
   }
-  if (Buffer.byteLength(canonicalJson(payload), 'utf8') > MAX_PAYLOAD_BYTES) throw new Error('payload is too large');
+  if (Buffer.byteLength(canonicalBankJson(payload), 'utf8') > MAX_PAYLOAD_BYTES) throw new Error('payload is too large');
   return payload;
 }
 
@@ -125,7 +129,7 @@ export async function ingestBankEvent(pool, input) {
   const source = (await pool.query('SELECT id,enabled FROM bank_sources WHERE source_key=$1', [event.sourceKey])).rows[0];
   if (!source) return { status: 'rejected', code: 'UNKNOWN_SOURCE' };
   if (!source.enabled) return { status: 'rejected', code: 'SOURCE_DISABLED' };
-  const payloadJson = canonicalJson(event.payload);
+  const payloadJson = canonicalBankJson(event.payload);
   const payloadSha256 = sha256(payloadJson);
   const dedupMaterial = event.sourceEventId
     ? `${event.sourceKey}\0event:${event.sourceEventId}`
@@ -142,7 +146,7 @@ export async function ingestBankEvent(pool, input) {
       return { status: 'duplicate', observationId: Number(existing.rows[0].id) };
     }
     const observation = (await client.query(`INSERT INTO bank_event_observations(bank_source_id,source_event_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
-      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalJson(event.ingestionMetadata)])).rows[0];
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalBankJson(event.ingestionMetadata)])).rows[0];
     const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,account_reference_kind,event_type,normalization_status,normalization_version,evidence_quality)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.accountReferenceKind, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
     await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,resolution_state,provenance,reason)

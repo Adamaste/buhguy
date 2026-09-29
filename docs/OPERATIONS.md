@@ -22,6 +22,27 @@ receipt-collector bank-account list --scope-key default
 receipt-collector bank-account coverage
 ```
 
+### Historical bank account evidence replay
+
+Historical resolution is an administrative, evidence-preserving operation. It
+reads one immutable observation by id, verifies the stored payload hash,
+replays the current deterministic normalizer, checks parity with the persisted
+transaction, and resolves only a unique provider/reference candidate in the
+same accounting scope.
+
+The default is a read-only dry-run:
+
+`receipt-collector bank-account resolve-historical --observation-id <id>`
+
+Only an explicit `--persist` may promote an existing `UNKNOWN` resolution to
+`RECONCILED` with provenance `HISTORICAL_OBSERVATION_REPLAY`.
+
+The command never accepts `--account-id`; the account is derived from the
+immutable observation and registered provider/reference evidence. Missing,
+ambiguous, hash-mismatched, non-READY, non-parity, or non-unique scope input
+fails closed. It does not update the observation or bank transaction, run
+backfill, create ledger entries, or perform internal-transfer matching.
+
 The CLI never infers financial-account ownership from a bank-source `OWNER`
 link. `EXACT` is available only through proven provider/reference/scope
 evidence; zero or multiple candidates remain unresolved. Manual resolution
