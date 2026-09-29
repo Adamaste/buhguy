@@ -72,7 +72,7 @@ integration('payment instruments preserve standalone card identity and fail clos
 
     await linkPaymentInstrumentAccount(pool, { paymentInstrumentId: card.id, financialAccountId: account.id });
     const linked = (await pool.query('SELECT financial_account_id FROM payment_instruments WHERE id=$1', [card.id])).rows[0];
-    assert.equal(Number(linked.financial_account_id), account.id);
+    assert.equal(Number(linked.financial_account_id), Number(account.id));
     const otherAccount = await createFinancialAccount(pool, { institution: 'Synthetic Bank', provider: 'instrument.provider', displayName: 'Synthetic second checking' });
     await assert.rejects(() => linkPaymentInstrumentAccount(pool, { paymentInstrumentId: card.id, financialAccountId: otherAccount.id }), /already linked/);
   } finally {
