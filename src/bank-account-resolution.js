@@ -197,18 +197,68 @@ function sameTimestamp(left, right) {
   return new Date(left).toISOString() === new Date(right).toISOString();
 }
 
-function parityMatches(row, normalized) {
-  return sameTimestamp(row.occurred_at, normalized.occurredAt)
-    && sameValue(row.amount, normalized.amount)
-    && sameValue(row.currency, normalized.currency)
-    && sameValue(row.direction, normalized.direction)
-    && sameValue(row.merchant, normalized.merchant)
-    && sameValue(row.counterparty, normalized.counterparty)
-    && sameValue(row.account_reference, normalized.accountReference)
-    && sameValue(row.account_reference_kind, normalized.accountReferenceKind)
-    && sameValue(row.event_type, normalized.eventType)
-    && sameValue(row.normalization_status, normalized.normalizationStatus)
-    && sameValue(row.normalization_version, normalized.normalizationVersion);
+function compatibilityField(persisted, replayed, unknownValues = []) {
+  const persistedUnknown = persisted == null || unknownValues.includes(persisted);
+  if (persistedUnknown) return replayed == null || unknownValues.includes(replayed) ? 'MATCH' : 'REFINEMENT';
+  return replayed != null && sameValue(persisted, replayed) ? 'MATCH' : 'CONFLICT';
+}
+
+const QUALITY_RANK = Object.freeze({ INSUFFICIENT: 0, PARTIAL: 1, EXACT: 2 });
+const STATUS_RANK = Object.freeze({ UNKNOWN: 0, PARTIAL: 1, READY: 2 });
+
+function monotonicQuality(persisted, replayed) {
+  if (persisted === replayed) return 'MATCH';
+  if (QUALITY_RANK[persisted] != null && QUALITY_RANK[replayed] != null && QUALITY_RANK[replayed] > QUALITY_RANK[persisted]) return 'REFINEMENT';
+  return 'CONFLICT';
+}
+
+function monotonicStatus(persisted, replayed) {
+  if (persisted === replayed) return 'MATCH';
+  if (STATUS_RANK[persisted] != null && STATUS_RANK[replayed] != null && STATUS_RANK[replayed] > STATUS_RANK[persisted]) return 'REFINEMENT';
+  return 'CONFLICT';
+}
+
+function historicalCompatibility(row, normalized) {
+  const fields = {
+    occurredAt: compatibilityField(row.occurred_at, normalized.occurredAt),
+    amount: compatibilityField(row.amount, normalized.amount),
+    currency: compatibilityField(row.currency, normalized.currency),
+    direction: compatibilityField(row.direction, normalized.direction, ['UNKNOWN']),
+    eventType: compatibilityField(row.event_type, normalized.eventType, ['UNKNOWN']),
+    merchant: compatibilityField(row.merchant, normalized.merchant),
+    counterparty: compatibilityField(row.counterparty, normalized.counterparty),
+    accountReference: compatibilityField(row.account_reference, normalized.accountReference),
+    accountReferenceKind: compatibilityField(row.account_reference_kind, normalized.accountReferenceKind),
+    normalizationStatus: monotonicStatus(row.normalization_status, normalized.normalizationStatus),
+    evidenceQuality: monotonicQuality(row.evidence_quality, normalized.evidenceQuality),
+    normalizationVersion: sameValue(row.normalization_version, normalized.normalizationVersion) ? 'SAME' : 'CHANGED',
+  };
+  return { fields, ok: Object.entries(fields).filter(([key]) => key !== 'normalizationVersion').every(([, value]) => value !== 'CONFLICT') };
+}
+
+function safeReference(value) {
+  return value == null ? null : '••' + String(value).slice(-4);
+}
+
+function historicalAudit(row, normalized, compatibility, current, candidates, provider) {
+  const candidate = candidates.length === 1 ? candidates[0] : null;
+  return {
+    observationId: Number(row.observation_id),
+    transactionId: Number(row.transaction_id),
+    provider,
+    persistedNormalizationVersion: row.normalization_version,
+    replayNormalizationVersion: normalized.normalizationVersion,
+    referenceKind: normalized.accountReferenceKind,
+    maskedReference: safeReference(normalized.accountReference),
+    currentResolutionState: current?.resolution_state ?? 'UNKNOWN',
+    candidateCount: candidates.length,
+    proposedAccountId: candidate ? Number(candidate.financial_account_id) : null,
+    proposedAccountDisplayName: candidate?.display_name ?? null,
+    proposedResolutionState: candidate ? 'RECONCILED' : 'UNKNOWN',
+    compatibilityGate: compatibility.ok ? 'PASS' : 'FAIL',
+    compatibility: compatibility.fields,
+    reason: 'Historical observation replay proof; bank_transaction evidence was not backfilled',
+  };
 }
 
 async function loadHistoricalContext(client, observationId) {
@@ -240,7 +290,7 @@ async function findHistoricalCandidates(client, context) {
   const referenceKind = context.normalized.accountReferenceKind;
   if (!provider || !referenceValue || !referenceKind) return [];
   return (await client.query(`
-    SELECT DISTINCT r.financial_account_id
+    SELECT DISTINCT r.financial_account_id, a.display_name
     FROM bank_account_references r
     JOIN financial_accounts a ON a.id=r.financial_account_id
     WHERE r.provider=$1 AND r.reference_kind=$2 AND r.reference_value=$3 AND a.scope_id=$4
@@ -274,24 +324,33 @@ export async function resolveHistoricalBankTransactionAccountFromObservation(poo
     }
     context.normalized = normalized;
     if (normalized.normalizationStatus !== 'READY' || normalized.evidenceQuality !== 'EXACT') return await rollbackHistorical(client, historicalFailure('Historical normalization is not READY/EXACT'));
-    if (!parityMatches(row, normalized)) return await rollbackHistorical(client, historicalFailure('Historical normalization parity mismatch'));
-    const candidates = await findHistoricalCandidates(client, context);
-    if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { candidateCount: candidates.length }));
+    const provider = row.ingestion_metadata?.provider ?? null;
+    const compatibility = historicalCompatibility(row, normalized);
+    const candidates = compatibility.ok ? await findHistoricalCandidates(client, context) : [];
+    const current = await currentHistoricalResolution(client, Number(row.transaction_id), false);
+    const audit = historicalAudit(row, normalized, compatibility, current, candidates, provider);
+    if (!compatibility.ok) return await rollbackHistorical(client, historicalFailure('Historical normalization compatibility conflict', { audit }));
+    if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { audit }));
 
     if (persist) await client.query('SELECT pg_advisory_xact_lock($1)', [Number(row.transaction_id)]);
-    const current = await currentHistoricalResolution(client, Number(row.transaction_id), persist);
+    const lockedCurrent = persist ? await currentHistoricalResolution(client, Number(row.transaction_id), true) : current;
     const accountId = Number(candidates[0].financial_account_id);
-    if (current?.resolution_state === 'RECONCILED') {
-      if (Number(current.financial_account_id) === accountId && current.provenance === HISTORICAL_REPLAY_PROVENANCE) {
-        return await rollbackHistorical(client, { status: 'ALREADY_RECONCILED', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1 });
+    const lockedAudit = historicalAudit(row, normalized, compatibility, lockedCurrent, candidates, provider);
+    if (lockedCurrent?.resolution_state === 'RECONCILED') {
+      if (Number(lockedCurrent.financial_account_id) === accountId && lockedCurrent.provenance === HISTORICAL_REPLAY_PROVENANCE) {
+        return await rollbackHistorical(client, { status: 'ALREADY_RECONCILED', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1, audit: lockedAudit });
       }
-      return await rollbackHistorical(client, historicalFailure('Existing reconciliation conflicts with historical replay'));
+      return await rollbackHistorical(client, historicalFailure('Existing reconciliation conflicts with historical replay', { audit: lockedAudit }));
     }
-    if (current && current.resolution_state !== 'UNKNOWN') return await rollbackHistorical(client, historicalFailure('Existing resolution is not UNKNOWN'));
-    if (!persist) return await rollbackHistorical(client, { status: 'DRY_RUN', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1, provenance: HISTORICAL_REPLAY_PROVENANCE });
+    if (lockedCurrent && lockedCurrent.resolution_state !== 'UNKNOWN') return await rollbackHistorical(client, historicalFailure('Existing resolution is not UNKNOWN', { audit: lockedAudit }));
+    if (!persist) return await rollbackHistorical(client, { status: 'DRY_RUN', resolutionState: 'RECONCILED', financialAccountId: accountId, candidateCount: 1, provenance: HISTORICAL_REPLAY_PROVENANCE, audit });
 
-    const reason = 'One proven account-reference candidate from immutable observation replay';
-    const result = current
+    const reason = 'Historical replay observation ' + row.observation_id + ' transaction ' + row.transaction_id
+      + '; persisted version ' + (row.normalization_version ?? 'NULL')
+      + ', replay version ' + normalized.normalizationVersion
+      + ', provider ' + provider + ', reference ' + normalized.accountReferenceKind + ' ' + safeReference(normalized.accountReference)
+      + ', financial account ' + accountId + '; bank_transaction evidence was not backfilled';
+    const result = lockedCurrent
       ? await client.query(`UPDATE bank_transaction_account_resolution
           SET financial_account_id=$2, resolution_state='RECONCILED', provenance=$3, reason=$4, resolved_at=NOW()
           WHERE bank_transaction_id=$1 AND resolution_state='UNKNOWN'

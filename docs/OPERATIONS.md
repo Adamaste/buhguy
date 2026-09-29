@@ -43,6 +43,12 @@ ambiguous, hash-mismatched, non-READY, non-parity, or non-unique scope input
 fails closed. It does not update the observation or bank transaction, run
 backfill, create ledger entries, or perform internal-transfer matching.
 
+Historical compatibility is monotonic: a persisted concrete fact must match
+the replay, while persisted NULL/UNKNOWN/PARTIAL facts may be refined by the
+current deterministic parser only for the resolution proof. The persisted
+`bank_transactions` projection is never backfilled, and parser-version changes
+are recorded as provenance rather than treated as factual conflicts.
+
 The CLI never infers financial-account ownership from a bank-source `OWNER`
 link. `EXACT` is available only through proven provider/reference/scope
 evidence; zero or multiple candidates remain unresolved. Manual resolution

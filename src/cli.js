@@ -30,7 +30,7 @@ import { bankTransactionAccountCoverage, createBankAccountReference, createFinan
 
 const execFileAsync = promisify(execFile);
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const result = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -178,9 +178,10 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
   if (subcommand === 'resolve-historical') {
     if (args['account-id'] != null) throw new ReceiptCollectorError('Historical resolution does not accept --account-id');
     if (args['observation-id'] == null) throw new ReceiptCollectorError('Historical resolution requires --observation-id');
+    if (args.persist !== undefined && args.persist !== true) throw new ReceiptCollectorError('Historical resolution requires a bare --persist flag');
     const result = await resolveHistoricalBankTransactionAccountFromObservation(pool, {
       observationId: args['observation-id'],
-      persist: Boolean(args.persist),
+      persist: args.persist === true,
     });
     write({ ok: result.status !== 'FAIL_CLOSED', dryRun: !args.persist, resolution: result });
     return result.status === 'FAIL_CLOSED' ? 2 : 0;
