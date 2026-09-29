@@ -219,9 +219,18 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
     await client.query('BEGIN');
     const context = await loadTransactionContext(client, transactionId);
     if (context.accountReferenceKind === 'MASKED_CARD') {
-      const result = await persistResolution(client, { transactionId, resolutionState: 'UNKNOWN', provenance: 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE', reason: 'Card reference requires payment instrument resolution and does not prove an underlying financial account' });
-      await client.query('COMMIT');
-      return { ...result, candidateCount: 0 };
+      const existing = (await client.query(`SELECT bank_transaction_id,financial_account_id,resolution_state,provenance,reason,resolved_at
+        FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
+      await client.query('ROLLBACK');
+      return {
+        status: 'NOT_APPLICABLE',
+        resolutionState: existing?.resolution_state ?? 'UNKNOWN',
+        financialAccountId: existing?.financial_account_id ?? null,
+        candidateCount: 0,
+        changed: false,
+        reason: 'Card reference does not prove an underlying financial account',
+        ...(existing ? { existing } : {}),
+      };
     }
     const candidates = context.provider && context.accountReference && context.accountReferenceKind
       ? (await client.query(`SELECT DISTINCT r.financial_account_id
@@ -265,6 +274,25 @@ export async function resolveBankTransactionPaymentInstrumentFromReference(pool,
           WHERE r.provider=$1 AND r.reference_kind='MASKED_CARD' AND r.reference_value=$2 AND pi.scope_id=$3
           ORDER BY r.payment_instrument_id`, [context.provider, context.accountReference, context.scopeId])).rows
       : [];
+    const existing = (await client.query(`SELECT bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason,resolved_at
+      FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
+    if (existing?.resolution_state === 'EXACT') {
+      const sameEvidence = candidates.length === 1
+        && Number(existing.payment_instrument_id) === Number(candidates[0].payment_instrument_id)
+        && existing.provenance === 'OBSERVED_PROVIDER_REFERENCE';
+      await client.query('ROLLBACK');
+      return {
+        ...existing,
+        status: sameEvidence ? 'ALREADY_EXACT' : 'FAIL_CLOSED',
+        candidateCount: candidates.length,
+        changed: false,
+        reason: sameEvidence ? existing.reason : 'Existing EXACT payment instrument resolution conflicts with current evidence',
+      };
+    }
+    if (existing?.resolution_state === 'UNKNOWN' && candidates.length !== 1) {
+      await client.query('ROLLBACK');
+      return { ...existing, status: 'NO_CHANGE', candidateCount: candidates.length, changed: false };
+    }
     const result = candidates.length === 1
       ? await persistPaymentInstrumentResolution(client, { transactionId, paymentInstrumentId: Number(candidates[0].payment_instrument_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped payment instrument reference candidate' })
       : await persistPaymentInstrumentResolution(client, { transactionId, resolutionState: 'UNKNOWN', provenance: candidates.length > 1 ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED', reason: candidates.length > 1 ? 'Ambiguous provider, card reference, and scope candidates' : 'No provider-scoped payment instrument reference candidate' });

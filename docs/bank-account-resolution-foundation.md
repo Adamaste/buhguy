@@ -19,6 +19,11 @@ capture context only; they do not establish ownership of a financial account.
   account or a payment instrument. `MASKED_CARD` references target instruments;
   account references target financial accounts. Duplicate visible masks remain
   allowed because they can be ambiguous.
+- Card references never prove an underlying financial account. Account
+  resolution therefore returns `NOT_APPLICABLE` without changing an existing
+  account-resolution row for `MASKED_CARD` transactions. Instrument `EXACT`
+  results are idempotent and cannot be silently downgraded by later ambiguity
+  or missing candidates.
 - `bank_transactions.account_reference_kind` preserves whether a proven
   transaction reference is `MASKED_ACCOUNT`, `MASKED_CARD`, or `OTHER`.
   Historical rows may keep both reference fields NULL.

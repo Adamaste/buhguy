@@ -49,14 +49,30 @@ integration('payment instruments preserve standalone card identity and fail clos
 
     await createBankAccountReference(pool, { paymentInstrumentId: card.id, provider: 'instrument.provider', referenceKind: 'MASKED_CARD', referenceValue: '****8451' });
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'instrument.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****8451' });
+    await assert.rejects(
+      () => pool.query(`INSERT INTO bank_account_references(financial_account_id,provider,reference_kind,reference_value)
+        VALUES($1,$2,'MASKED_CARD',$3)`, [account.id, 'instrument.provider', '****0001']),
+      /bank_account_references_reference_target_check|violates check constraint/i,
+    );
+    await assert.rejects(
+      () => pool.query(`INSERT INTO bank_account_references(payment_instrument_id,provider,reference_kind,reference_value)
+        VALUES($1,$2,'MASKED_ACCOUNT',$3)`, [card.id, 'instrument.provider', '****0002']),
+      /bank_account_references_reference_target_check|violates check constraint/i,
+    );
 
     const cardEvent = await ingestBankEvent(pool, event('standalone-card', '****8451', 'MASKED_CARD'));
     const instrumentResolution = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: cardEvent.transactionId });
     assert.equal(instrumentResolution.resolution_state, 'EXACT');
     assert.equal(instrumentResolution.payment_instrument_id, card.id);
+    const exactBeforeReplay = (await pool.query('SELECT payment_instrument_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+    const exactReplay = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: cardEvent.transactionId });
+    assert.equal(exactReplay.status, 'ALREADY_EXACT');
+    const exactAfterReplay = (await pool.query('SELECT payment_instrument_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+    assert.deepEqual(exactAfterReplay, exactBeforeReplay);
     const accountResolutionForCard = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: cardEvent.transactionId });
-    assert.equal(accountResolutionForCard.resolution_state, 'UNKNOWN');
-    assert.equal(accountResolutionForCard.financial_account_id, null);
+    assert.equal(accountResolutionForCard.status, 'NOT_APPLICABLE');
+    assert.equal(accountResolutionForCard.changed, false);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0].count, 0);
 
     const accountEvent = await ingestBankEvent(pool, event('account-reference', '****8451', 'MASKED_ACCOUNT'));
     const accountResolution = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: accountEvent.transactionId });
@@ -69,6 +85,37 @@ integration('payment instruments preserve standalone card identity and fail clos
     const ambiguous = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: ambiguousEvent.transactionId });
     assert.equal(ambiguous.resolution_state, 'UNKNOWN');
     assert.equal(ambiguous.candidateCount, 2);
+
+    await pool.query('DELETE FROM bank_account_references WHERE payment_instrument_id=$1', [secondCard.id]);
+    const promoted = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: ambiguousEvent.transactionId });
+    assert.equal(promoted.resolution_state, 'EXACT');
+    assert.equal(Number(promoted.payment_instrument_id), Number(card.id));
+    await createBankAccountReference(pool, { paymentInstrumentId: secondCard.id, provider: 'instrument.provider', referenceKind: 'MASKED_CARD', referenceValue: '****8451' });
+    const conflict = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: cardEvent.transactionId });
+    assert.equal(conflict.status, 'FAIL_CLOSED');
+    assert.equal(conflict.resolution_state, 'EXACT');
+    assert.equal(Number(conflict.payment_instrument_id), Number(card.id));
+    const exactAfterAmbiguity = (await pool.query('SELECT payment_instrument_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+    assert.deepEqual(exactAfterAmbiguity, exactBeforeReplay);
+
+    await pool.query('DELETE FROM bank_account_references WHERE payment_instrument_id=$1', [card.id]);
+    const noCandidateConflict = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: cardEvent.transactionId });
+    assert.equal(noCandidateConflict.status, 'FAIL_CLOSED');
+    assert.equal(noCandidateConflict.resolution_state, 'EXACT');
+    const exactAfterNoCandidate = (await pool.query('SELECT payment_instrument_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+    assert.deepEqual(exactAfterNoCandidate, exactBeforeReplay);
+
+    for (const state of ['UNKNOWN', 'MANUAL', 'RECONCILED', 'EXACT']) {
+      await pool.query('DELETE FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId]);
+      await pool.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
+        VALUES($1,$2,$3,$4,$5)`, [cardEvent.transactionId, state === 'UNKNOWN' ? null : account.id, state, `TEST_EXISTING_${state}`, 'Synthetic preserved account resolution']);
+      const before = (await pool.query('SELECT financial_account_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+      const noChange = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: cardEvent.transactionId });
+      const after = (await pool.query('SELECT financial_account_id,resolution_state,provenance,reason,resolved_at FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0];
+      assert.equal(noChange.status, 'NOT_APPLICABLE');
+      assert.equal(noChange.resolutionState, state);
+      assert.deepEqual(after, before);
+    }
 
     await linkPaymentInstrumentAccount(pool, { paymentInstrumentId: card.id, financialAccountId: account.id });
     const linked = (await pool.query('SELECT financial_account_id FROM payment_instruments WHERE id=$1', [card.id])).rows[0];

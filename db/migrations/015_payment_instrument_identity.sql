@@ -45,14 +45,24 @@ ALTER TABLE bank_account_references
 
 DO $$
 BEGIN
+  ALTER TABLE bank_account_references
+    DROP CONSTRAINT IF EXISTS bank_account_references_exact_target_check;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid = 'bank_account_references'::regclass
-      AND conname = 'bank_account_references_exact_target_check'
+      AND conname = 'bank_account_references_reference_target_check'
   ) THEN
     ALTER TABLE bank_account_references
-      ADD CONSTRAINT bank_account_references_exact_target_check
-      CHECK ((financial_account_id IS NOT NULL)::int + (payment_instrument_id IS NOT NULL)::int = 1);
+      ADD CONSTRAINT bank_account_references_reference_target_check
+      CHECK (
+        (reference_kind = 'MASKED_CARD'
+          AND payment_instrument_id IS NOT NULL
+          AND financial_account_id IS NULL)
+        OR
+        (reference_kind IN ('MASKED_ACCOUNT', 'OTHER')
+          AND financial_account_id IS NOT NULL
+          AND payment_instrument_id IS NULL)
+      );
   END IF;
 END $$;
 
