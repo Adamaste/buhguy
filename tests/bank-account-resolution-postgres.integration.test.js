@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { createBankSource, ingestBankEvent, linkBankSourcePerson } from '../src/bank-ingestion.js';
-import { createBankAccountReference, createFinancialAccount, createPaymentInstrument, relateFinancialAccountPerson, resolveBankTransactionAccount, bankTransactionAccountCoverage } from '../src/bank-account-resolution.js';
+import { createBankAccountReference, createFinancialAccount, createPaymentInstrument, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference, bankTransactionAccountCoverage } from '../src/bank-account-resolution.js';
 import { migrate } from '../src/database.js';
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -14,10 +14,10 @@ integration('bank account resolution keeps ownership, references, and unknown co
   const personKey = `resolution-person-${suffix}`;
   const secondPersonKey = `resolution-person-two-${suffix}`;
   let accountIds = [];
-  const event = (sourceEventId, amount) => ({
-    sourceKey, sourceEventId, observedAt: '2026-09-18T10:00:00Z', eventTime: '2026-09-18T09:59:00Z',
-    payload: { amount, currency: 'RUB', direction: 'DEBIT', merchant: 'Synthetic account resolution' },
-    ingestionMetadata: { adapter: 'test', schemaVersion: '1' },
+  const event = (sourceEventId, amount, accountReference = null, eventSourceKey = sourceKey) => ({
+    sourceKey: eventSourceKey, sourceEventId, observedAt: '2026-09-18T10:00:00Z', eventTime: '2026-09-18T09:59:00Z',
+    payload: { amount, currency: 'RUB', direction: 'DEBIT', merchant: 'Synthetic account resolution', ...(accountReference ? { accountReference } : {}) },
+    ingestionMetadata: { adapter: 'test', provider: 'synthetic.provider', schemaVersion: '1' },
   });
   try {
     await migrate(pool);
@@ -37,24 +37,46 @@ integration('bank account resolution keeps ownership, references, and unknown co
     await assert.rejects(() => relateFinancialAccountPerson(pool, { financialAccountId: account.id, personId: otherPerson.id, relationType: 'OWNER', provenance: 'TEST', reason: 'cross-scope must fail' }), /same accounting scope/);
     await createPaymentInstrument(pool, { financialAccountId: account.id, instrumentType: 'CARD', provider: 'synthetic.provider', displayName: 'Masked test card' });
     await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1111' });
+    await createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1111' });
+    await createBankAccountReference(pool, { financialAccountId: account.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****2222' });
 
-    const first = await ingestBankEvent(pool, event('resolution-exact', '10.00'));
-    const second = await ingestBankEvent(pool, event('resolution-manual', '20.00'));
-    const third = await ingestBankEvent(pool, event('resolution-reconciled', '30.00'));
-    const fourth = await ingestBankEvent(pool, event('resolution-unknown', '40.00'));
-    assert.deepEqual([first.status, second.status, third.status, fourth.status], ['created', 'created', 'created', 'created']);
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_transaction_account_resolution WHERE resolution_state=\'UNKNOWN\'')).rows[0].count, 4);
+    const first = await ingestBankEvent(pool, event('resolution-ambiguous', '10.00', '****1111'));
+    const second = await ingestBankEvent(pool, event('resolution-exact', '20.00', '****2222'));
+    const third = await ingestBankEvent(pool, event('resolution-unmatched', '30.00', '****9999'));
+    const fourth = await ingestBankEvent(pool, event('resolution-manual', '40.00'));
+    const fifth = await ingestBankEvent(pool, event('resolution-reconciled', '50.00'));
+    assert.deepEqual([first.status, second.status, third.status, fourth.status, fifth.status], ['created', 'created', 'created', 'created', 'created']);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_transaction_account_resolution WHERE resolution_state=\'UNKNOWN\'')).rows[0].count, 5);
 
-    await resolveBankTransactionAccount(pool, { bankTransactionId: first.transactionId, financialAccountId: account.id, resolutionState: 'EXACT', provenance: 'TEST_EXACT_REFERENCE', reason: 'Exact provider-scoped masked reference' });
-    await resolveBankTransactionAccount(pool, { bankTransactionId: second.transactionId, financialAccountId: secondAccount.id, resolutionState: 'MANUAL', provenance: 'TEST_MANUAL', reason: 'Explicit operator mapping' });
-    await resolveBankTransactionAccount(pool, { bankTransactionId: third.transactionId, financialAccountId: account.id, resolutionState: 'RECONCILED', provenance: 'TEST_RECONCILIATION', reason: 'Explicit later reconciliation' });
+    const ambiguous = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: first.transactionId });
+    assert.equal(ambiguous.resolution_state, 'UNKNOWN');
+    assert.equal(ambiguous.candidateCount, 2);
+    const exact = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: second.transactionId });
+    assert.equal(exact.resolution_state, 'EXACT');
+    assert.equal(exact.financial_account_id, account.id);
+    const unmatched = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: third.transactionId });
+    assert.equal(unmatched.resolution_state, 'UNKNOWN');
+    assert.equal(unmatched.candidateCount, 0);
+    await resolveBankTransactionAccount(pool, { bankTransactionId: fourth.transactionId, financialAccountId: secondAccount.id, resolutionState: 'MANUAL', provenance: 'TEST_MANUAL', reason: 'Explicit operator mapping' });
+    await resolveBankTransactionAccount(pool, { bankTransactionId: fifth.transactionId, financialAccountId: account.id, resolutionState: 'RECONCILED', provenance: 'TEST_RECONCILIATION', reason: 'Explicit later reconciliation' });
     const coverage = await bankTransactionAccountCoverage(pool);
-    assert.deepEqual(coverage, { totalBankTransactions: 4, resolvedAccount: 3, unresolvedAccount: 1, exact: 1, manual: 1, reconciled: 1, unknown: 1, invariant: true });
+    assert.deepEqual(coverage, { totalBankTransactions: 5, resolvedAccount: 3, unresolvedAccount: 2, exact: 1, manual: 1, reconciled: 1, unknown: 2, invariant: true });
 
-    await assert.rejects(() => resolveBankTransactionAccount(pool, { bankTransactionId: fourth.transactionId, financialAccountId: account.id, resolutionState: 'UNKNOWN', provenance: 'TEST', reason: 'ambiguous mapping' }), /UNKNOWN resolution/);
-    await assert.rejects(() => createBankAccountReference(pool, { financialAccountId: secondAccount.id, provider: 'synthetic.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1111' }), (error) => error.code === '23505');
+    await assert.rejects(() => resolveBankTransactionAccount(pool, { bankTransactionId: first.transactionId, financialAccountId: account.id, resolutionState: 'EXACT', provenance: 'TEST', reason: 'arbitrary exact mapping' }), /proven account reference evidence/);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM financial_account_person_relations WHERE financial_account_id=$1`, [account.id])).rows[0].count, 2);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM financial_account_person_relations WHERE financial_account_id=$1 AND relation_type='OWNER'`, [secondAccount.id])).rows[0].count, 0);
+
+    await linkBankSourcePerson(pool, { sourceKey, personId: otherPerson.id });
+    const multiScope = await ingestBankEvent(pool, event('resolution-multi-scope', '60.00', '****2222'));
+    await assert.rejects(() => resolveBankTransactionAccountFromReference(pool, { bankTransactionId: multiScope.transactionId }), /accounting scope is not unique/);
+
+    const noScopeKey = `resolution-no-scope-${suffix}`;
+    await createBankSource(pool, { sourceKey: noScopeKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic no-scope source' });
+    const noScope = await ingestBankEvent(pool, event('resolution-no-scope', '70.00', '****2222', noScopeKey));
+    await assert.rejects(() => resolveBankTransactionAccountFromReference(pool, { bankTransactionId: noScope.transactionId }), /accounting scope is not unique/);
+    await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [noScopeKey]);
+    await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [noScopeKey]);
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [noScopeKey]);
 
     const replay = await ingestBankEvent(pool, event('resolution-exact', '10.00'));
     const conflict = await ingestBankEvent(pool, { ...event('resolution-exact', '10.00'), payload: { ...event('resolution-exact', '11.00').payload } });

@@ -40,9 +40,11 @@ CREATE TABLE IF NOT EXISTS bank_account_references (
   provider TEXT NOT NULL,
   reference_kind TEXT NOT NULL CHECK (reference_kind IN ('MASKED_CARD', 'MASKED_ACCOUNT', 'OTHER')),
   reference_value TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (provider, reference_kind, reference_value)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS bank_account_references_lookup_idx
+  ON bank_account_references(provider, reference_kind, reference_value);
 
 CREATE TABLE IF NOT EXISTS bank_transaction_account_resolution (
   bank_transaction_id BIGINT PRIMARY KEY REFERENCES bank_transactions(id) ON DELETE CASCADE,

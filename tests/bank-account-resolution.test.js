@@ -24,5 +24,9 @@ test('bank transaction coverage keeps resolved and unresolved totals explicit', 
 
 test('resolution state validation is fail-closed', async () => {
   await assert.rejects(() => resolveBankTransactionAccount({}, { bankTransactionId: 1, resolutionState: 'UNKNOWN', financialAccountId: 2, provenance: 'test', reason: 'test' }), /UNKNOWN resolution/);
-  await assert.rejects(() => resolveBankTransactionAccount({}, { bankTransactionId: 1, resolutionState: 'EXACT', provenance: 'test', reason: 'test' }), /requires a financial account/);
+  await assert.rejects(() => resolveBankTransactionAccount({}, { bankTransactionId: 1, resolutionState: 'MANUAL', provenance: 'test', reason: 'test' }), /requires a financial account/);
+});
+
+test('generic resolution cannot assert arbitrary EXACT evidence', async () => {
+  await assert.rejects(() => resolveBankTransactionAccount({}, { bankTransactionId: 1, financialAccountId: 2, resolutionState: 'EXACT', provenance: 'manual', reason: 'manual guess' }), /proven account reference evidence/);
 });

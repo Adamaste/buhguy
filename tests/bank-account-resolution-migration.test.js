@@ -10,5 +10,7 @@ test('bank account resolution migration keeps account ownership and resolution e
   assert.match(sql, /relation_type TEXT NOT NULL CHECK \(relation_type IN \('OWNER', 'AUTHORIZED_USER'\)\)/);
   assert.match(sql, /resolution_state TEXT NOT NULL CHECK \(resolution_state IN \('EXACT', 'MANUAL', 'RECONCILED', 'UNKNOWN'\)\)/);
   assert.match(sql, /resolution_state = 'UNKNOWN' AND financial_account_id IS NULL/);
+  assert.match(sql, /bank_account_references_lookup_idx/);
+  assert.doesNotMatch(sql, /UNIQUE \(provider, reference_kind, reference_value\)/);
   assert.doesNotMatch(sql, /CREATE TABLE IF NOT EXISTS .*ledger/i);
 });

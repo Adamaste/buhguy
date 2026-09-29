@@ -83,19 +83,14 @@ export async function createBankAccountReference(pool, { financialAccountId, pro
 
 export async function resolveBankTransactionAccount(pool, { bankTransactionId, financialAccountId = null, resolutionState, provenance, reason }) {
   const state = requireState(resolutionState);
+  if (state === 'EXACT') throw new Error('EXACT resolution requires proven account reference evidence');
   if (state === 'UNKNOWN' && financialAccountId != null) throw new Error('UNKNOWN resolution cannot name a financial account');
   if (state !== 'UNKNOWN' && financialAccountId == null) throw new Error(`${state} resolution requires a financial account`);
   const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const context = (await client.query(`SELECT bt.id, p.scope_id
-      FROM bank_transactions bt
-      JOIN bank_event_observations eo ON eo.id=bt.observation_id
-      JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
-      JOIN persons p ON p.id=sp.person_id
-      WHERE bt.id=$1 FOR UPDATE`, [transactionId])).rows[0];
-    if (!context) throw new Error('Bank transaction was not found or has no source context');
+    const context = await loadTransactionContext(client, transactionId);
     if (state !== 'UNKNOWN') {
       const account = (await client.query('SELECT id,scope_id FROM financial_accounts WHERE id=$1', [requiredId(financialAccountId, 'financialAccountId')])).rows[0];
       if (!account) throw new Error('Financial account was not found');
@@ -108,6 +103,59 @@ export async function resolveBankTransactionAccount(pool, { bankTransactionId, f
       RETURNING bank_transaction_id,financial_account_id,resolution_state,provenance,reason`, [transactionId, financialAccountId == null ? null : requiredId(financialAccountId, 'financialAccountId'), state, requiredText(provenance, 'provenance'), requiredText(reason, 'reason', 1000)]);
     await client.query('COMMIT');
     return result.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
+async function loadTransactionContext(client, transactionId) {
+  const result = await client.query(`SELECT bt.id, bt.account_reference AS "accountReference",
+      eo.ingestion_metadata->>'provider' AS provider,
+      COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
+    FROM bank_transactions bt
+    JOIN bank_event_observations eo ON eo.id=bt.observation_id
+    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
+    LEFT JOIN persons p ON p.id=sp.person_id
+    WHERE bt.id=$1
+    GROUP BY bt.id, eo.ingestion_metadata`, [transactionId]);
+  const context = result.rows[0];
+  if (!context) throw new Error('Bank transaction was not found');
+  if (context.scope_ids.length !== 1) throw new Error('Bank source accounting scope is not unique');
+  return { ...context, scopeId: Number(context.scope_ids[0]) };
+}
+
+async function persistResolution(client, { transactionId, financialAccountId = null, resolutionState, provenance, reason }) {
+  const result = await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
+    VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(bank_transaction_id) DO UPDATE SET financial_account_id=EXCLUDED.financial_account_id,
+      resolution_state=EXCLUDED.resolution_state,provenance=EXCLUDED.provenance,reason=EXCLUDED.reason,resolved_at=NOW()
+    RETURNING bank_transaction_id,financial_account_id,resolution_state,provenance,reason`, [transactionId, financialAccountId, resolutionState, requiredText(provenance, 'provenance'), requiredText(reason, 'reason', 1000)]);
+  return result.rows[0];
+}
+
+export async function resolveBankTransactionAccountFromReference(pool, { bankTransactionId }) {
+  const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const context = await loadTransactionContext(client, transactionId);
+    const candidates = context.provider && context.accountReference
+      ? (await client.query(`SELECT DISTINCT r.financial_account_id
+          FROM bank_account_references r
+          JOIN financial_accounts a ON a.id=r.financial_account_id
+          WHERE r.provider=$1 AND r.reference_value=$2 AND a.scope_id=$3
+          ORDER BY r.financial_account_id`, [context.provider, context.accountReference, context.scopeId])).rows
+      : [];
+    let result;
+    if (candidates.length === 1) {
+      result = await persistResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' });
+    } else {
+      const reason = candidates.length > 1 ? 'Ambiguous provider-scoped account reference candidates' : 'No provider-scoped account reference candidate';
+      result = await persistResolution(client, { transactionId, resolutionState: 'UNKNOWN', provenance: candidates.length > 1 ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason });
+    }
+    await client.query('COMMIT');
+    return { ...result, candidateCount: candidates.length };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
