@@ -4,9 +4,9 @@
   "clusters": [
     {
       "id": "sber-incoming-transfer-v1",
-      "observationCount": 2,
+      "observationCount": 3,
       "fields": {
-        "title": { "present": true, "shape": "fixed incoming-transfer marker, optional proven icon variant, sender tail" },
+        "title": { "present": true, "shape": "two proven title structures with sender tail: 💳 Он пришёл! Перевод от <sender> or ⭐ Баланс увеличился благодаря переводу от <sender>" },
         "description": { "present": true, "shape": "plus, integer RUB-symbol amount, dash, balance marker, distinct comma-decimal balance value, payment-account suffix" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
