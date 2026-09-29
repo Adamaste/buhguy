@@ -75,11 +75,30 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.deepEqual(yandexConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
     const yandexAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
     assert.deepEqual(yandexAfter, yandexBefore);
+    const sberEvent = {
+      ...event,
+      sourceEventId: 'evt-sber-incoming',
+      payload: { title: '⭐ Баланс увеличился благодаря переводу', description: '+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', deviceType: 'android', schemaVersion: '1' },
+    };
+    const sberCreated = await ingestBankEvent(pool, sberEvent);
+    assert.equal(sberCreated.status, 'created');
+    assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
+    assert.equal(sberCreated.normalization.direction, 'CREDIT');
+    assert.equal(sberCreated.normalization.amount, '123.45');
+    const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
+    const sberReplay = await ingestBankEvent(pool, sberEvent);
+    assert.equal(sberReplay.status, 'duplicate');
+    assert.equal(sberReplay.observationId, Number(sberBefore.id));
+    const sberConflict = await ingestBankEvent(pool, { ...sberEvent, payload: { ...sberEvent.payload, description: '+ 124,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 790,01 ₽ ТЕСТОВЫЙ БАЛАНС' } });
+    assert.deepEqual(sberConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
+    const sberAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
+    assert.deepEqual(sberAfter, sberBefore);
     const counts = await pool.query(`SELECT (SELECT count(*) FROM bank_event_observations) AS observations,
       (SELECT count(*) FROM bank_transactions) AS transactions,
       (SELECT count(*) FROM information_schema.columns WHERE table_name='bank_transactions' AND column_name IN ('receipt_id','purchase_id')) AS forbidden_links`);
-    assert.equal(Number(counts.rows[0].observations), 5);
-    assert.equal(Number(counts.rows[0].transactions), 5);
+    assert.equal(Number(counts.rows[0].observations), 6);
+    assert.equal(Number(counts.rows[0].transactions), 6);
     assert.equal(Number(counts.rows[0].forbidden_links), 0);
     const row = await pool.query('SELECT amount, currency, direction, event_type, normalization_status FROM bank_transactions ORDER BY id LIMIT 1');
     assert.equal(row.rows[0].amount, '125.50');
@@ -89,10 +108,11 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(row.rows[0].normalization_status, 'READY');
     const yandexRows = await pool.query(`SELECT event_type,amount,currency,direction,normalization_status
       FROM bank_transactions WHERE observation_id IN
-      (SELECT id FROM bank_event_observations WHERE source_event_id IN ('evt-yandex-purchase','evt-yandex-incoming'))
-      ORDER BY event_type`);
+      (SELECT id FROM bank_event_observations WHERE source_event_id IN ('evt-yandex-purchase','evt-yandex-incoming','evt-sber-incoming'))
+      ORDER BY event_type, amount`);
     assert.deepEqual(yandexRows.rows, [
       { event_type: 'INCOMING_TRANSFER', amount: '100.00', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
+      { event_type: 'INCOMING_TRANSFER', amount: '123.45', currency: 'RUB', direction: 'CREDIT', normalization_status: 'READY' },
       { event_type: 'PURCHASE', amount: '42.10', currency: 'RUB', direction: 'DEBIT', normalization_status: 'READY' },
     ]);
   } finally {

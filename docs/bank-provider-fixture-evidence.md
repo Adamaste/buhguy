@@ -14,17 +14,17 @@ Reviewed providers:
 - Ozon Finance: `ru.ozon.fintech.finance`
 
 The campaign proved transport through callback, Room, delivery, and backend for
-these providers. The normalized projections remained `PARTIAL` with unknown
-direction and no amount/currency projection. Transport success is therefore not
-parser readiness.
+these providers. Two consecutive controlled Sber incoming captures additionally
+proved one narrow parser-ready format; other Sber notification families remain
+fail-closed.
 
 ## Fixture policy
 
 The fixtures under `tests/fixtures/bank-normalization/` preserve only field
 presence, whitespace/punctuation shape, and safe marker categories. Values are
-synthetic and cannot be correlated with a user's operation. Every current
-cluster is marked `readyCapable: false` and `eventType`/`direction` remain
-`NOT_PROVEN`.
+synthetic and cannot be correlated with a user's operation. Only the proven Sber
+incoming cluster is marked `readyCapable: true`; all other clusters remain
+fail-closed with `eventType`/`direction` `NOT_PROVEN`.
 
 ### T-Bank
 
@@ -36,9 +36,18 @@ families until a safe positive format is captured.
 
 ### Sber
 
-One financial-looking family contains a plus marker, RUB-symbol amounts,
-punctuation, and a masked suffix. A separate reference-only family has no amount
-or currency. Neither proves a complete event type and direction contract.
+Two controlled incoming captures share the same title/body structure: an
+incoming-balance marker, a plus sign, a comma-decimal RUB-symbol amount, a
+separator and a distinct balance field. The first monetary token is the proven
+transaction amount; the second monetary field is ignored. The semantic result is
+`INCOMING_TRANSFER` / `CREDIT` / `RUB`, and event time comes from Android
+`StatusBarNotification.postTime`, not notification text.
+
+The runtime parser is scoped to provider `ru.sberbankmobile` with adapter
+`android-notification` and versioned as `sber-bank-normalizer-v1`. It does not
+extract sender, merchant, account or card references. Related transfer/summary,
+reference-only, ambiguous, malformed, and unsupported notifications remain
+`UNKNOWN`/`PARTIAL`.
 
 ### Ozon Finance
 
@@ -56,10 +65,10 @@ replay, and source-event conflicts must be tested. Cases requiring an
 unobserved wording are `NOT_PROVEN`, not invented fixtures.
 
 Generic normalization, Yandex normalization, deduplication, and conflict
-semantics remain unchanged. No provider parser is registered by this change.
+semantics remain unchanged. Only the scoped Sber Android parser is registered.
 
 ## Gate
 
-`PARSER_V1_POSSIBLE=NO` for T-Bank, Sber, and Ozon from this evidence set.
-The next minimal step is to capture a privacy-safe positive format with enough
-facts for one provider, then implement only that provider-scoped parser.
+`PARSER_V1_POSSIBLE=YES` for the one Sber incoming-transfer v1 format only.
+T-Bank and Ozon remain fail-closed. No historical backfill or parser inference
+for other Sber formats is allowed.

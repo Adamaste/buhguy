@@ -22,9 +22,10 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
     assert.equal(fixture.provider, provider);
     assert.equal(fixture.source, 'real-derived-sanitized');
     assert.ok(fixture.clusters.length > 0);
-    assert.ok(fixture.clusters.every((cluster) => cluster.readyCapable === false));
-    assert.ok(fixture.clusters.every((cluster) => cluster.evidence.eventType === 'NOT_PROVEN'));
-    assert.ok(fixture.clusters.every((cluster) => cluster.evidence.direction === 'NOT_PROVEN'));
+    if (name === 'sber') assert.ok(fixture.clusters.some((cluster) => cluster.readyCapable === true));
+    else assert.ok(fixture.clusters.every((cluster) => cluster.readyCapable === false));
+    assert.ok(fixture.clusters.filter((cluster) => cluster.readyCapable === false).every((cluster) => cluster.evidence.eventType === 'NOT_PROVEN'));
+    assert.ok(fixture.clusters.filter((cluster) => cluster.readyCapable === false).every((cluster) => cluster.evidence.direction === 'NOT_PROVEN'));
     assert.equal(fixture.acceptance.dedup, 'EXISTING_CONTRACT_UNCHANGED');
     assert.equal(fixture.acceptance.sourceEventIdConflict, 'EXISTING_CONTRACT_UNCHANGED');
   }

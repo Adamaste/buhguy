@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isYandexBankProvider, normalizeYandexBankEvent } from './bank-normalization.js';
+import { isSberBankAndroidNotification, isYandexBankProvider, normalizeSberBankEvent, normalizeYandexBankEvent } from './bank-normalization.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
@@ -68,6 +68,7 @@ function normalizeAmount(value) {
 
 export function normalizeBankEvent(input) {
   if (isYandexBankProvider(input)) return normalizeYandexBankEvent(input);
+  if (isSberBankAndroidNotification(input)) return normalizeSberBankEvent(input);
   const payload = input.payload;
   const amount = normalizeAmount(payload.amount);
   const currency = typeof payload.currency === 'string' && /^[A-Z]{3}$/.test(payload.currency) ? payload.currency : null;
