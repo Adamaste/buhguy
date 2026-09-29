@@ -17,20 +17,21 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `91868464ffdd3ffa994e88024d9dc8aa3087943c`
-- Current phase: Sber normalizer v1 deployed; follow-up fix aligns parser/fixtures with exact controlled production evidence
-- Current blocker: production currently remains on the fail-closed deployed parser until the Sber evidence-contract fix is reviewed, merged, and deployed. The fix must use exact controlled observations only, preserve raw evidence, and perform no backfill
+- Current master: `019b89102ca91d91cd9f6b2db1647e74cc7bad95`
+- Current phase: usable MVP; corrective Sber normalizer v1 is deployed and production-validated
+- Current blocker: provider parser research no longer blocks product use. The next product work is a daily-use interface for receipts, bank transactions, and explicit READY/PARTIAL/UNKNOWN evidence states
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
-- Current evidence: T-Bank, Sber, and Ozon observations were reviewed structurally without committing raw notification content; exact controlled Sber observations are now correlated by source-event prefix and prove the integer-ruble incoming-transfer shape used by the follow-up fixture/parser contract
+- Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review and merge the Sber evidence-contract fix, then deploy it through the normal immutable release path. Do not start another provider parser or perform Sber backfill before this is closed
+- Next action: continue the usable MVP path. T-Bank and Ozon parser coverage remain future incremental work; Alfa and VTB remain deferred
 
-## Sber normalization v1 production deployment
+## Sber normalization v1 production validation
 
-PR #28 is merged in master commit `adb4451a2d2019e4628ba70edff0440aa457cecd`.
-The runtime was promoted from an immutable LF-normalized 39-file closure with
-artifact SHA-256 `724c49cfb58d0c80803ef6b62c6993ddb2e7dcc8f8851740e2b86eb65098b02`.
+PR #28 and the corrective evidence-contract fix are merged in master commit
+`019b89102ca91d91cd9f6b2db1647e74cc7bad95`. The corrective runtime was
+promoted from an immutable LF-normalized 39-file closure with artifact SHA-256
+`9c8d81c5f55d9c068133265efc6cf70cdf07345af22062f1a15727ec7fe843d1`.
 
 Deployment validation completed for:
 
@@ -41,63 +42,32 @@ Deployment validation completed for:
 - timer restored to `enabled/active` and sync service left inactive after deployment;
 - no migration execution, backfill, phone use, credential mutation, grant change, or new bank operation.
 
-The deployed Sber envelope is intentionally narrow:
+The deployed and validated Sber envelope is intentionally narrow:
 
 - provider `ru.sberbankmobile`;
 - adapter `android-notification`;
 - schemaVersion `1`;
 - exact proven incoming-transfer title forms only;
-- first comma-decimal amount token followed by the RUB symbol;
+- first integer-ruble transaction amount token;
+- a separate balance monetary field is ignored;
 - event time from Android notification `postTime`.
 
 Read-only in-memory validation against exact controlled production observations
-is available without exposing payload text. The full source event ids were
-resolved from the controlled capture prefixes and each prefix matched exactly one
-production observation.
+completed successfully without exposing payload text or changing the database.
+Observations `72`, `75`, and `79` each returned `INCOMING_TRANSFER`, `CREDIT`,
+RUB, amount present, `READY`, and `sber-bank-normalizer-v1`. The event time was
+derived from the stored Android notification event time. Related summary
+observations `74`, `76`, and `80` remained `PARTIAL`/`UNKNOWN` and were not
+promoted to `READY`.
 
-Controlled capture 1:
-
-- incoming observations with prefixes `6f9d5cd17d1f` and `f0f18d86c0d8`
-  matched production observations `72` and `75`;
-- related summary observations with prefixes `b96be923366d` and
-  `3ab09cb25dda` matched production observations `74` and `76`;
-- the incoming payloads have integer-ruble amount grammar, a second monetary
-  field, and title forms outside the committed exact v1 title envelope;
-- the deployed parser returns `UNKNOWN/PARTIAL` with
-  `sber-bank-normalizer-v1`.
-
-Controlled capture 2:
-
-- incoming observation with prefix `a5c9a02631ee` matched production
-  observation `79`;
-- related summary observation with prefix `b524a37d0786` matched production
-  observation `80`;
-- the incoming payload has integer-ruble amount grammar, a second monetary
-  field, and a title form outside the committed exact v1 title envelope;
-- the deployed parser returns `UNKNOWN/PARTIAL` with
-  `sber-bank-normalizer-v1`.
-
-This was `SBER_PRODUCTION_VALIDATION=FAIL_EVIDENCE_MISMATCH` for the deployed
-PR #28 parser: transport and exact backend correlation were proven, but the
-committed sanitized fixture/parser contract did not faithfully describe the
-exact controlled production payloads. The follow-up fix must align the fixture
-and parser with these facts only:
-
-- exact provider `ru.sberbankmobile`;
-- adapter `android-notification`;
-- schemaVersion `1`;
-- the two controlled incoming title structures with sender tail;
-- integer-ruble transaction amount as the first monetary token;
-- separate balance monetary field ignored for transaction amount;
-- event time from Android notification `postTime`.
-
-Reference-only observations also remain fail-closed. No observation was updated
-or re-ingested.
+This closes the Sber parser research gate for the proven v1 format. No
+historical observation was updated, re-ingested, or backfilled.
 
 Yandex normalizer v1 remains deployed and its regression suite remains passing.
-T-Bank and Ozon still need deterministic parser evidence; Alfa and VTB remain
-deferred. The next minimal step is to review the Sber follow-up parser fix and,
-after merge, deploy it without historical backfill.
+T-Bank and Ozon parser coverage remain future incremental work; Alfa and VTB
+remain deferred. The next phase is `USABLE_MVP`, focused on a daily-use view
+of receipts, bank transactions, and explicit READY/PARTIAL/UNKNOWN evidence
+states rather than another provider parser.
 
 ## Yandex normalization v1 production deployment
 
