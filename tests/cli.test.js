@@ -23,6 +23,6 @@ test('bank account CLI requires an explicit reason for manual resolution', async
 test('bank account CLI does not expose an exact manual subcommand', async () => {
   await assert.rejects(
     () => runBankAccountCommand({ _: ['resolve-exact'], 'transaction-id': '1', 'account-id': '2' }, { pool: {} }),
-    /must be create, list, link-person, add-instrument, add-reference, resolve-reference, resolve-historical, resolve-manual or coverage/,
+    /must be create, list, list-instruments, link-person, add-instrument, link-instrument-person, link-instrument-account, add-reference, resolve-reference, resolve-instrument-reference, resolve-historical, resolve-manual or coverage/,
   );
 });

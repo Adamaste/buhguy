@@ -10,12 +10,15 @@ capture context only; they do not establish ownership of a financial account.
   currency, safe display name, scope, and active state.
 - `financial_account_person_relations` stores explicit `OWNER` and
   `AUTHORIZED_USER` relations with provenance and reason.
-- `payment_instruments` stores cards or virtual cards as instruments that
-  reference an account; an instrument is not an account.
-- `bank_account_references` stores provider-scoped masked account/card
-  references only when explicitly observed or supplied. Duplicate visible
-  masks are allowed because they can be ambiguous. No reference is guessed
-  from a person, source, or display name.
+- `payment_instruments` stores cards or virtual cards as independent identities.
+  A card may have an owner and may exist before its underlying account is
+  proven; `financial_account_id` is an optional explicit link.
+- `payment_instrument_person_relations` stores explicit card OWNER or
+  AUTHORIZED_USER evidence independently from account ownership.
+- `bank_account_references` targets exactly one identity: either a financial
+  account or a payment instrument. `MASKED_CARD` references target instruments;
+  account references target financial accounts. Duplicate visible masks remain
+  allowed because they can be ambiguous.
 - `bank_transactions.account_reference_kind` preserves whether a proven
   transaction reference is `MASKED_ACCOUNT`, `MASKED_CARD`, or `OTHER`.
   Historical rows may keep both reference fields NULL.
@@ -34,6 +37,12 @@ candidate becomes `EXACT`, and multiple candidates stay `UNKNOWN` with an
 ambiguity reason. A missing kind also fails closed. The generic resolver only
 allows `MANUAL`, `RECONCILED`, and `UNKNOWN`.
 
+`resolveBankTransactionPaymentInstrumentFromReference()` is the separate card
+identity path. A proven card reference may resolve to a payment instrument
+without resolving the transaction to an account. An explicit later card-to-
+account link is required before account resolution can become concrete. Equal
+masked suffixes never prove that a card and account are the same product.
+
 Resolution requires exactly one accounting scope among the source's linked
 context persons. Zero or multiple scopes fail closed; source context is never
 used as financial-account ownership.
@@ -41,8 +50,10 @@ used as financial-account ownership.
 ## Administrative operator surface
 
 The `receipt-collector bank-account` CLI is an administrative operation. It
-supports `create`, `list`, `link-person`, `add-instrument`, `add-reference`,
-`resolve-reference`, `resolve-manual`, and `coverage`. It must run through the
+supports `create`, `list`, `list-instruments`, `link-person`, `add-instrument`,
+`link-instrument-person`, `link-instrument-account`, `add-reference`,
+`resolve-reference`, `resolve-instrument-reference`, `resolve-manual`, and
+`coverage`. It must run through the
 existing administrative/peer-access model; the `receipt_collector` runtime role
 does not receive account provisioning or resolution mutation privileges.
 

@@ -23,3 +23,15 @@ test('reference-kind migration preserves historical null compatibility', async (
   assert.match(sql, /MASKED_CARD.*MASKED_ACCOUNT.*OTHER/);
   assert.doesNotMatch(sql, /UPDATE\s+bank_transactions/i);
 });
+
+test('payment instrument identity migration allows standalone cards and exact reference targets', async () => {
+  const sql = await readFile(new URL('../db/migrations/015_payment_instrument_identity.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS scope_id BIGINT/);
+  assert.match(sql, /financial_account_id DROP NOT NULL/);
+  assert.match(sql, /payment_instrument_person_relations/);
+  assert.match(sql, /payment_instrument_one_owner_idx/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS payment_instrument_id BIGINT/);
+  assert.match(sql, /bank_account_references_exact_target_check/);
+  assert.match(sql, /bank_transaction_payment_instrument_resolution/);
+  assert.match(sql, /payment_instrument_id IS NOT NULL/);
+});

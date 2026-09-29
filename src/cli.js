@@ -26,7 +26,7 @@ import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
 import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
 import { createProvisionedBankSource, listProvisionedBankSources, linkProvisionedBankSourcePerson, setProvisionedBankSourceEnabled } from './bank-source-provisioning.js';
-import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, listFinancialAccounts, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference, resolveHistoricalBankTransactionAccountFromObservation } from './bank-account-resolution.js';
+import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, linkPaymentInstrumentAccount, listFinancialAccounts, listPaymentInstruments, relatePaymentInstrumentPerson, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference, resolveBankTransactionPaymentInstrumentFromReference, resolveHistoricalBankTransactionAccountFromObservation } from './bank-account-resolution.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -139,6 +139,10 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ accounts: await listFinancialAccounts(pool, { scopeKey: args['scope-key'] ?? null }) });
     return 0;
   }
+  if (subcommand === 'list-instruments') {
+    write({ instruments: await listPaymentInstruments(pool, { scopeKey: args['scope-key'] ?? null }) });
+    return 0;
+  }
   if (subcommand === 'link-person') {
     const relation = await relateFinancialAccountPerson(pool, {
       financialAccountId: args['account-id'],
@@ -152,7 +156,8 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
   }
   if (subcommand === 'add-instrument') {
     const instrument = await createPaymentInstrument(pool, {
-      financialAccountId: args['account-id'],
+      scopeKey: args['scope-key'] ?? 'default',
+      financialAccountId: args['account-id'] ?? null,
       instrumentType: args['instrument-type'],
       provider: args.provider ?? null,
       displayName: args['display-name'],
@@ -160,9 +165,29 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ ok: true, instrument });
     return 0;
   }
+  if (subcommand === 'link-instrument-person') {
+    const relation = await relatePaymentInstrumentPerson(pool, {
+      paymentInstrumentId: args['instrument-id'],
+      personId: args['person-id'],
+      relationType: args['relation-type'] ?? 'OWNER',
+      provenance: args.provenance ?? 'ADMIN_CLI',
+      reason: args.reason,
+    });
+    write({ ok: true, relation });
+    return 0;
+  }
+  if (subcommand === 'link-instrument-account') {
+    const instrument = await linkPaymentInstrumentAccount(pool, {
+      paymentInstrumentId: args['instrument-id'],
+      financialAccountId: args['account-id'],
+    });
+    write({ ok: true, instrument });
+    return 0;
+  }
   if (subcommand === 'add-reference') {
     const reference = await createBankAccountReference(pool, {
-      financialAccountId: args['account-id'],
+      financialAccountId: args['account-id'] ?? null,
+      paymentInstrumentId: args['instrument-id'] ?? null,
       provider: args.provider,
       referenceKind: args['reference-kind'],
       referenceValue: args['reference-value'],
@@ -172,6 +197,11 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
   }
   if (subcommand === 'resolve-reference') {
     const result = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: args['transaction-id'] });
+    write({ ok: true, resolution: result });
+    return 0;
+  }
+  if (subcommand === 'resolve-instrument-reference') {
+    const result = await resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId: args['transaction-id'] });
     write({ ok: true, resolution: result });
     return 0;
   }
@@ -202,7 +232,7 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ coverage: await bankTransactionAccountCoverage(pool) });
     return 0;
   }
-  throw new ReceiptCollectorError('Bank account command must be create, list, link-person, add-instrument, add-reference, resolve-reference, resolve-historical, resolve-manual or coverage');
+  throw new ReceiptCollectorError('Bank account command must be create, list, list-instruments, link-person, add-instrument, link-instrument-person, link-instrument-account, add-reference, resolve-reference, resolve-instrument-reference, resolve-historical, resolve-manual or coverage');
 }
 
 export function normalizePhone(value) {
