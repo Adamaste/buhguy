@@ -17,14 +17,31 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `0d84fff53d424b7878c215ec5bc5be0e070054a3`
-- Current phase: Sber account identity/reference provisioning is complete for the explicitly confirmed first user; historical resolution remains a separate reviewed step
-- Current blocker: historical Sber transactions still lack persisted reference fields and remain `UNKNOWN`; reviewed historical evidence resolution is required before any `INTERNAL_TRANSFER` reconciliation
+- Current master: `9bd1b393e43df20f8522f85ca054a72ab26bb0ce`
+- Current phase: reviewed historical bank-account evidence resolution is implemented on a separate branch and awaits CI/review; production remains unchanged
+- Current blocker: historical Sber transactions remain `UNKNOWN` until the resolver is deployed and dry-run/persist gates are explicitly passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review explicit historical Sber resolution for observations 72/75/79, without backfilling transaction evidence. Do not infer ownership from a bank source or device. UI is not the current target
+- Next action: review and deploy the historical resolver, dry-run observations 72/75/79, then persist only after all fail-closed gates pass. Do not infer ownership from a bank source or device. UI is not the current target
+
+## Historical bank-account evidence resolution
+
+The feature branch `feat/historical-bank-account-resolution` adds an
+administrative `bank-account resolve-historical` command. It is read-only by
+default and accepts only an observation id. It verifies the immutable payload
+hash, replays the current normalizer, compares normalized fields with the
+persisted transaction, enforces one accounting scope, and derives a unique
+provider/reference candidate.
+
+An explicit `--persist` can change only an existing `UNKNOWN` resolution to
+`RECONCILED`, with provenance `HISTORICAL_OBSERVATION_REPLAY`. It never changes
+the observation or bank transaction, creates ownership/reference evidence,
+backfills, posts ledger entries, or performs internal-transfer matching.
+Missing, ambiguous, hash-mismatched, non-READY, parity-mismatched, and
+multi-scope cases fail closed. No production historical resolution has been
+performed from this branch.
 
 ## Sber normalization v1 production validation
 

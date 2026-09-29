@@ -26,11 +26,11 @@ import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
 import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
 import { createProvisionedBankSource, listProvisionedBankSources, linkProvisionedBankSourcePerson, setProvisionedBankSourceEnabled } from './bank-source-provisioning.js';
-import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, listFinancialAccounts, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference } from './bank-account-resolution.js';
+import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, listFinancialAccounts, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference, resolveHistoricalBankTransactionAccountFromObservation } from './bank-account-resolution.js';
 
 const execFileAsync = promisify(execFile);
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const result = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -175,6 +175,17 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ ok: true, resolution: result });
     return 0;
   }
+  if (subcommand === 'resolve-historical') {
+    if (args['account-id'] != null) throw new ReceiptCollectorError('Historical resolution does not accept --account-id');
+    if (args['observation-id'] == null) throw new ReceiptCollectorError('Historical resolution requires --observation-id');
+    if (args.persist !== undefined && args.persist !== true) throw new ReceiptCollectorError('Historical resolution requires a bare --persist flag');
+    const result = await resolveHistoricalBankTransactionAccountFromObservation(pool, {
+      observationId: args['observation-id'],
+      persist: args.persist === true,
+    });
+    write({ ok: result.status !== 'FAIL_CLOSED', dryRun: !args.persist, resolution: result });
+    return result.status === 'FAIL_CLOSED' ? 2 : 0;
+  }
   if (subcommand === 'resolve-manual') {
     if (!args.reason) throw new ReceiptCollectorError('Manual resolution requires --reason');
     const result = await resolveBankTransactionAccount(pool, {
@@ -191,7 +202,7 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ coverage: await bankTransactionAccountCoverage(pool) });
     return 0;
   }
-  throw new ReceiptCollectorError('Bank account command must be create, list, link-person, add-instrument, add-reference, resolve-reference, resolve-manual or coverage');
+  throw new ReceiptCollectorError('Bank account command must be create, list, link-person, add-instrument, add-reference, resolve-reference, resolve-historical, resolve-manual or coverage');
 }
 
 export function normalizePhone(value) {
