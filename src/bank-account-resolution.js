@@ -338,8 +338,8 @@ export async function resolveHistoricalBankTransactionAccountFromObservation(poo
     const candidates = compatibility.ok ? await findHistoricalCandidates(client, context) : [];
     const current = await currentHistoricalResolution(client, Number(row.transaction_id), false);
     const audit = historicalAudit(row, normalized, compatibility, current, candidates, provider);
-    if (!compatibility.ok) return await rollbackHistorical(client, historicalFailure('Historical normalization compatibility conflict', { audit }));
-    if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { audit }));
+    if (!compatibility.ok) return await rollbackHistorical(client, historicalFailure('Historical normalization compatibility conflict', { audit, candidateCount: candidates.length }));
+    if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { audit, candidateCount: candidates.length }));
 
     if (persist) await client.query('SELECT pg_advisory_xact_lock($1)', [Number(row.transaction_id)]);
     const lockedCurrent = persist ? await currentHistoricalResolution(client, Number(row.transaction_id), true) : current;
