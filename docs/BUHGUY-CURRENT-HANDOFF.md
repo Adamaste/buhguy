@@ -17,14 +17,39 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `9426cdf374416ea1e7de7b0ef806a63d3f8445e6`
+- Current master: `b67a6c68bb2ae467dd2f825158a8ed5f0839a4ca`
 - Current phase: historical Sber account resolution is deployed and validated for the three controlled observations
-- Current blocker: the second own financial account involved in a known own-account transfer is not yet provisioned/proven; do not start INTERNAL_TRANSFER reconciliation
+- Current blocker: finish the Person 1 card/account identity model, provision only confirmed identities, and complete controlled real-operation E2E before any Person 2 or Person 3 onboarding; do not start INTERNAL_TRANSFER reconciliation
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: find/provision the second proven own financial account, then consider INTERNAL_TRANSFER reconciliation only after both sides pass explicit evidence gates. Do not infer ownership from a bank source or device
+- Next action: deploy migration 015, provision the user-confirmed Person 1 cards/accounts after merge, run controlled E2E through evidence, transaction, identity, and reconciliation layers, then validate the read-only ChatGPT semantic answers. Do not start Person 2 or Person 3 yet.
+
+## Payment instrument identity foundation (feature branch)
+
+The current user-confirmed inventory belongs to `person_id=1`, but production
+provisioning remains separate. This branch adds standalone payment-instrument
+identity, explicit card person relations, provider-scoped card references, and
+an optional card-to-account link. The same masked suffix in an account and a
+card reference is not treated as a link. Card reference resolution is separate
+from financial-account resolution and remains fail-closed when ambiguous.
+
+The user has confirmed that all cards and accounts discovered so far belong to
+Person 1. After this branch is merged and migration 015 is deployed, the first
+operational sequence is:
+
+1. provision the confirmed Person 1 cards/accounts and explicit evidence;
+2. run controlled real-operation E2E and verify evidence, transaction, identity,
+   and reconciliation layers;
+3. verify the resulting read-only ChatGPT semantic answers.
+
+Only after the complete Person 1 E2E is accepted should Person 2 be onboarded:
+connect its source/device, verify notification visibility, discover new
+card/account identities, link them first to Person 2 context, obtain explicit
+user ownership confirmation, and run a short E2E regression. Person 3 follows
+through the same reviewed flow. No Person 2 or Person 3 provisioning is part
+of this stage.
 
 ## Historical bank-account evidence resolution
 
@@ -40,9 +65,11 @@ An explicit `--persist` can change only an existing `UNKNOWN` resolution to
 the observation or bank transaction, creates ownership/reference evidence,
 backfills, posts ledger entries, or performs internal-transfer matching.
 Missing, ambiguous, hash-mismatched, non-READY, compatibility-conflicting, and
-multi-scope cases fail closed. The resolver was deployed from master
+multi-scope cases fail closed. The historical resolver was deployed from master
 `9426cdf374416ea1e7de7b0ef806a63d3f8445e6` using immutable artifact SHA-256
 `e28f1486ef63ac8d2eb9a77d4f361520275724628a6a56164b0f40e59b575636`.
+The later docs-only merge `b67a6c68bb2ae467dd2f825158a8ed5f0839a4ca` is not
+the deployed resolver SHA.
 
 Production validation completed with schema migration `014` unchanged and no
 grant changes. Read-only dry-runs for observations `72`, `75`, and `79` all

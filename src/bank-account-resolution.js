@@ -70,18 +70,78 @@ export async function relateFinancialAccountPerson(pool, { financialAccountId, p
   return result.rows[0];
 }
 
-export async function createPaymentInstrument(pool, { financialAccountId, instrumentType, provider = null, displayName, active = true }) {
+export async function createPaymentInstrument(pool, { scopeKey = 'default', financialAccountId = null, instrumentType, provider = null, displayName, active = true }) {
   if (!INSTRUMENT_TYPES.has(instrumentType)) throw new Error('Unsupported payment instrument type');
-  const result = await pool.query(`INSERT INTO payment_instruments(financial_account_id,instrument_type,provider,display_name,active)
-    VALUES($1,$2,$3,$4,$5) RETURNING id,financial_account_id,instrument_type,provider,display_name,active`, [requiredId(financialAccountId, 'financialAccountId'), instrumentType, provider, requiredText(displayName, 'displayName'), Boolean(active)]);
+  const name = requiredText(displayName, 'displayName');
+  const accountId = financialAccountId == null ? null : requiredId(financialAccountId, 'financialAccountId');
+  const scope = requiredText(scopeKey, 'scopeKey', 128);
+  const scopeRow = accountId == null
+    ? (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scope])).rows[0]
+    : (await pool.query(`SELECT a.scope_id AS id, s.scope_key
+        FROM financial_accounts a JOIN accounting_scopes s ON s.id=a.scope_id WHERE a.id=$1`, [accountId])).rows[0];
+  if (!scopeRow) throw new Error(accountId == null ? `Accounting scope not found: ${scope}` : 'Financial account was not found');
+  if (accountId != null && scopeRow.scope_key !== scope) throw new Error('Financial account is outside the requested accounting scope');
+  const result = await pool.query(`INSERT INTO payment_instruments(scope_id,financial_account_id,instrument_type,provider,display_name,active)
+    VALUES($1,$2,$3,$4,$5,$6) RETURNING id,scope_id,financial_account_id,instrument_type,provider,display_name,active`, [scopeRow.id, accountId, instrumentType, provider, name, Boolean(active)]);
   return result.rows[0];
 }
 
-export async function createBankAccountReference(pool, { financialAccountId, provider, referenceKind, referenceValue }) {
-  if (!REFERENCE_KINDS.has(referenceKind)) throw new Error('Unsupported account reference kind');
-  const result = await pool.query(`INSERT INTO bank_account_references(financial_account_id,provider,reference_kind,reference_value)
-    VALUES($1,$2,$3,$4) RETURNING id,financial_account_id,provider,reference_kind,reference_value`, [requiredId(financialAccountId, 'financialAccountId'), requiredText(provider, 'provider'), referenceKind, requiredText(referenceValue, 'referenceValue', 200)]);
+export async function relatePaymentInstrumentPerson(pool, { paymentInstrumentId, personId, relationType, provenance, reason }) {
+  if (!RELATION_TYPES.has(relationType)) throw new Error('Unsupported instrument-person relation type');
+  const relation = (await pool.query(`SELECT pi.scope_id AS instrument_scope_id, p.scope_id AS person_scope_id
+    FROM payment_instruments pi CROSS JOIN persons p WHERE pi.id=$1 AND p.id=$2`, [requiredId(paymentInstrumentId, 'paymentInstrumentId'), requiredId(personId, 'personId')])).rows[0];
+  if (!relation) throw new Error('Payment instrument or person was not found');
+  if (Number(relation.instrument_scope_id) !== Number(relation.person_scope_id)) throw new Error('Payment instrument and person are outside the same accounting scope');
+  const result = await pool.query(`INSERT INTO payment_instrument_person_relations(payment_instrument_id,person_id,relation_type,provenance,reason)
+    VALUES($1,$2,$3,$4,$5) RETURNING id,payment_instrument_id,person_id,relation_type,provenance,reason`, [requiredId(paymentInstrumentId, 'paymentInstrumentId'), requiredId(personId, 'personId'), relationType, requiredText(provenance, 'provenance'), requiredText(reason, 'reason', 1000)]);
   return result.rows[0];
+}
+
+export async function linkPaymentInstrumentAccount(pool, { paymentInstrumentId, financialAccountId }) {
+  const instrumentId = requiredId(paymentInstrumentId, 'paymentInstrumentId');
+  const accountId = requiredId(financialAccountId, 'financialAccountId');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const instrument = (await client.query('SELECT id,scope_id,financial_account_id FROM payment_instruments WHERE id=$1 FOR UPDATE', [instrumentId])).rows[0];
+    const account = (await client.query('SELECT id,scope_id FROM financial_accounts WHERE id=$1', [accountId])).rows[0];
+    if (!instrument || !account) throw new Error('Payment instrument or financial account was not found');
+    if (Number(instrument.scope_id) !== Number(account.scope_id)) throw new Error('Payment instrument and financial account are outside the same accounting scope');
+    if (instrument.financial_account_id != null && Number(instrument.financial_account_id) !== accountId) throw new Error('Payment instrument is already linked to another financial account');
+    const result = await client.query(`UPDATE payment_instruments SET financial_account_id=$2 WHERE id=$1
+      RETURNING id,scope_id,financial_account_id,instrument_type,provider,display_name,active`, [instrumentId, accountId]);
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export async function createBankAccountReference(pool, { financialAccountId = null, paymentInstrumentId = null, provider, referenceKind, referenceValue }) {
+  if (!REFERENCE_KINDS.has(referenceKind)) throw new Error('Unsupported account reference kind');
+  const accountId = financialAccountId == null ? null : requiredId(financialAccountId, 'financialAccountId');
+  const instrumentId = paymentInstrumentId == null ? null : requiredId(paymentInstrumentId, 'paymentInstrumentId');
+  if ((accountId == null) === (instrumentId == null)) throw new Error('Exactly one reference target is required');
+  if (accountId != null && referenceKind === 'MASKED_CARD') throw new Error('MASKED_CARD references require a payment instrument target');
+  if (instrumentId != null && referenceKind !== 'MASKED_CARD') throw new Error('Payment instrument references must be MASKED_CARD');
+  const target = accountId != null
+    ? (await pool.query('SELECT id FROM financial_accounts WHERE id=$1', [accountId])).rows[0]
+    : (await pool.query('SELECT id FROM payment_instruments WHERE id=$1', [instrumentId])).rows[0];
+  if (!target) throw new Error('Reference target was not found');
+  const result = await pool.query(`INSERT INTO bank_account_references(financial_account_id,payment_instrument_id,provider,reference_kind,reference_value)
+    VALUES($1,$2,$3,$4,$5) RETURNING id,financial_account_id,payment_instrument_id,provider,reference_kind,reference_value`, [accountId, instrumentId, requiredText(provider, 'provider'), referenceKind, requiredText(referenceValue, 'referenceValue', 200)]);
+  return result.rows[0];
+}
+
+export async function listPaymentInstruments(pool, { scopeKey = null } = {}) {
+  const result = await pool.query(`SELECT pi.id, s.scope_key AS "scopeKey", pi.scope_id AS "scopeId",
+      pi.financial_account_id AS "financialAccountId", pi.instrument_type AS "instrumentType",
+      pi.provider, pi.display_name AS "displayName", pi.active,
+      COALESCE((SELECT json_agg(json_build_object('personId', r.person_id, 'relationType', r.relation_type, 'provenance', r.provenance, 'reason', r.reason) ORDER BY r.person_id, r.relation_type)
+        FROM payment_instrument_person_relations r WHERE r.payment_instrument_id=pi.id), '[]'::json) AS relations,
+      COALESCE((SELECT json_agg(json_build_object('provider', br.provider, 'referenceKind', br.reference_kind, 'referenceValue', br.reference_value) ORDER BY br.provider, br.reference_kind, br.reference_value)
+        FROM bank_account_references br WHERE br.payment_instrument_id=pi.id), '[]'::json) AS references
+    FROM payment_instruments pi JOIN accounting_scopes s ON s.id=pi.scope_id
+    WHERE ($1::text IS NULL OR s.scope_key=$1) ORDER BY pi.id`, [scopeKey]);
+  return result.rows;
 }
 
 export async function listFinancialAccounts(pool, { scopeKey = null } = {}) {
@@ -158,6 +218,20 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
   try {
     await client.query('BEGIN');
     const context = await loadTransactionContext(client, transactionId);
+    if (context.accountReferenceKind === 'MASKED_CARD') {
+      const existing = (await client.query(`SELECT bank_transaction_id,financial_account_id,resolution_state,provenance,reason,resolved_at
+        FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
+      await client.query('ROLLBACK');
+      return {
+        status: 'NOT_APPLICABLE',
+        resolutionState: existing?.resolution_state ?? 'UNKNOWN',
+        financialAccountId: existing?.financial_account_id ?? null,
+        candidateCount: 0,
+        changed: false,
+        reason: 'Card reference does not prove an underlying financial account',
+        ...(existing ? { existing } : {}),
+      };
+    }
     const candidates = context.provider && context.accountReference && context.accountReferenceKind
       ? (await client.query(`SELECT DISTINCT r.financial_account_id
           FROM bank_account_references r
@@ -182,6 +256,58 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
     await client.query('ROLLBACK');
     throw error;
   } finally { client.release(); }
+}
+
+export async function resolveBankTransactionPaymentInstrumentFromReference(pool, { bankTransactionId }) {
+  const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const context = await loadTransactionContext(client, transactionId);
+    if (context.accountReferenceKind !== 'MASKED_CARD') {
+      await client.query('ROLLBACK');
+      return { status: 'NOT_APPLICABLE', resolutionState: 'UNKNOWN', paymentInstrumentId: null, candidateCount: 0 };
+    }
+    const candidates = context.provider && context.accountReference
+      ? (await client.query(`SELECT DISTINCT r.payment_instrument_id
+          FROM bank_account_references r JOIN payment_instruments pi ON pi.id=r.payment_instrument_id
+          WHERE r.provider=$1 AND r.reference_kind='MASKED_CARD' AND r.reference_value=$2 AND pi.scope_id=$3
+          ORDER BY r.payment_instrument_id`, [context.provider, context.accountReference, context.scopeId])).rows
+      : [];
+    const existing = (await client.query(`SELECT bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason,resolved_at
+      FROM bank_transaction_payment_instrument_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
+    if (existing?.resolution_state === 'EXACT') {
+      const sameEvidence = candidates.length === 1
+        && Number(existing.payment_instrument_id) === Number(candidates[0].payment_instrument_id)
+        && existing.provenance === 'OBSERVED_PROVIDER_REFERENCE';
+      await client.query('ROLLBACK');
+      return {
+        ...existing,
+        status: sameEvidence ? 'ALREADY_EXACT' : 'FAIL_CLOSED',
+        candidateCount: candidates.length,
+        changed: false,
+        reason: sameEvidence ? existing.reason : 'Existing EXACT payment instrument resolution conflicts with current evidence',
+      };
+    }
+    if (existing?.resolution_state === 'UNKNOWN' && candidates.length !== 1) {
+      await client.query('ROLLBACK');
+      return { ...existing, status: 'NO_CHANGE', candidateCount: candidates.length, changed: false };
+    }
+    const result = candidates.length === 1
+      ? await persistPaymentInstrumentResolution(client, { transactionId, paymentInstrumentId: Number(candidates[0].payment_instrument_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped payment instrument reference candidate' })
+      : await persistPaymentInstrumentResolution(client, { transactionId, resolutionState: 'UNKNOWN', provenance: candidates.length > 1 ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED', reason: candidates.length > 1 ? 'Ambiguous provider, card reference, and scope candidates' : 'No provider-scoped payment instrument reference candidate' });
+    await client.query('COMMIT');
+    return { ...result, candidateCount: candidates.length };
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+async function persistPaymentInstrumentResolution(client, { transactionId, paymentInstrumentId = null, resolutionState, provenance, reason }) {
+  const result = await client.query(`INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason)
+    VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(bank_transaction_id) DO UPDATE SET payment_instrument_id=EXCLUDED.payment_instrument_id,
+      resolution_state=EXCLUDED.resolution_state,provenance=EXCLUDED.provenance,reason=EXCLUDED.reason,resolved_at=NOW()
+    RETURNING bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason`, [transactionId, paymentInstrumentId, resolutionState, requiredText(provenance, 'provenance'), requiredText(reason, 'reason', 1000)]);
+  return result.rows[0];
 }
 
 function historicalFailure(reason, extra = {}) {

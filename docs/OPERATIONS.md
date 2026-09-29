@@ -14,13 +14,25 @@ role:
 ```text
 receipt-collector bank-account create --scope-key default --institution <name> --provider <provider> --display-name <name> --currency RUB
 receipt-collector bank-account link-person --account-id <id> --person-id <id> --relation-type OWNER --reason "explicit account ownership evidence"
-receipt-collector bank-account add-instrument --account-id <id> --instrument-type CARD --provider <provider> --display-name <name>
+receipt-collector bank-account add-instrument --scope-key default --instrument-type CARD --provider <provider> --display-name <name>
+receipt-collector bank-account link-instrument-person --instrument-id <id> --person-id <id> --relation-type OWNER --reason "explicit card ownership evidence"
+receipt-collector bank-account link-instrument-account --instrument-id <id> --account-id <id>
+receipt-collector bank-account add-reference --instrument-id <id> --provider <provider> --reference-kind MASKED_CARD --reference-value <masked-value>
 receipt-collector bank-account add-reference --account-id <id> --provider <provider> --reference-kind MASKED_ACCOUNT --reference-value <masked-value>
 receipt-collector bank-account resolve-reference --transaction-id <id>
+receipt-collector bank-account resolve-instrument-reference --transaction-id <id>
 receipt-collector bank-account resolve-manual --transaction-id <id> --account-id <id> --reason "explicit operator evidence"
 receipt-collector bank-account list --scope-key default
 receipt-collector bank-account coverage
 ```
+
+Cards and financial accounts are separate identities. A card may be owned by
+a person before its underlying account is known. A masked card reference
+resolves only through the payment-instrument path; it must not populate the
+transaction's financial-account resolution. Equal visible suffixes never prove
+that a card and an account are the same product. Use the explicit
+`link-instrument-account` command only after separate evidence proves that
+link.
 
 ### Historical bank account evidence replay
 
