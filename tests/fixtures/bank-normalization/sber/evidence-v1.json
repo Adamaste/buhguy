@@ -3,30 +3,33 @@
   "source": "real-derived-sanitized",
   "clusters": [
     {
-      "id": "sber-ruble-plus-notification",
-      "observationCount": 1,
+      "id": "sber-incoming-transfer-v1",
+      "observationCount": 2,
       "fields": {
-        "title": { "present": true, "shape": "words ending with period" },
-        "description": { "present": true, "shape": "plus, amount, RUB symbol, dash, words, colon, decimal-comma, RUB symbol, masked suffix" },
+        "title": { "present": true, "shape": "incoming-balance marker with optional leading star" },
+        "description": { "present": true, "shape": "plus, comma-decimal amount, RUB symbol, dash, sender marker, colon, distinct balance value" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
       },
       "effectiveBodySource": "description",
       "evidence": {
-        "eventType": "NOT_PROVEN",
-        "direction": "NOT_PROVEN",
-        "amountGrammar": "decimal-comma followed by RUB symbol",
+        "eventType": "INCOMING_TRANSFER",
+        "direction": "CREDIT",
+        "amountGrammar": "first comma-decimal token followed by RUB symbol after plus marker",
         "currencyGrammar": "RUB symbol present",
-        "merchantStructure": "NOT_PROVEN",
-        "counterpartyStructure": "NOT_PROVEN",
-        "accountReferenceStructure": "masked suffix present, semantics NOT_PROVEN"
+        "transactionAmountPosition": "first monetary token",
+        "secondMonetaryField": "distinct balance field, ignored",
+        "eventTimeSource": "ANDROID_POST_TIME",
+        "merchantStructure": "NOT_EXTRACTED",
+        "counterpartyStructure": "NOT_EXTRACTED",
+        "accountReferenceStructure": "NOT_EXTRACTED"
       },
       "syntheticPayload": {
-        "title": "ТЕСТОВОЕ ФИНАНСОВОЕ СООБЩЕНИЕ.",
-        "description": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 67,89 ₽ ТЕСТОВЫЙ ••0000",
-        "text": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 67,89 ₽ ТЕСТОВЫЙ ••0000"
+        "title": "⭐ Баланс увеличился благодаря переводу",
+        "description": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС",
+        "text": "+ 123,45 ₽ — ТЕСТОВЫЙ ОТПРАВИТЕЛЬ: 6 789,01 ₽ ТЕСТОВЫЙ БАЛАНС"
       },
-      "readyCapable": false
+      "readyCapable": true
     },
     {
       "id": "sber-reference-only",
@@ -45,7 +48,8 @@
         "currencyGrammar": "NOT_PROVEN",
         "merchantStructure": "NOT_PROVEN",
         "counterpartyStructure": "NOT_PROVEN",
-        "accountReferenceStructure": "NOT_PROVEN"
+        "accountReferenceStructure": "NOT_PROVEN",
+        "eventTimeSource": "NOT_PROVEN"
       },
       "syntheticPayload": {
         "reference": "ТЕСТОВАЯ ССЫЛКА"
@@ -54,8 +58,8 @@
     }
   ],
   "acceptance": {
-    "positiveFormats": "NOT_PROVEN",
-    "whitespaceVariants": "NOT_APPLICABLE",
+    "positiveFormats": "ONE_INCOMING_TRANSFER_V1",
+    "whitespaceVariants": "SUPPORTED_WHITESPACE_NORMALIZATION",
     "missingMarkers": "REQUIRED_FAIL_CLOSED",
     "missingAmount": "REQUIRED_FAIL_CLOSED",
     "malformedAmount": "REQUIRED_FAIL_CLOSED",
@@ -64,6 +68,7 @@
     "providerIsolation": "REQUIRED",
     "rawImmutability": "REQUIRED",
     "dedup": "EXISTING_CONTRACT_UNCHANGED",
-    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED",
+    "adapterIsolation": "REQUIRED"
   }
 }

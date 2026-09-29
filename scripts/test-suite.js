@@ -29,6 +29,7 @@ const unitFiles = [
   'tests/bank-ingestion.test.js',
   'tests/bank-provider-fixtures.test.js',
   'tests/yandex-bank-normalization.test.js',
+  'tests/sber-bank-normalization.test.js',
   'tests/bank-event-type-migration.test.js',
   'tests/bank-device-auth.test.js',
   'tests/bank-source-provisioning.test.js',
