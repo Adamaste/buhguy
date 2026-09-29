@@ -94,7 +94,7 @@ export async function resolveBankTransactionAccount(pool, { bankTransactionId, f
     if (state !== 'UNKNOWN') {
       const account = (await client.query('SELECT id,scope_id FROM financial_accounts WHERE id=$1', [requiredId(financialAccountId, 'financialAccountId')])).rows[0];
       if (!account) throw new Error('Financial account was not found');
-      if (Number(account.scope_id) !== Number(context.scope_id)) throw new Error('Financial account is outside the transaction scope');
+      if (Number(account.scope_id) !== Number(context.scopeId)) throw new Error('Financial account is outside the transaction scope');
     }
     const result = await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
       VALUES($1,$2,$3,$4,$5)
