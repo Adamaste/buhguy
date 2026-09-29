@@ -17,14 +17,14 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-29
-- Current master: `2b5c350aa250f9d921849162900b97e6d34f7cfe`
-- Current phase: bank account resolution foundation in review; corrective Sber normalizer v1 remains deployed and production-validated
-- Current blocker: account resolution is not yet merged or deployed. The next product path is explicit bank transaction -> financial account resolution -> reconciliation/business event -> ledger Dr/Cr -> ChatGPT semantic access; UI is not the current target
+- Current master: `e8940ff67ceefa1127729e0325abe5df65e68fb8`
+- Current phase: bank account resolution foundation deployed and production-validated
+- Current blocker: internal-transfer reconciliation and later business-event/ledger integration remain intentionally unimplemented. The next separately reviewed stage is `INTERNAL_TRANSFER` reconciliation; UI is not the current target
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: exact controlled Sber observations 72, 75, and 79 pass the deployed parser in memory; related summary observations 74, 76, and 80 remain fail-closed. No historical backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: continue the usable MVP path. T-Bank and Ozon parser coverage remain future incremental work; Alfa and VTB remain deferred
+- Next action: separately review and implement the `INTERNAL_TRANSFER` reconciliation stage. T-Bank and Ozon parser coverage remain future incremental work; Alfa and VTB remain deferred
 
 ## Sber normalization v1 production validation
 
@@ -104,17 +104,51 @@ state; this deployment did not change that device policy. The next functional
 stage is bank coverage and provider parsers for Alfa, Sber, VTB, Ozon, and
 T-Bank, with each parser kept fail-closed and evidence-preserving.
 
-## Bank account resolution foundation
+## Bank account resolution foundation production deployment
 
-The next foundation change is intentionally separate from parser and ledger
-work. It introduces financial accounts, explicit account-person relations,
-payment instruments, provider-scoped masked references, and transaction
-resolution states `EXACT`, `MANUAL`, `RECONCILED`, and `UNKNOWN`.
+PR #32 is merged in master commit `e8940ff67ceefa1127729e0325abe5df65e68fb8`.
+The immutable production artifact was built from that exact commit with
+archive SHA-256
+`0c68e31430a8b488e98d8cd7d663498225c09f2e912b745294b05dbd00d24e4d`.
 
-Every new bank transaction is recorded as explicit `UNKNOWN` until a separate
-operator or reconciliation action supplies an account. Source `OWNER` links
-are never treated as financial-account ownership. No automatic inference,
-historical backfill, ledger posting, or UI is part of this step.
+Production validation confirmed:
+
+- migration `013_bank_account_resolution_foundation.sql` is applied;
+- `/healthz` returned HTTP 200 and `finance-bank-ingestion.service` is active;
+- `bank_transactions` remained 79 before and after deployment;
+- `bank_event_observations` remained 79 before and after deployment;
+- no historical source evidence or resolution rows were changed and no
+  backfill was performed;
+- the 79 unresolved transactions remain explicit `UNKNOWN`, with coverage
+  invariant PASS;
+- the runtime role has only `INSERT` on
+  `bank_transaction_account_resolution`; `SELECT`, `UPDATE`, and `DELETE`
+  remain denied;
+- no phone use, new bank operation, ledger posting, internal-transfer
+  matching, or UI work was performed.
+
+The semantic boundary is unchanged: source/device `OWNER` context never
+establishes financial-account ownership. `EXACT` requires proven
+provider/reference evidence and fails closed for zero or multiple candidates.
+New bank transactions default atomically to `UNKNOWN`.
+
+The intended next chain is:
+
+```text
+bank transaction
+-> financial account resolution
+-> internal-transfer reconciliation
+-> business event
+-> ledger Dr/Cr
+-> ChatGPT semantic access
+```
+
+Operational note: `scripts/migrate-prod-only.mjs` has a path defect discovered
+during migration 013 deployment. The migration succeeded through the same
+repository `migrate()` implementation from the exact immutable release using
+administrative PostgreSQL peer access. The wrapper defect remains a follow-up
+before the next production migration; this docs-only update does not change
+the wrapper.
 
 ## Read next when needed
 
