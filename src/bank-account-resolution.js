@@ -257,6 +257,8 @@ function historicalAudit(row, normalized, compatibility, current, candidates, pr
     provider,
     persistedNormalizationVersion: row.normalization_version,
     replayNormalizationVersion: normalized.normalizationVersion,
+    persistedEvidenceQuality: row.evidence_quality,
+    replayEvidenceQuality: normalized.evidenceQuality,
     referenceKind: normalized.accountReferenceKind,
     maskedReference: safeReference(normalized.accountReference),
     currentResolutionState: current?.resolution_state ?? 'UNKNOWN',
