@@ -10,6 +10,7 @@ FROM (VALUES
   ('public.bank_event_observations'::text, 'SELECT'::text),
   ('public.bank_event_observations'::text, 'INSERT'::text),
   ('public.bank_transactions'::text, 'INSERT'::text)
+  ,('public.bank_transaction_account_resolution'::text, 'INSERT'::text)
 ) AS required(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
 
@@ -33,6 +34,8 @@ FROM (VALUES
   ('public.bank_transactions'::text, 'SELECT'::text),
   ('public.bank_transactions'::text, 'UPDATE'::text),
   ('public.bank_transactions'::text, 'DELETE'::text)
+  ,('public.bank_transaction_account_resolution'::text, 'UPDATE'::text)
+  ,('public.bank_transaction_account_resolution'::text, 'DELETE'::text)
 ) AS forbidden(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
 

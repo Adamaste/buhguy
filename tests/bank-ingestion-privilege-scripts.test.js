@@ -15,6 +15,8 @@ test('bank ingestion grant script is narrowly scoped to runtime DML', async () =
   assert.match(sql, /GRANT SELECT, INSERT ON public\.bank_event_observations TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT SELECT \(id\) ON public\.bank_transactions TO receipt_collector/);
+  assert.match(sql, /GRANT INSERT ON public\.bank_transaction_account_resolution TO receipt_collector/);
+  assert.doesNotMatch(sql, /GRANT (?:SELECT|UPDATE|DELETE) ON public\.bank_transaction_account_resolution TO receipt_collector/);
   assert.doesNotMatch(sql, /GRANT SELECT ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT USAGE ON SEQUENCE public\.bank_event_observations_id_seq TO receipt_collector/);
   assert.match(sql, /GRANT USAGE ON SEQUENCE public\.bank_transactions_id_seq TO receipt_collector/);
