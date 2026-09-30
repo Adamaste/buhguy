@@ -36,7 +36,7 @@ families until a safe positive format is captured.
 
 ### Sber
 
-Two controlled incoming captures share the same title/body structure: an
+Three controlled incoming captures share the proven title/body structures: an
 incoming-balance marker, a plus sign, a comma-decimal RUB-symbol amount, a
 separator and a distinct balance field. The first monetary token is the proven
 transaction amount; the second monetary field is ignored. The semantic result is
@@ -44,7 +44,9 @@ transaction amount; the second monetary field is ignored. The semantic result is
 `StatusBarNotification.postTime`, not notification text.
 
 The runtime parser is scoped to provider `ru.sberbankmobile` with adapter
-`android-notification` and versioned as `sber-bank-normalizer-v1`. It does not
+`android-notification` and is now versioned as `sber-bank-normalizer-v2`. In
+addition to the two v1 title forms, the controlled observation 128 proved the
+exact sanitized title envelope `✅ Поступление от <sender>`. It does not
 extract sender, merchant, account or card references. Related transfer/summary,
 reference-only, ambiguous, malformed, and unsupported notifications remain
 `UNKNOWN`/`PARTIAL`.
@@ -69,6 +71,7 @@ semantics remain unchanged. Only the scoped Sber Android parser is registered.
 
 ## Gate
 
-`PARSER_V1_POSSIBLE=YES` for the one Sber incoming-transfer v1 format only.
-T-Bank and Ozon remain fail-closed. No historical backfill or parser inference
-for other Sber formats is allowed.
+`PARSER_V2_POSSIBLE=YES` for the exact controlled Sber incoming-transfer
+envelopes recorded in `evidence-v2.json` only. Existing v1 rows remain
+immutable; no historical backfill or parser inference for other Sber formats is
+allowed. T-Bank and Ozon remain fail-closed.

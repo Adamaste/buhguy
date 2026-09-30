@@ -1,5 +1,5 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v1';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v2';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
@@ -8,6 +8,7 @@ const SBER_ANDROID_SCHEMA_VERSION = '1';
 const SBER_INCOMING_TITLE_PATTERNS = [
   /^💳 Он пришёл! Перевод от [\p{L}\p{M} .'-]+$/u,
   /^⭐ Баланс увеличился благодаря переводу от [\p{L}\p{M} .'-]+$/u,
+  /^✅ Поступление от [\p{L}\p{M} .'-]+$/u,
 ];
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
