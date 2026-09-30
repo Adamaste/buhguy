@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { authenticateBankDevice, createBankDeviceCredential } from '../src/bank-device-auth.js';
-import { createBankSource, ingestBankEvent } from '../src/bank-ingestion.js';
+import { createBankSource, ingestBankEvent, linkBankSourcePerson } from '../src/bank-ingestion.js';
+import { createBankAccountReference, createFinancialAccount, createPaymentInstrument } from '../src/bank-account-resolution.js';
 import { createProvisionedBankSource, linkProvisionedBankSourcePerson, listProvisionedBankSources, setProvisionedBankSourceEnabled } from '../src/bank-source-provisioning.js';
 import { migrate } from '../src/database.js';
 
@@ -127,9 +128,16 @@ integration('bank ingestion works under the restricted runtime role without extr
   let runtime;
   try {
     await cleanupRuntimeRole(admin);
+    await migrate(admin);
     await admin.query(`CREATE ROLE receipt_collector LOGIN PASSWORD '${password.replaceAll("'", "''")}'`);
     await admin.query(readFileSync('scripts/apply-bank-ingestion-grants.sql', 'utf8'));
     await createBankSource(admin, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Runtime role synthetic' });
+    const person = (await admin.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`runtime-person-${sourceKey}`, 'Runtime synthetic person'])).rows[0];
+    await linkBankSourcePerson(admin, { sourceKey, personId: person.id });
+    const account = await createFinancialAccount(admin, { institution: 'Runtime synthetic bank', provider: 'runtime.provider', displayName: 'Runtime synthetic account' });
+    await createBankAccountReference(admin, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****0271' });
+    const card = await createPaymentInstrument(admin, { scopeKey: 'default', instrumentType: 'CARD', provider: 'runtime.provider', displayName: 'Runtime synthetic card' });
+    await createBankAccountReference(admin, { paymentInstrumentId: card.id, provider: 'runtime.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1913' });
     const credential = await createBankDeviceCredential(admin, { sourceKey, displayName: 'Runtime role synthetic credential' });
     const runtimeUrl = new URL(process.env.TEST_DATABASE_URL);
     runtimeUrl.username = 'receipt_collector';
@@ -144,6 +152,24 @@ integration('bank ingestion works under the restricted runtime role without extr
     };
     const [first, duplicate] = await Promise.all([ingestBankEvent(runtime, event), ingestBankEvent(runtime, event)]);
     assert.deepEqual([first.status, duplicate.status].sort(), ['created', 'duplicate']);
+    const accountEvent = await ingestBankEvent(runtime, {
+      ...event, sourceEventId: 'runtime-account-event',
+      payload: { ...event.payload, accountReference: '****0271', accountReferenceKind: 'MASKED_ACCOUNT' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'runtime.provider', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(accountEvent.identityResolution.account.resolutionState, 'EXACT');
+    assert.equal(accountEvent.identityResolution.account.financialAccountId, Number(account.id));
+    const cardEvent = await ingestBankEvent(runtime, {
+      ...event, sourceEventId: 'runtime-card-event',
+      payload: { ...event.payload, accountReference: '****1913', accountReferenceKind: 'MASKED_CARD' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'runtime.provider', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(cardEvent.identityResolution.paymentInstrument.resolutionState, 'EXACT');
+    assert.equal(cardEvent.identityResolution.paymentInstrument.paymentInstrumentId, Number(card.id));
+    assert.equal(cardEvent.identityResolution.account.resolutionState, 'UNKNOWN');
+    await assert.rejects(() => createFinancialAccount(runtime, { institution: 'Forbidden', displayName: 'Forbidden account' }), /permission denied/);
+    await assert.rejects(() => createPaymentInstrument(runtime, { scopeKey: 'default', instrumentType: 'CARD', displayName: 'Forbidden card' }), /permission denied/);
+    await assert.rejects(() => createBankAccountReference(runtime, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****9999' }), /permission denied/);
     const conflict = await ingestBankEvent(runtime, { ...event, payload: { ...event.payload, amount: '126.00' } });
     assert.deepEqual(conflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
 
@@ -171,7 +197,12 @@ integration('bank ingestion works under the restricted runtime role without extr
     await admin.query('DELETE FROM bank_device_credentials WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await admin.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
     await admin.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    await admin.query('DELETE FROM bank_account_references WHERE financial_account_id IN (SELECT id FROM financial_accounts WHERE display_name=$1) OR payment_instrument_id IN (SELECT id FROM payment_instruments WHERE display_name=$2)', ['Runtime synthetic account', 'Runtime synthetic card']).catch(() => {});
+    await admin.query('DELETE FROM payment_instruments WHERE display_name=$1', ['Runtime synthetic card']).catch(() => {});
+    await admin.query('DELETE FROM financial_accounts WHERE display_name=$1', ['Runtime synthetic account']).catch(() => {});
+    await admin.query('DELETE FROM persons WHERE person_key=$1', [`runtime-person-${sourceKey}`]).catch(() => {});
     await cleanupRuntimeRole(admin);
     assert.equal((await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'")).rowCount, 0);
     await admin.end();

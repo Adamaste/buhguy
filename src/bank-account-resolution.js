@@ -203,6 +203,80 @@ async function loadTransactionContext(client, transactionId) {
   return { ...context, scopeId: Number(context.scope_ids[0]) };
 }
 
+async function loadIngestionContext(client, transactionId) {
+  const result = await client.query(`SELECT bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
+      eo.ingestion_metadata->>'provider' AS provider,
+      COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
+    FROM bank_transactions bt
+    JOIN bank_event_observations eo ON eo.id=bt.observation_id
+    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
+    LEFT JOIN persons p ON p.id=sp.person_id
+    WHERE bt.id=$1
+    GROUP BY bt.id, eo.ingestion_metadata`, [transactionId]);
+  const context = result.rows[0];
+  if (!context) throw new Error('Bank transaction was not found');
+  return context;
+}
+
+async function insertIngestionAccountResolution(client, { transactionId, financialAccountId = null, provenance, reason, resolutionState = 'UNKNOWN' }) {
+  await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
+    VALUES($1,$2,$3,$4,$5)`, [transactionId, financialAccountId, resolutionState, provenance, reason]);
+  return { financialAccountId, resolutionState, provenance, reason };
+}
+
+async function insertIngestionInstrumentResolution(client, { transactionId, paymentInstrumentId = null, provenance, reason, resolutionState = 'UNKNOWN' }) {
+  await client.query(`INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason)
+    VALUES($1,$2,$3,$4,$5)`, [transactionId, paymentInstrumentId, resolutionState, provenance, reason]);
+  return { paymentInstrumentId, resolutionState, provenance, reason };
+}
+
+export async function resolveNewBankTransactionIdentity(client, { bankTransactionId }) {
+  const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
+  const context = await loadIngestionContext(client, transactionId);
+  const scopeCount = context.scope_ids.length;
+  if (scopeCount !== 1) {
+    const scopeState = scopeCount === 0 ? 'INGESTION_SCOPE_UNRESOLVED' : 'INGESTION_SCOPE_AMBIGUOUS';
+    const scopeReason = scopeCount === 0
+      ? 'Bank source has no unique accounting scope'
+      : 'Bank source has multiple accounting scopes';
+    const account = await insertIngestionAccountResolution(client, { transactionId, provenance: scopeState, reason: scopeReason });
+    const paymentInstrument = context.accountReferenceKind === 'MASKED_CARD'
+      ? await insertIngestionInstrumentResolution(client, { transactionId, provenance: scopeState, reason: scopeReason })
+      : null;
+    return { account, paymentInstrument };
+  }
+
+  const scopeId = Number(context.scope_ids[0]);
+  if (context.accountReferenceKind === 'MASKED_CARD') {
+    const candidates = context.provider && context.accountReference
+      ? (await client.query(`SELECT DISTINCT r.payment_instrument_id
+          FROM bank_account_references r
+          JOIN payment_instruments pi ON pi.id=r.payment_instrument_id
+          WHERE r.provider=$1 AND r.reference_kind='MASKED_CARD' AND r.reference_value=$2 AND pi.scope_id=$3
+          ORDER BY r.payment_instrument_id`, [context.provider, context.accountReference, scopeId])).rows
+      : [];
+    const ambiguous = candidates.length > 1;
+    const paymentInstrument = candidates.length === 1
+      ? await insertIngestionInstrumentResolution(client, { transactionId, paymentInstrumentId: Number(candidates[0].payment_instrument_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped payment instrument reference candidate' })
+      : await insertIngestionInstrumentResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, card reference, and scope candidates' : 'No provider-scoped payment instrument reference candidate' });
+    const account = await insertIngestionAccountResolution(client, { transactionId, provenance: 'INGESTION_CARD_ACCOUNT_UNRESOLVED', reason: 'Card identity does not prove an underlying financial account' });
+    return { account, paymentInstrument };
+  }
+
+  const candidates = context.provider && context.accountReference && context.accountReferenceKind
+    ? (await client.query(`SELECT DISTINCT r.financial_account_id
+        FROM bank_account_references r
+        JOIN financial_accounts a ON a.id=r.financial_account_id
+        WHERE r.provider=$1 AND r.reference_kind=$2 AND r.reference_value=$3 AND a.scope_id=$4
+        ORDER BY r.financial_account_id`, [context.provider, context.accountReferenceKind, context.accountReference, scopeId])).rows
+    : [];
+  const ambiguous = candidates.length > 1;
+  const account = candidates.length === 1
+    ? await insertIngestionAccountResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' })
+    : await insertIngestionAccountResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, reference kind, and scope candidates' : context.accountReferenceKind ? 'No provider, reference kind, and scope candidate' : 'Observed transaction has no proven account reference' });
+  return { account, paymentInstrument: null };
+}
+
 async function persistResolution(client, { transactionId, financialAccountId = null, resolutionState, provenance, reason }) {
   const result = await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
     VALUES($1,$2,$3,$4,$5)

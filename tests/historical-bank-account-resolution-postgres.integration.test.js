@@ -36,6 +36,10 @@ integration('historical bank account replay is dry-run, fail-closed, and idempot
           normalization_status='PARTIAL', evidence_quality='PARTIAL',
           account_reference=NULL, account_reference_kind=NULL
       WHERE id=$1`, [created.transactionId]);
+    await pool.query(`UPDATE bank_transaction_account_resolution
+      SET financial_account_id=NULL, resolution_state='UNKNOWN', provenance='TEST_HISTORICAL_SETUP',
+          reason='Synthetic historical replay starts from an unresolved row'
+      WHERE bank_transaction_id=$1`, [created.transactionId]);
     const beforeDryRun = (await pool.query(`SELECT occurred_at,amount,currency,direction,merchant,counterparty,
         account_reference,account_reference_kind,event_type,normalization_status,normalization_version,evidence_quality
       FROM bank_transactions WHERE id=$1`, [created.transactionId])).rows[0];
@@ -66,6 +70,10 @@ integration('historical bank account replay is dry-run, fail-closed, and idempot
     await pool.query(`UPDATE bank_transactions SET amount=NULL, currency=NULL, direction='UNKNOWN',
       event_type='UNKNOWN', normalization_status='PARTIAL', evidence_quality='PARTIAL',
       account_reference=NULL, account_reference_kind=NULL WHERE id=$1`, [concurrentEvent.transactionId]);
+    await pool.query(`UPDATE bank_transaction_account_resolution
+      SET financial_account_id=NULL, resolution_state='UNKNOWN', provenance='TEST_HISTORICAL_SETUP',
+          reason='Synthetic historical replay starts from an unresolved row'
+      WHERE bank_transaction_id=$1`, [concurrentEvent.transactionId]);
     const concurrent = await Promise.all([
       resolveHistoricalBankTransactionAccountFromObservation(pool, { observationId: concurrentEvent.observationId, persist: true }),
       resolveHistoricalBankTransactionAccountFromObservation(pool, { observationId: concurrentEvent.observationId, persist: true }),

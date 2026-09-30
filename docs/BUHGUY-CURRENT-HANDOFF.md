@@ -17,15 +17,31 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `982afaaf076c2ff47526485d85fe185569c7cdf2`
+- Current master: `0c1971d95f26678026da6b3c524469c1a5256a81`
 - Current phase: Person 1 account/card identity inventory is provisioned and validated in production
-- Current blocker: new ingested transactions with proven account/card references still default to `UNKNOWN`; implement automatic fail-closed identity resolution before controlled Person 1 E2E
+- Current blocker: automatic fail-closed identity resolution is implemented on a feature branch and awaits review, CI, and a later production deployment; production remains on the historical-resolution release
 - Production artifact: exact master `982afaaf076c2ff47526485d85fe185569c7cdf2`, archive SHA-256 `4468588f0afd47f7dfea2c6e16c0b0009c11b12141de0f0e530c7e0e9bbff46f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: implement and deploy automatic fail-closed identity resolution for new ingestion. Do not start controlled Person 1 E2E, Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: review and, only after approval, deploy automatic fail-closed identity resolution for new ingestion. Do not start controlled Person 1 E2E, Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+
+## Automatic new-ingestion identity resolution (proposed)
+
+The feature branch for this milestone resolves only new bank transactions and
+does not change existing production rows. A unique provider-scoped account
+reference can produce `EXACT`; no reference, zero candidates, multiple
+candidates, card-only evidence, or zero/multiple accounting scopes remain
+`UNKNOWN` with explicit provenance. Card references may resolve a payment
+instrument separately and never infer an underlying financial account.
+
+The observation, bank transaction, and resolution rows are written in one
+transaction. Duplicate and source-event conflict semantics are unchanged. No
+historical backfill, ledger posting, internal-transfer matching, UI, or
+production deployment is part of this proposed state. Runtime lookup grants are
+defined by migration 016 and remain least-privilege; administrative provisioning
+and resolution paths are unchanged.
 
 ## Payment instrument identity foundation (feature branch)
 

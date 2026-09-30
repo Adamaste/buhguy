@@ -11,6 +11,7 @@ FROM (VALUES
   ('public.bank_event_observations'::text, 'INSERT'::text),
   ('public.bank_transactions'::text, 'INSERT'::text)
   ,('public.bank_transaction_account_resolution'::text, 'INSERT'::text)
+  ,('public.bank_transaction_payment_instrument_resolution'::text, 'INSERT'::text)
 ) AS required(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
 
@@ -36,6 +37,18 @@ FROM (VALUES
   ('public.bank_transactions'::text, 'DELETE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'UPDATE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'DELETE'::text)
+  ,('public.financial_accounts'::text, 'INSERT'::text)
+  ,('public.financial_accounts'::text, 'UPDATE'::text)
+  ,('public.financial_accounts'::text, 'DELETE'::text)
+  ,('public.payment_instruments'::text, 'INSERT'::text)
+  ,('public.payment_instruments'::text, 'UPDATE'::text)
+  ,('public.payment_instruments'::text, 'DELETE'::text)
+  ,('public.bank_account_references'::text, 'INSERT'::text)
+  ,('public.bank_account_references'::text, 'UPDATE'::text)
+  ,('public.bank_account_references'::text, 'DELETE'::text)
+  ,('public.payment_instrument_person_relations'::text, 'INSERT'::text)
+  ,('public.payment_instrument_person_relations'::text, 'UPDATE'::text)
+  ,('public.payment_instrument_person_relations'::text, 'DELETE'::text)
 ) AS forbidden(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
 
@@ -45,6 +58,26 @@ FROM (VALUES
   ('id'::text, 'SELECT'::text)
 ) AS columns(column_name, privilege_name)
 ORDER BY column_name;
+
+SELECT object_name, column_name, privilege_name,
+  has_column_privilege('receipt_collector', object_name, column_name, privilege_name) AS granted
+FROM (VALUES
+  ('public.financial_accounts'::text, 'id'::text, 'SELECT'::text),
+  ('public.financial_accounts'::text, 'scope_id'::text, 'SELECT'::text),
+  ('public.payment_instruments'::text, 'id'::text, 'SELECT'::text),
+  ('public.payment_instruments'::text, 'scope_id'::text, 'SELECT'::text),
+  ('public.bank_account_references'::text, 'provider'::text, 'SELECT'::text),
+  ('public.bank_account_references'::text, 'reference_kind'::text, 'SELECT'::text),
+  ('public.bank_account_references'::text, 'reference_value'::text, 'SELECT'::text),
+  ('public.bank_account_references'::text, 'financial_account_id'::text, 'SELECT'::text),
+  ('public.bank_account_references'::text, 'payment_instrument_id'::text, 'SELECT'::text),
+  ('public.bank_source_person'::text, 'bank_source_id'::text, 'SELECT'::text),
+  ('public.bank_source_person'::text, 'person_id'::text, 'SELECT'::text),
+  ('public.bank_source_person'::text, 'relation_type'::text, 'SELECT'::text),
+  ('public.persons'::text, 'id'::text, 'SELECT'::text),
+  ('public.persons'::text, 'scope_id'::text, 'SELECT'::text)
+) AS lookup(object_name,column_name,privilege_name)
+ORDER BY object_name, column_name;
 
 SELECT column_name, privilege_name,
   has_column_privilege('receipt_collector', 'public.bank_device_credentials', column_name, privilege_name) AS granted
