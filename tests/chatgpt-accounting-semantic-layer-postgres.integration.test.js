@@ -23,13 +23,13 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
 
     const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
     const persons = (await pool.query(
-      "INSERT INTO persons(scope_id, person_key, display_name) VALUES ($1,'semantic-test-person-a','Synthetic A'),($1,'semantic-test-person-b','Synthetic B') RETURNING id",
+      "INSERT INTO persons(scope_id, person_key, display_name) VALUES ($1,'semantic-test-person-a','Synthetic A'),($1,'semantic-test-person-b','Synthetic B'),($1,'semantic-test-person-c','Synthetic C') RETURNING id",
       [scope.id],
     )).rows;
     sourceId = (await pool.query(
       "INSERT INTO bank_sources(source_key, source_type, display_name) VALUES ('semantic-test-sber-source','ANDROID_NOTIFICATION','Synthetic Sber semantic source') RETURNING id",
     )).rows[0].id;
-    await pool.query("INSERT INTO bank_source_person(bank_source_id, person_id, relation_type) VALUES ($1,$2,'OWNER'),($1,$3,'OWNER')", [sourceId, persons[0].id, persons[1].id]);
+    await pool.query("INSERT INTO bank_source_person(bank_source_id, person_id, relation_type) VALUES ($1,$2,'OWNER'),($1,$3,'OWNER'),($1,$4,'OWNER')", [sourceId, persons[0].id, persons[1].id, persons[2].id]);
 
     for (const [amount, resolution, direction] of [['100.00', 'EXACT', 'CREDIT'], ['50.00', 'UNKNOWN', 'DEBIT']]) {
       const observation = (await pool.query(
@@ -101,6 +101,62 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.deepEqual(rows[2].payment_instrument_owner_person_ids.map(String), [String(persons[0].id)]);
     assert.deepEqual(rows[2].payment_instrument_authorized_user_person_ids.map(String), [String(persons[1].id)]);
 
+    const provenIncoming = (await pool.query(`
+      SELECT bt.id
+      FROM chatgpt_accounting.bank_transactions AS bt
+      WHERE bt.occurred_at >= $1 AND bt.occurred_at < $2
+        AND bt.normalization_status = 'READY'
+        AND bt.event_type = 'INCOMING_TRANSFER'
+        AND bt.direction = 'CREDIT'
+        AND bt.amount IS NOT NULL
+        AND bt.currency IS NOT NULL
+        AND $3 = ANY(bt.financial_account_owner_person_ids)
+      ORDER BY bt.id`, ['2000-01-01', '2100-01-01', persons[0].id])).rows;
+    assert.deepEqual(provenIncoming.map((row) => row.id), [rows[0].id]);
+
+    const provenIncomingTotal = (await pool.query(`
+      SELECT COALESCE(SUM(bt.amount), 0) AS total, COUNT(*)::int AS transaction_count
+      FROM chatgpt_accounting.bank_transactions AS bt
+      WHERE bt.occurred_at >= $1 AND bt.occurred_at < $2
+        AND bt.normalization_status = 'READY'
+        AND bt.event_type = 'INCOMING_TRANSFER'
+        AND bt.direction = 'CREDIT'
+        AND bt.amount IS NOT NULL
+        AND bt.currency IS NOT NULL
+        AND $3 = ANY(bt.financial_account_owner_person_ids)`, ['2000-01-01', '2100-01-01', persons[0].id])).rows[0];
+    assert.equal(provenIncomingTotal.total, '100.00');
+    assert.equal(provenIncomingTotal.transaction_count, 1);
+
+    const ownedDebit = (await pool.query(`
+      SELECT bt.id, bt.account_resolution_state, bt.financial_account_id
+      FROM chatgpt_accounting.bank_transactions AS bt
+      WHERE bt.normalization_status = 'UNKNOWN'
+        AND bt.direction = 'DEBIT'
+        AND $1 = ANY(bt.payment_instrument_owner_person_ids)`, [persons[0].id])).rows;
+    assert.deepEqual(ownedDebit, [{ id: rows[1].id, account_resolution_state: 'UNKNOWN', financial_account_id: null }]);
+
+    const unresolved = (await pool.query(`
+      SELECT bt.id
+      FROM chatgpt_accounting.bank_transactions AS bt
+      WHERE bt.normalization_status IN ('UNKNOWN', 'PARTIAL')
+         OR bt.account_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
+         OR bt.payment_instrument_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
+      ORDER BY bt.id`)).rows;
+    assert.deepEqual(unresolved.map((row) => row.id), [rows[1].id, rows[2].id]);
+
+    const sourceContextOnly = (await pool.query(`
+      SELECT bt.id, bt.financial_account_id
+      FROM chatgpt_accounting.bank_transactions AS bt
+      WHERE $1 = ANY(bt.source_context_person_ids)
+        AND bt.account_resolution_state = 'UNKNOWN'
+        AND NOT ($1 = ANY(COALESCE(bt.financial_account_owner_person_ids, '{}'::bigint[])))
+        AND NOT ($1 = ANY(COALESCE(bt.payment_instrument_owner_person_ids, '{}'::bigint[])))
+      ORDER BY bt.id`, [persons[2].id])).rows;
+    assert.deepEqual(sourceContextOnly, [
+      { id: rows[1].id, financial_account_id: null },
+      { id: rows[2].id, financial_account_id: null },
+    ]);
+
     const grants = (await pool.query(`SELECT
       has_table_privilege('chatgpt_reader','chatgpt_accounting.bank_transactions','SELECT') AS semantic_select,
       object_name,
@@ -124,7 +180,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     if (instrumentIds.length) await pool.query('DELETE FROM payment_instruments WHERE id = ANY($1::bigint[])', [instrumentIds]).catch(() => {});
     if (accountIds.length) await pool.query('DELETE FROM financial_accounts WHERE id = ANY($1::bigint[])', [accountIds]).catch(() => {});
     if (sourceId) await pool.query('DELETE FROM bank_sources WHERE id=$1', [sourceId]).catch(() => {});
-    await pool.query("DELETE FROM persons WHERE person_key IN ('semantic-test-person-a','semantic-test-person-b')").catch(() => {});
+    await pool.query("DELETE FROM persons WHERE person_key IN ('semantic-test-person-a','semantic-test-person-b','semantic-test-person-c')").catch(() => {});
     await pool.end();
   }
 });
