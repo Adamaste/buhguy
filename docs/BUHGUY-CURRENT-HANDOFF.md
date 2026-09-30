@@ -16,15 +16,16 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-09-29
-- Current master: `b67a6c68bb2ae467dd2f825158a8ed5f0839a4ca`
-- Current phase: historical Sber account resolution is deployed and validated for the three controlled observations
-- Current blocker: finish the Person 1 card/account identity model, provision only confirmed identities, and complete controlled real-operation E2E before any Person 2 or Person 3 onboarding; do not start INTERNAL_TRANSFER reconciliation
+- Last updated: 2026-09-30
+- Current master: `982afaaf076c2ff47526485d85fe185569c7cdf2`
+- Current phase: Person 1 account/card identity inventory is provisioned and validated in production
+- Current blocker: new ingested transactions with proven account/card references still default to `UNKNOWN`; implement automatic fail-closed identity resolution before controlled Person 1 E2E
+- Production artifact: exact master `982afaaf076c2ff47526485d85fe185569c7cdf2`, archive SHA-256 `4468588f0afd47f7dfea2c6e16c0b0009c11b12141de0f0e530c7e0e9bbff46f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: deploy migration 015, provision the user-confirmed Person 1 cards/accounts after merge, run controlled E2E through evidence, transaction, identity, and reconciliation layers, then validate the read-only ChatGPT semantic answers. Do not start Person 2 or Person 3 yet.
+- Next action: implement and deploy automatic fail-closed identity resolution for new ingestion. Do not start controlled Person 1 E2E, Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
 
 ## Payment instrument identity foundation (feature branch)
 
@@ -281,6 +282,41 @@ The next step is reviewed historical resolution for controlled Sber
 observations 72/75/79 using immutable observation evidence and explicit
 provenance. `INTERNAL_TRANSFER` reconciliation remains out of scope until
 both sides of an own-account transfer have proven account identity.
+
+## Person 1 account and card identity provisioning
+
+Migration `015_payment_instrument_identity.sql` was applied in production
+through the administrative migration wrapper. The exact master release
+`982afaaf076c2ff47526485d85fe185569c7cdf2` was promoted from immutable
+artifact SHA-256
+`4468588f0afd47f7dfea2c6e16c0b0009c11b12141de0f0e530c7e0e9bbff46f`.
+Production validation returned `/healthz` HTTP 200, an active
+`finance-bank-ingestion.service`, and an enabled/active FNS timer.
+
+The user-confirmed Person 1 inventory is now provisioned:
+
+- financial accounts `1` Sber `••0271`, `2` Alfa `••3978`, and `3` Alfa
+  `••8451`, each with one `OWNER` relation to person 1 and a
+  `USER_CONFIRMED` provenance;
+- standalone payment instruments `1`/`2`/`3` for Alfa cards `••1913`,
+  `••5580`, and `••8451`, plus `4`/`5` for Yandex cards `••4297` and
+  `••9615`, each with one `OWNER` relation to person 1 and no financial
+  account link;
+- account/card references were created with their proven provider and kind.
+
+The Alfa account `••8451` and Alfa card `••8451` remain distinct identities;
+no card-to-account links were created. Accidental duplicate Yandex
+instruments `6`/`7` and references `9`/`10` were removed in one targeted,
+precondition-checked administrative transaction; canonical instruments
+`4`/`5` and references `7`/`8` were preserved.
+
+Observations, bank transactions, account resolutions, historical Sber
+resolutions `72`/`75`/`79`, grants, credentials, and source/person links were
+not changed by provisioning or cleanup. No backfill, transaction resolution,
+internal-transfer matching, business event, or ledger posting was performed.
+The next development step is automatic fail-closed identity resolution for
+new ingested transactions containing proven references. Controlled real-bank
+E2E must wait until that code slice is merged and deployed.
 
 ## Read next when needed
 
