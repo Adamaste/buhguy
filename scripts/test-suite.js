@@ -54,6 +54,7 @@ const postgresFiles = [
   'tests/bank-device-auth-postgres.integration.test.js',
   'tests/bank-account-resolution-postgres.integration.test.js',
   'tests/historical-bank-account-resolution-postgres.integration.test.js',
+  'tests/chatgpt-accounting-semantic-layer-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(

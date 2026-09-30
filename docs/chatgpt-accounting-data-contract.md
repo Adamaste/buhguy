@@ -30,6 +30,12 @@ chain rather than selecting the more convenient number.
 - `BLOCKED_EXPOSURE` is an explicit accounting result, not a certified acquisition.
 - A fiscal payment is not a confirmed bank payment.
 - Prepayment and settlement must not be counted as two purchases.
+- Bank transactions are immutable normalized evidence. `READY` means the
+  provider parser proved the stored envelope, not that a payer, owner, or
+  accounting entry was proved.
+- Account assignment is read from the explicit transaction-resolution row.
+  Source-person context is not account ownership proof, and a card reference
+  never infers a financial account.
 
 ## View grain and joins
 
@@ -59,6 +65,11 @@ chain rather than selecting the more convenient number.
 | `analytics_purchase_items` | One item of a certified acquisition | `purchase_id`, `item_position`; sum `item_sum` here only |
 | `reconciliation_runs` | One reconciliation run | `id`; results are 1:N |
 | `reconciliation_results` | One reconciliation metric | `run_id -> reconciliation_runs.id` |
+| `bank_sources` | One bank capture source | `id`; source type/display metadata only, without source key |
+| `bank_transactions` | One normalized bank transaction | `id`; one row per transaction; resolution/context columns are 1:1 or aggregated |
+| `bank_transaction_account_resolution` | One account-resolution result | `bank_transaction_id`; UNKNOWN remains visible |
+| `bank_transaction_payment_instrument_resolution` | One payment-instrument result | `bank_transaction_id`; separate from account resolution |
+| `bank_transaction_person_context` | One aggregated source-person context | `bank_transaction_id`; context only, never account ownership |
 
 ## Canonical traversals
 
@@ -70,6 +81,32 @@ chain rather than selecting the more convenient number.
 6. Purchase to items: `analytics_purchases.purchase_id = analytics_purchase_items.purchase_id`.
 7. FNS reference to canonical receipt: `fns_source_receipt_refs.receipt_id = receipts.id` when status is `RESOLVED`.
 8. Person to source to observations: `persons.id = fns_source_person.person_id`, `fns_source_person.fns_source_id = fns_sources.id`, then `receipt_source_observations.fns_source_id = fns_sources.id`.
+9. Bank transaction to normalized evidence: `bank_transactions.id = bank_transaction_account_resolution.bank_transaction_id` and the analogous payment-instrument/context views. Do not join bank source-person rows directly to transaction amounts; use the aggregated context view to avoid fan-out.
+
+## Bank assistant semantics
+
+The transaction view exposes `event_type`, `direction`, `amount`, `currency`,
+`normalization_status`, `normalization_version`, and `evidence_quality`. It
+also exposes explicit account and payment-instrument resolution states,
+  safe display labels only for resolved identities, relation-safe owner and
+  authorized-user person ids, and aggregated source-person context. Unresolved
+  values remain visible as `UNKNOWN` or NULL rather than
+being assigned to a person.
+
+The current provider-operation evidence envelope is:
+
+| Provider | Incoming / CREDIT | Outgoing / DEBIT |
+| --- | --- | --- |
+| Sber (`ru.sberbankmobile`) | PROVEN: current v3 envelope, including Person 1 account `0271` path | NOT_PROVEN |
+| T-Bank (`com.idamob.tinkoff.android`) | NOT_PROVEN | NOT_PROVEN |
+| Alfa (`ru.alfabank.mobile.android`) | NOT_PROVEN | NOT_PROVEN |
+| Yandex (`com.yandex.bank`) | PROVEN only to the extent supported by the deployed v1 parser/evidence | NOT_PROVEN |
+| Ozon Finance (`ru.ozon.fintech.finance`) | NOT_PROVEN | NOT_PROVEN |
+| VTB (`ru.vtb24.mobilebanking.android`) | NOT_PROVEN | NOT_PROVEN |
+
+This matrix is an evidence-routing guide, not a promise that every provider
+currently reaches `READY`. Unsupported or ambiguous envelopes remain
+`PARTIAL`/`UNKNOWN` and are not promoted by assistant queries.
 
 `FNS_DETAIL_UNAVAILABLE` means the reference exists but detail evidence is
 unavailable; it must not be silently converted into a missing or zero receipt.
