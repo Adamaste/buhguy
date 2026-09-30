@@ -88,9 +88,9 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.equal(rows[0].event_type, 'INCOMING_TRANSFER');
     assert.equal(rows[0].direction, 'CREDIT');
     assert.equal(rows[0].currency, 'RUB');
-    assert.deepEqual(rows[0].financial_account_owner_person_ids.map(Number), [Number(persons[0].id)]);
-    assert.deepEqual(rows[0].financial_account_authorized_user_person_ids.map(Number), [Number(persons[1].id)]);
-    assert.deepEqual(rows[0].source_context_person_ids.map(Number).sort((a, b) => a - b), persons.map((p) => Number(p.id)).sort((a, b) => a - b));
+    assert.deepEqual(rows[0].financial_account_owner_person_ids.map(String), [String(persons[0].id)]);
+    assert.deepEqual(rows[0].financial_account_authorized_user_person_ids.map(String), [String(persons[1].id)]);
+    assert.deepEqual(rows[0].source_context_person_ids.map(String).sort(), persons.map((p) => String(p.id)).sort());
     assert.equal(rows[1].account_resolution_state, 'UNKNOWN');
     assert.equal(rows[1].financial_account_id, null);
     assert.equal(rows[1].direction, 'DEBIT');
@@ -98,8 +98,8 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.equal(rows[2].financial_account_id, null);
     assert.equal(rows[2].payment_instrument_resolution_state, 'EXACT');
     assert.ok(rows[2].payment_instrument_id);
-    assert.deepEqual(rows[2].payment_instrument_owner_person_ids.map(Number), [Number(persons[0].id)]);
-    assert.deepEqual(rows[2].payment_instrument_authorized_user_person_ids.map(Number), [Number(persons[1].id)]);
+    assert.deepEqual(rows[2].payment_instrument_owner_person_ids.map(String), [String(persons[0].id)]);
+    assert.deepEqual(rows[2].payment_instrument_authorized_user_person_ids.map(String), [String(persons[1].id)]);
 
     const grants = (await pool.query(`SELECT
       has_table_privilege('chatgpt_reader','chatgpt_accounting.bank_transactions','SELECT') AS semantic_select,
