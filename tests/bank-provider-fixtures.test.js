@@ -21,6 +21,11 @@ const loadSberV2Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadSberV3Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'sber', 'evidence-v3.json'),
+  'utf8',
+));
+
 test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
   for (const [name, provider] of providers) {
     const fixture = await loadFixture(name);
@@ -38,7 +43,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json'] : ['evidence-v1.json'];
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json'] : ['evidence-v1.json'];
     for (const version of versions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
       assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
@@ -57,4 +62,16 @@ test('Sber v2 fixture records the exact checkmark envelope separately', async ()
   assert.equal(checkmark.observationCount, 1);
   assert.equal(checkmark.syntheticPayload.title, '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ');
   assert.equal(referenceOnly.readyCapable, false);
+});
+
+test('Sber v3 fixture records only the current canonical envelope', async () => {
+  const fixture = await loadSberV3Fixture();
+  const current = fixture.clusters.find((cluster) => cluster.id === 'sber-incoming-transfer-v3-current');
+  assert.equal(fixture.provider, 'ru.sberbankmobile');
+  assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v3');
+  assert.equal(fixture.controlledIncomingObservationCount, 2);
+  assert.equal(current.observationCount, 2);
+  assert.equal(current.readyCapable, true);
+  assert.match(current.titleEnvelope, /^Перевод по СБП от <sender>\.$/u);
+  assert.match(current.bodyEnvelope, /Баланс:/u);
 });

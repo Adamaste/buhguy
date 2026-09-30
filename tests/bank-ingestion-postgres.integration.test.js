@@ -79,7 +79,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     const sberEvent = {
       ...event,
       sourceEventId: 'evt-sber-incoming',
-      payload: { title: '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 123 ₽ — Теперь у вас: 6 789,01 ₽ Плат. счёт •• 0000' },
+      payload: { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' },
       ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', deviceType: 'android', schemaVersion: '1' },
     };
     const sberCreated = await ingestBankEvent(pool, sberEvent);
@@ -87,11 +87,13 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
     assert.equal(sberCreated.normalization.direction, 'CREDIT');
     assert.equal(sberCreated.normalization.amount, '123.00');
+    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v3');
+    assert.equal(sberCreated.normalization.accountReference, '0000');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
     assert.equal(sberReplay.status, 'duplicate');
     assert.equal(sberReplay.observationId, Number(sberBefore.id));
-    const sberConflict = await ingestBankEvent(pool, { ...sberEvent, payload: { ...sberEvent.payload, description: '+ 124 ₽ — Теперь у вас: 6 790,01 ₽ Плат. счёт •• 0000' } });
+    const sberConflict = await ingestBankEvent(pool, { ...sberEvent, payload: { ...sberEvent.payload, description: '+ 124 ₽ — Баланс: 6 790,01 ₽ Плат. счёт •• 0000' } });
     assert.deepEqual(sberConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
     const sberAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     assert.deepEqual(sberAfter, sberBefore);

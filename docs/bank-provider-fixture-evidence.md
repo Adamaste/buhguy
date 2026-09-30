@@ -14,11 +14,11 @@ Reviewed providers:
 - Ozon Finance: `ru.ozon.fintech.finance`
 
 The campaign proved transport through callback, Room, delivery, and backend for
-these providers. Sber evidence contains three historical/proven v1 incoming
-observations plus the separate controlled observation 128 supporting the v2
-checkmark envelope, for four controlled incoming observations in total.
-Observation 129 is a separate unsupported reference-only/summary event; other
-Sber notification families remain fail-closed.
+these providers. Sber evidence preserves the older v1/v2 envelopes as
+historical evidence and separately records the two newest controlled primary
+samples, observations 147 and 154, for the current v3 envelope. Their
+reference-only companions 149 and 152 remain unsupported and are never
+combined with a primary event.
 
 ## Fixture policy
 
@@ -38,24 +38,26 @@ families until a safe positive format is captured.
 
 ### Sber
 
-The three historical/proven v1 incoming observations share the original
-title/body structures. Controlled observation 128 is a fourth incoming sample
-with the exact sanitized title envelope `✅ Поступление от <sender>` and the
-same strict body contract: an incoming marker, a plus sign, an integer RUB-symbol
-amount, a separator and a distinct balance field. The first monetary token is
-the transaction amount; the second monetary field is ignored. The semantic
-result is `INCOMING_TRANSFER` / `CREDIT` / `RUB`, and event time comes from
-Android `StatusBarNotification.postTime`, not notification text.
+The three historical/proven v1 incoming observations and observation 128 remain
+immutable historical evidence. They are not active runtime formats under v3.
+The two newest controlled primary samples (observations 147 and 154) establish
+the current exact envelope:
 
-The runtime parser is scoped to provider `ru.sberbankmobile` with adapter
-`android-notification` and is now versioned as `sber-bank-normalizer-v2`. In
-addition to the two v1 title forms, the controlled observation 128 proved the
-exact sanitized title envelope `✅ Поступление от <sender>`. Sender, merchant,
-and card references are not extracted or displayed. An account reference is
-extracted only from the exact proven payment-account suffix `Плат. счёт ••dddd`
-and canonicalized as `MASKED_ACCOUNT`; no other account/card inference is
-performed. Related transfer/summary, reference-only, ambiguous, malformed, and
-unsupported notifications remain `UNKNOWN`/`PARTIAL`.
+- title: `Перевод по СБП от <sender>.`;
+- body: `+ <integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>`;
+- the first monetary token is the transaction amount;
+- the second monetary field is a distinct balance and is ignored;
+- semantic result: `INCOMING_TRANSFER` / `CREDIT` / `RUB`;
+- event time comes from Android `StatusBarNotification.postTime`, not text.
+
+The active runtime parser is scoped to provider `ru.sberbankmobile` with adapter
+`android-notification`, schema version `1`, and version
+`sber-bank-normalizer-v3`. Sender, merchant, and card references are not
+extracted or displayed. The account reference is extracted only from the exact
+payment-account suffix `Плат. счёт ••dddd` and canonicalized as
+`MASKED_ACCOUNT`; no other account/card inference is performed. Reference-only,
+summary, ambiguous, malformed, and unsupported notifications remain
+`UNKNOWN`/`PARTIAL`.
 
 ### Ozon Finance
 
@@ -77,7 +79,8 @@ semantics remain unchanged. Only the scoped Sber Android parser is registered.
 
 ## Gate
 
-`PARSER_V2_POSSIBLE=YES` for the exact controlled Sber incoming-transfer
-envelopes recorded in `evidence-v2.json` only. Existing v1 rows remain
-immutable; no historical backfill or parser inference for other Sber formats is
-allowed. T-Bank and Ozon remain fail-closed.
+`PARSER_V3_POSSIBLE=YES` for the exact current controlled Sber
+incoming-transfer envelope recorded in `evidence-v3.json` only. Existing v1/v2
+fixtures and rows remain immutable historical evidence; no historical backfill
+or parser inference for those formats is allowed. T-Bank and Ozon remain
+fail-closed.
