@@ -107,7 +107,10 @@ WHERE bt.occurred_at >= $from
   AND bt.direction = 'DEBIT'
   AND bt.amount IS NOT NULL
   AND bt.currency IS NOT NULL
-  AND $person_id = ANY(COALESCE(bt.payment_instrument_owner_person_ids, '{}'::bigint[]))
+  AND (
+    $person_id = ANY(COALESCE(bt.financial_account_owner_person_ids, '{}'::bigint[]))
+    OR $person_id = ANY(COALESCE(bt.payment_instrument_owner_person_ids, '{}'::bigint[]))
+  )
 ORDER BY bt.occurred_at, bt.id;
 ```
 

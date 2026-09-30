@@ -71,7 +71,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     const cardTransaction = (await pool.query(
       `INSERT INTO bank_transactions
         (observation_id, occurred_at, amount, currency, direction, normalization_status, normalization_version, evidence_quality, event_type)
-       VALUES ($1, NOW(), 10.00, 'RUB', 'DEBIT', 'UNKNOWN', 'sber-bank-normalizer-v3', 'EXACT', 'UNKNOWN')
+       VALUES ($1, NOW(), 10.00, 'RUB', 'DEBIT', 'READY', 'sber-bank-normalizer-v3', 'EXACT', 'UNKNOWN')
        RETURNING id`, [cardObservation.id],
     )).rows[0];
     await pool.query("INSERT INTO payment_instrument_person_relations(payment_instrument_id,person_id,relation_type,provenance,reason) VALUES ($1,$2,'OWNER','SYNTHETIC','Synthetic card-only test'),($1,$3,'AUTHORIZED_USER','SYNTHETIC','Synthetic card-only test')", [instrument.id, persons[0].id, persons[1].id]);
@@ -130,9 +130,14 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     const ownedDebit = (await pool.query(`
       SELECT bt.id, bt.account_resolution_state, bt.financial_account_id
       FROM chatgpt_accounting.bank_transactions AS bt
-      WHERE bt.normalization_status = 'UNKNOWN'
+      WHERE bt.normalization_status = 'READY'
         AND bt.direction = 'DEBIT'
-        AND $1 = ANY(bt.payment_instrument_owner_person_ids)`, [persons[0].id])).rows;
+        AND bt.amount IS NOT NULL
+        AND bt.currency IS NOT NULL
+        AND (
+          $1 = ANY(COALESCE(bt.financial_account_owner_person_ids, '{}'::bigint[]))
+          OR $1 = ANY(COALESCE(bt.payment_instrument_owner_person_ids, '{}'::bigint[]))
+        )`, [persons[0].id])).rows;
     assert.deepEqual(ownedDebit, [{ id: rows[2].id, account_resolution_state: 'UNKNOWN', financial_account_id: null }]);
 
     const unresolved = (await pool.query(`
