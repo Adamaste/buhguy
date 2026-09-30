@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `7395167264dd9f91088de29513fa3f65b42e8bc9`
-- Current phase: Sber normalizer v3 is being reviewed for the two newest controlled current-format samples
-- Current blocker: no production deployment or historical backfill; the v3 PR must pass review and CI before promotion
-- Production artifact: exact master `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`, archive SHA-256 `257ac8a1fda22c9abce54f63466ef4a41a1249a466b72c0d6cfa8cc5f38b9dac`
+- Current master: `bfdeea3e5cc62ff65c256725b25b5e1e33027856`
+- Current phase: Sber normalizer v3 is deployed and the final Person 1 fresh-ingestion E2E is complete
+- Current blocker: no blocker for the proven Person 1 Sber path; no historical backfill or accounting side effects are permitted
+- Production artifact: exact master `bfdeea3e5cc62ff65c256725b25b5e1e33027856`, archive SHA-256 `360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review the strict v3 parser PR, then deploy only after approval. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: review the handoff update, then build the Bank Assistant read-only semantic layer. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
 
 ## Sber normalizer v3 current-format evidence
 
@@ -47,6 +47,34 @@ It accepts only this current envelope. Previous v1/v2 Sber envelopes remain
 documented and preserved as immutable historical evidence, but are not active
 runtime formats under v3. No historical `bank_transactions` are rewritten and
 no backfill is permitted.
+
+## Sber normalizer v3 production deployment and final Person 1 E2E
+
+The v3 runtime was promoted from exact master
+`bfdeea3e5cc62ff65c256725b25b5e1e33027856` using an immutable 269-file
+runtime artifact with archive SHA-256
+`360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`.
+The installed manifest and service path match the exact release. Schema
+`016_runtime_identity_lookup_grants.sql` remained current; no migration,
+grant, credential, or Android configuration change was performed.
+
+The final fresh Person 1 ingestion passed without historical replay or
+backfill:
+
+- primary observation `161` and transaction `128` were `READY`,
+  `INCOMING_TRANSFER`, `CREDIT`, RUB, and `sber-bank-normalizer-v3`;
+- the proven payment-account evidence was `MASKED_ACCOUNT ••0271`;
+- ingestion-time resolution was `EXACT` to `financial_account_id=1` with
+  provenance `OBSERVED_PROVIDER_REFERENCE`;
+- companion observation `164` and transaction `129` remained independent
+  `PARTIAL`/`UNKNOWN` evidence and were not combined with the primary event.
+
+Historical observations and transactions remained unchanged. No manual or
+historical resolution, INTERNAL_TRANSFER, business event, ledger posting,
+identity inventory change, grant change, or credential change was performed.
+The next phase is the Bank Assistant read-only semantic layer for the usable
+MVP. Person 2/3 onboarding and outgoing-transfer parser work remain out of
+scope.
 
 ## Sber final E2E fail-closed and corpus forensics
 
@@ -78,12 +106,9 @@ evidence did not justify an exact v3 grammar at that time: a broad title
 positive. This is retained as historical forensic context; the two later
 controlled samples are documented in the current v3 section above.
 
-The minimum next evidence is one additional controlled Sber incoming event
-with a deliberately distinct transaction amount and resulting balance, while
-capturing the complete notification envelope locally. It must establish a
-repeatable exact title boundary and distinguish the transaction amount from
-the balance field without relying on the separate summary event. Until then,
-observation `134` remains correctly fail-closed.
+This remains historical forensic context. The later controlled v3 samples and
+the final fresh-ingestion E2E establish the active current-format contract;
+observation `134` remains correctly fail-closed and is not backfilled.
 
 ## Sber normalization v2 production deployment
 
