@@ -1,0 +1,38 @@
+{
+  "provider": "ru.sberbankmobile",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "sber-bank-normalizer-v3",
+  "controlledIncomingObservationCount": 2,
+  "clusters": [
+    {
+      "id": "sber-incoming-transfer-v3-current",
+      "observationCount": 2,
+      "titleEnvelope": "Перевод по СБП от <sender>.",
+      "bodyEnvelope": "+ <integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>",
+      "syntheticPayload": {
+        "title": "Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.",
+        "description": "+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000",
+        "text": "+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000"
+      },
+      "readyCapable": true,
+      "evidence": {
+        "eventType": "INCOMING_TRANSFER",
+        "direction": "CREDIT",
+        "eventTimeSource": "ANDROID_POST_TIME",
+        "accountReferenceKind": "MASKED_ACCOUNT",
+        "historicalRuntimeFormats": "V1_AND_V2_PRESERVED_AS_NON_ACTIVE_EVIDENCE"
+      }
+    }
+  ],
+  "acceptance": {
+    "activeRuntimeFormat": "ONLY_V3_CURRENT_CANONICAL_ENVELOPE",
+    "historicalFixtures": "V1_AND_V2_PRESERVED_IMMUTABLE_EVIDENCE",
+    "negativeNearMisses": "REQUIRED_FAIL_CLOSED",
+    "providerIsolation": "REQUIRED",
+    "adapterIsolation": "REQUIRED",
+    "schemaVersionIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}

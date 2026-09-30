@@ -17,15 +17,36 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `7387eaf0b4cd6133cf3a40699e44944f85a36135`
-- Current phase: Sber normalizer v2 is deployed; the final controlled E2E was retained fail-closed and its corpus is under read-only forensics
-- Current blocker: the exact Sber title and balance grammar of observation 134 is not proven by an existing structural cluster
+- Current master: `7395167264dd9f91088de29513fa3f65b42e8bc9`
+- Current phase: Sber normalizer v3 is being reviewed for the two newest controlled current-format samples
+- Current blocker: no production deployment or historical backfill; the v3 PR must pass review and CI before promotion
 - Production artifact: exact master `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`, archive SHA-256 `257ac8a1fda22c9abce54f63466ef4a41a1249a466b72c0d6cfa8cc5f38b9dac`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: obtain one additional controlled Person 1 Sber incoming-transfer capture with a distinct amount/balance shape before proposing v3. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: review the strict v3 parser PR, then deploy only after approval. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+
+## Sber normalizer v3 current-format evidence
+
+The two newest controlled primary Sber incoming observations are `147` and
+`154`; their separate reference-only companions are `149` and `152`. The two
+primary samples share one privacy-safe structural family:
+
+- title: `Перевод по СБП от <sender>.` with an exact final period;
+- body: `+ <integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>`;
+- the first integer RUB token is the transaction amount;
+- the grouped comma-decimal field is a separate balance and is ignored;
+- the payment-account suffix is canonicalized as `MASKED_ACCOUNT`;
+- event time remains the Android notification `postTime` carried as envelope
+  `eventTime`.
+
+The active parser change is `sber-bank-normalizer-v3`, scoped to provider
+`ru.sberbankmobile`, adapter `android-notification`, and schema version `1`.
+It accepts only this current envelope. Previous v1/v2 Sber envelopes remain
+documented and preserved as immutable historical evidence, but are not active
+runtime formats under v3. No historical `bank_transactions` are rewritten and
+no backfill is permitted.
 
 ## Sber final E2E fail-closed and corpus forensics
 
@@ -52,10 +73,10 @@ Observation `134` is a singleton structural cluster (`[134]`) with one
 timestamp shape, one amount shape, one balance shape, and one title dynamic
 value. Existing proven Sber incoming observations (`72`, `75`, `79`, and
 `128`) do not establish the same title envelope. Therefore the current
-evidence does not justify an exact v3 grammar: a broad title `contains`
-heuristic or a guessed balance rule would risk a false positive. The parser
-remains `sber-bank-normalizer-v2`; no v3 implementation, fixture, or test was
-added.
+evidence did not justify an exact v3 grammar at that time: a broad title
+`contains` heuristic or a guessed balance rule would have risked a false
+positive. This is retained as historical forensic context; the two later
+controlled samples are documented in the current v3 section above.
 
 The minimum next evidence is one additional controlled Sber incoming event
 with a deliberately distinct transaction amount and resulting balance, while
@@ -83,12 +104,11 @@ and `79`, transaction projections `101`/`102`, Person 1 identity/reference
 inventory, and resolution rows were unchanged. No backfill, replay persistence,
 ledger posting, business event, or internal-transfer matching was performed.
 
-The next step is one controlled Person 1 incoming transfer to Sber account
-`••0271`, followed by normal ingestion validation. T-Bank and Ozon parser
-coverage remain future incremental work; Alfa and VTB remain deferred. Provider
-parser research for the proven Sber v2 envelope no longer blocks usable MVP.
+The next step is review and controlled deployment of the v3 current-format
+parser. T-Bank and Ozon parser coverage remain future incremental work; Alfa
+and VTB remain deferred. No historical v1/v2 row is backfilled.
 
-## Sber normalizer v2 evidence slice
+## Sber normalizer v2 historical evidence slice
 
 The controlled Person 1 E2E produced observation 128 with provider
 `ru.sberbankmobile`, a valid Android post time, and a body matching the proven
@@ -100,11 +120,10 @@ the newly proven exact envelope `✅ Поступление от <sender>`. Obse
 was separate reference-only/summary evidence with no title/body and remains
 unsupported.
 
-The feature branch for Sber normalizer v2 adds only that exact checkmark title
-envelope, keeps all existing body gates and negative cases, and bumps future
-normalized projections to `sber-bank-normalizer-v2`. Existing v1 rows remain
-immutable; no backfill or production deployment has occurred. After review and
-deployment, repeat one controlled Sber incoming-transfer E2E.
+The feature branch for Sber normalizer v2 added only that exact checkmark title
+envelope. Those v1/v2 formats remain immutable historical evidence and are no
+longer active under the current v3 contract. No historical backfill is
+performed.
 
 ## Automatic identity resolution production deployment
 

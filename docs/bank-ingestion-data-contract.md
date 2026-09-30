@@ -77,18 +77,23 @@ Transport authentication is intentionally a separate future task because the
 repository does not currently define a suitable internal API authentication
 contract.
 
-## Sber Android normalization v2
+## Sber Android normalization v3
 
-The provider-specific `sber-bank-normalizer-v2` applies only when ingestion
-metadata identifies provider `ru.sberbankmobile`, adapter
-`android-notification`, and schema version `1`. Its current evidence set is
-four controlled incoming observations: three historical/proven v1 samples plus
-observation 128 as the separate v2 checkmark sample. It accepts the two
-existing exact title forms and the newly proven exact checkmark title envelope
-`✅ Поступление от <sender>`. The first integer-ruble RUB-symbol
-amount after the incoming marker is normalized as `INCOMING_TRANSFER` / `CREDIT`
-with `RUB`. A second monetary field in the same notification is treated as a
-distinct balance field and is not extracted.
+The active provider-specific `sber-bank-normalizer-v3` applies only when
+ingestion metadata identifies provider `ru.sberbankmobile`, adapter
+`android-notification`, and schema version `1`. Two newest controlled primary
+incoming observations establish the only active current envelope:
+
+`Перевод по СБП от <sender>.`
+
+with body:
+
+`+ <integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>`
+
+The first integer-ruble RUB-symbol amount after the incoming marker is
+normalized as `INCOMING_TRANSFER` / `CREDIT` with `RUB`. The grouped
+comma-decimal field is a distinct balance and is not extracted as the
+transaction amount.
 
 `occurredAt` comes from the envelope `eventTime`, which Android supplies from
 `StatusBarNotification.postTime`; the parser never parses a timestamp from
@@ -99,6 +104,7 @@ payment-account suffix `Плат. счёт ••dddd` and canonicalized as
 Summary/reference-only, ambiguous, malformed, unsupported, and
 provider/adapter-mismatched notifications remain `UNKNOWN` or `PARTIAL`.
 
-The raw observation remains immutable. Existing persisted v1 rows remain
-unchanged; no historical backfill is performed. Deduplication and source-event
-conflict behavior remain the existing ingestion contract.
+The older v1/v2 envelopes remain historical evidence only and are intentionally
+not accepted by the active v3 parser. Raw observations and persisted historical
+rows remain immutable; no historical backfill is performed. Deduplication and
+source-event conflict behavior remain the existing ingestion contract.
