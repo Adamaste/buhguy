@@ -17,15 +17,39 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `ccd397245b527c270bf8f53eeddceaf13145b868`
-- Current phase: Sber normalizer v2 is implemented on a review branch and is not deployed
-- Current blocker: controlled Person 1 E2E observation 128 exposed an exact checkmark title envelope rejected by deployed v1; review and deploy v2 before repeating one controlled Sber E2E
-- Production artifact: exact master `04e5dc3edcf9846a78e04216e9926244538e3105`, archive SHA-256 `207330b8d1b2d4a7b2d500ea8d42e4072e43ba47b9c452e15b7895dee212b317`
+- Current master: `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`
+- Current phase: Sber normalizer v2 is deployed and production-validated by read-only replay
+- Current blocker: none; the next step is one controlled Person 1 Sber incoming-transfer E2E using the deployed v2 runtime
+- Production artifact: exact master `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`, archive SHA-256 `257ac8a1fda22c9abce54f63466ef4a41a1249a466b72c0d6cfa8cc5f38b9dac`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review/merge/deploy the Sber v2 parser branch, then repeat one controlled Person 1 Sber incoming-transfer E2E. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: repeat one controlled Person 1 Sber incoming-transfer E2E. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+
+## Sber normalization v2 production deployment
+
+The Sber v2 runtime was deployed from exact master
+`ccefe24282bcba4e519e0f27feb7e29e33fd95f0` using the immutable 267-file
+runtime artifact with archive SHA-256
+`257ac8a1fda22c9abce54f63466ef4a41a1249a466b72c0d6cfa8cc5f38b9dac`.
+The installed release manifest matches the staged artifact and the active
+systemd service runs from the exact release. Schema `016_runtime_identity_lookup_grants.sql`
+remained current; no migration, grant, credential, or configuration change was
+performed.
+
+Read-only in-memory replay through the deployed code passed for observation
+`128`: `READY`, `INCOMING_TRANSFER`, `CREDIT`, RUB, amount present, and
+`sber-bank-normalizer-v2`. Observation `129` remained `PARTIAL`/`UNKNOWN`
+without a reference and was not promoted. Historical observations `72`, `75`,
+and `79`, transaction projections `101`/`102`, Person 1 identity/reference
+inventory, and resolution rows were unchanged. No backfill, replay persistence,
+ledger posting, business event, or internal-transfer matching was performed.
+
+The next step is one controlled Person 1 incoming transfer to Sber account
+`••0271`, followed by normal ingestion validation. T-Bank and Ozon parser
+coverage remain future incremental work; Alfa and VTB remain deferred. Provider
+parser research for the proven Sber v2 envelope no longer blocks usable MVP.
 
 ## Sber normalizer v2 evidence slice
 
