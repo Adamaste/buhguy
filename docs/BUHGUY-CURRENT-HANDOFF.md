@@ -17,20 +17,53 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `0c1971d95f26678026da6b3c524469c1a5256a81`
-- Current phase: Person 1 account/card identity inventory is provisioned and validated in production
-- Current blocker: automatic fail-closed identity resolution is implemented on a feature branch and awaits review, CI, and a later production deployment; production remains on the historical-resolution release
-- Production artifact: exact master `982afaaf076c2ff47526485d85fe185569c7cdf2`, archive SHA-256 `4468588f0afd47f7dfea2c6e16c0b0009c11b12141de0f0e530c7e0e9bbff46f`
+- Current master: `04e5dc3edcf9846a78e04216e9926244538e3105`
+- Current phase: automatic fail-closed identity resolution is deployed and validated for new bank ingestion
+- Current blocker: no production blocker; the next controlled step is Person 1 E2E validation
+- Production artifact: exact master `04e5dc3edcf9846a78e04216e9926244538e3105`, archive SHA-256 `207330b8d1b2d4a7b2d500ea8d42e4072e43ba47b9c452e15b7895dee212b317`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review and, only after approval, deploy automatic fail-closed identity resolution for new ingestion. Do not start controlled Person 1 E2E, Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: run the exact controlled Person 1 E2E and verify new-reference resolution. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
 
-## Automatic new-ingestion identity resolution (proposed)
+## Automatic identity resolution production deployment
 
-The feature branch for this milestone resolves only new bank transactions and
-does not change existing production rows. A unique provider-scoped account
+PR #41 is merged in master commit
+`04e5dc3edcf9846a78e04216e9926244538e3105`. The immutable production runtime
+artifact was built from that exact commit with archive SHA-256
+`207330b8d1b2d4a7b2d500ea8d42e4072e43ba47b9c452e15b7895dee212b317`.
+
+Production validation completed successfully:
+
+- the release manifest matched the staged and installed runtime files;
+- `finance-bank-ingestion.service` runs from the exact release and `/healthz`
+  returns HTTP 200;
+- migration `016_runtime_identity_lookup_grants.sql` was applied through
+  `scripts/migrate-prod-only.mjs` using the administrative PostgreSQL peer path;
+- the FNS timer remains `enabled/active`, while the sync service is inactive;
+- observations and bank transactions remain `98/98` after deployment;
+- account-resolution rows remain `22` (`RECONCILED=3`, `UNKNOWN=19`), with
+  logical coverage `98 total / 3 resolved / 95 unresolved` and invariant PASS;
+- payment-instrument resolution rows remain `0` and historical observations
+  `72/75/79` remain reconciled by historical replay provenance;
+- runtime identity lookup grants are present, forbidden bank provisioning and
+  broad bank transaction grants remain denied, and unrelated grants were not
+  changed.
+
+No historical backfill, new bank operation, phone use, ledger posting,
+internal-transfer matching, business event, credential mutation, or source
+mapping change was performed. The two additional pre-deploy observations were
+verified as ordinary runtime notification ingestions with `UNKNOWN` and
+`INGESTION_DEFAULT` resolution.
+
+The next operational step is a controlled Person 1 E2E using existing
+provisioned evidence. Do not infer ownership from source context alone.
+
+## Automatic new-ingestion identity resolution (deployed)
+
+The deployed runtime resolves only new bank transactions and does not change
+existing production rows. A unique provider-scoped account
 reference can produce `EXACT`; no reference, zero candidates, multiple
 candidates, card-only evidence, or zero/multiple accounting scopes remain
 `UNKNOWN` with explicit provenance. Card references may resolve a payment
