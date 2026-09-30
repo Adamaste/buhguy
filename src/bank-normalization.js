@@ -5,7 +5,7 @@ const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
-const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} .'-]+\.$/u;
+const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
@@ -103,7 +103,7 @@ export function normalizeSberBankEvent(input) {
   const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERN.test(title);
   const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
   const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
-  const accountReferenceMatch = afterAmount.match(/^—\s*Баланс:\s*\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*(\d{4})\b/u);
+  const accountReferenceMatch = afterAmount.match(/^—\s*Баланс:\s*\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*(\d{4})$/u);
   const hasIncomingStructure = Boolean(accountReferenceMatch);
   const hasIncomingMarker = hasIncomingTitle && body.startsWith('+');
   const amount = amountMatch ? `${amountMatch[1]}.00` : null;
