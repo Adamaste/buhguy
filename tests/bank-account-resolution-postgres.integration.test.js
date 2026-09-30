@@ -78,7 +78,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     assert.equal((await pool.query('SELECT resolution_state FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [cardEvent.transactionId])).rows[0].resolution_state, 'UNKNOWN');
     const uniqueCardEvent = await ingestBankEvent(pool, event('resolution-unique-card', '27.00', '****4444', sourceKey, 'MASKED_CARD'));
     assert.equal(uniqueCardEvent.identityResolution.paymentInstrument.resolutionState, 'EXACT');
-    assert.equal(uniqueCardEvent.identityResolution.paymentInstrument.paymentInstrumentId, uniqueCard.id);
+    assert.equal(uniqueCardEvent.identityResolution.paymentInstrument.paymentInstrumentId, Number(uniqueCard.id));
     assert.equal(uniqueCardEvent.identityResolution.account.resolutionState, 'UNKNOWN');
     const unmatched = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: third.transactionId });
     assert.equal(unmatched.resolution_state, 'UNKNOWN');
