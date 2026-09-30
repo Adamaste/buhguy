@@ -17,15 +17,52 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`
-- Current phase: Sber normalizer v2 is deployed and production-validated by read-only replay
-- Current blocker: none; the next step is one controlled Person 1 Sber incoming-transfer E2E using the deployed v2 runtime
+- Current master: `7387eaf0b4cd6133cf3a40699e44944f85a36135`
+- Current phase: Sber normalizer v2 is deployed; the final controlled E2E was retained fail-closed and its corpus is under read-only forensics
+- Current blocker: the exact Sber title and balance grammar of observation 134 is not proven by an existing structural cluster
 - Production artifact: exact master `ccefe24282bcba4e519e0f27feb7e29e33fd95f0`, archive SHA-256 `257ac8a1fda22c9abce54f63466ef4a41a1249a466b72c0d6cfa8cc5f38b9dac`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: repeat one controlled Person 1 Sber incoming-transfer E2E. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: obtain one additional controlled Person 1 Sber incoming-transfer capture with a distinct amount/balance shape before proposing v3. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+
+## Sber final E2E fail-closed and corpus forensics
+
+The final controlled Person 1 Sber E2E was intentionally retained
+fail-closed. Observation `134` and its transaction projection were persisted
+as `PARTIAL`/`UNKNOWN`; observation `135` was a separate reference-only or
+summary event and was not combined with `134`. No manual resolution, backfill,
+accounting event, identity change, or other state mutation was performed
+beyond ordinary ingestion of the two notifications.
+
+The read-only corpus scan covered 17 immutable Sber observations. Observation
+`134` has the following privacy-safe structural fingerprint:
+
+- title: one unproven literal envelope with one or more non-static segments;
+  no proven incoming marker, exact fixed prefix, or exact fixed suffix can be
+  safely isolated from this singleton;
+- body: incoming marker, integer RUB-symbol amount, a separate grouped
+  comma-decimal balance field, and the exact payment-account marker;
+- account reference: the already established `MASKED_ACCOUNT` suffix `0271`;
+- punctuation: the title contains a period code point, but that punctuation
+  does not establish a semantic title boundary.
+
+Observation `134` is a singleton structural cluster (`[134]`) with one
+timestamp shape, one amount shape, one balance shape, and one title dynamic
+value. Existing proven Sber incoming observations (`72`, `75`, `79`, and
+`128`) do not establish the same title envelope. Therefore the current
+evidence does not justify an exact v3 grammar: a broad title `contains`
+heuristic or a guessed balance rule would risk a false positive. The parser
+remains `sber-bank-normalizer-v2`; no v3 implementation, fixture, or test was
+added.
+
+The minimum next evidence is one additional controlled Sber incoming event
+with a deliberately distinct transaction amount and resulting balance, while
+capturing the complete notification envelope locally. It must establish a
+repeatable exact title boundary and distinguish the transaction amount from
+the balance field without relying on the separate summary event. Until then,
+observation `134` remains correctly fail-closed.
 
 ## Sber normalization v2 production deployment
 
