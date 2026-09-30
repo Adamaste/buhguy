@@ -173,16 +173,86 @@ CREATE OR REPLACE VIEW chatgpt_accounting.bank_sources AS
 SELECT id, source_key, source_type, display_name, enabled, created_at, updated_at
 FROM public.bank_sources;
 
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_transaction_account_resolution AS
+SELECT bt.id AS bank_transaction_id,
+       COALESCE(ar.resolution_state, 'UNKNOWN') AS resolution_state,
+       ar.financial_account_id,
+       CASE WHEN ar.financial_account_id IS NOT NULL THEN fa.display_name END AS financial_account_display_name,
+       CASE WHEN ar.financial_account_id IS NOT NULL THEN
+         (SELECT array_agg(DISTINCT far.person_id ORDER BY far.person_id)
+          FROM public.financial_account_person_relations far
+          WHERE far.financial_account_id = ar.financial_account_id)
+       END AS financial_account_person_ids,
+       CASE WHEN ar.financial_account_id IS NOT NULL THEN
+         (SELECT array_agg(DISTINCT far.relation_type ORDER BY far.relation_type)
+          FROM public.financial_account_person_relations far
+          WHERE far.financial_account_id = ar.financial_account_id)
+       END AS financial_account_person_relation_types,
+       ar.provenance,
+       ar.reason,
+       ar.resolved_at
+FROM public.bank_transactions bt
+LEFT JOIN public.bank_transaction_account_resolution ar
+  ON ar.bank_transaction_id = bt.id
+LEFT JOIN public.financial_accounts fa
+  ON fa.id = ar.financial_account_id;
+
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_transaction_payment_instrument_resolution AS
+SELECT bt.id AS bank_transaction_id,
+       COALESCE(pr.resolution_state, 'UNKNOWN') AS resolution_state,
+       pr.payment_instrument_id,
+       CASE WHEN pr.payment_instrument_id IS NOT NULL THEN pi.display_name END AS payment_instrument_display_name,
+       pr.provenance,
+       pr.reason,
+       pr.resolved_at
+FROM public.bank_transactions bt
+LEFT JOIN public.bank_transaction_payment_instrument_resolution pr
+  ON pr.bank_transaction_id = bt.id
+LEFT JOIN public.payment_instruments pi
+  ON pi.id = pr.payment_instrument_id;
+
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_transaction_person_context AS
+SELECT bt.id AS bank_transaction_id,
+       beo.bank_source_id,
+       COALESCE(array_agg(DISTINCT bsp.person_id ORDER BY bsp.person_id)
+                FILTER (WHERE bsp.person_id IS NOT NULL), ARRAY[]::BIGINT[]) AS source_context_person_ids,
+       COALESCE(array_agg(DISTINCT bsp.relation_type ORDER BY bsp.relation_type)
+                FILTER (WHERE bsp.relation_type IS NOT NULL), ARRAY[]::TEXT[]) AS source_context_relation_types
+FROM public.bank_transactions bt
+JOIN public.bank_event_observations beo ON beo.id = bt.observation_id
+LEFT JOIN public.bank_source_person bsp ON bsp.bank_source_id = beo.bank_source_id
+GROUP BY bt.id, beo.bank_source_id;
+
 CREATE OR REPLACE VIEW chatgpt_accounting.bank_transactions AS
 SELECT bt.id, bt.observation_id, beo.bank_source_id,
        bs.source_key, bs.source_type, bs.display_name AS source_display_name,
        bt.occurred_at, bt.amount, bt.currency, bt.direction,
        bt.merchant, bt.counterparty,
        bt.normalization_status, bt.normalization_version,
-       bt.evidence_quality, beo.observed_at, beo.event_time
+       bt.evidence_quality, beo.observed_at, beo.event_time,
+       beo.ingestion_metadata->>'provider' AS provider,
+       beo.ingestion_metadata->>'adapter' AS adapter,
+       beo.ingestion_metadata->>'schemaVersion' AS schema_version,
+       bt.event_type,
+       ar.resolution_state AS account_resolution_state,
+       ar.financial_account_id,
+       ar.financial_account_display_name,
+       ar.financial_account_person_ids,
+       ar.financial_account_person_relation_types,
+       pr.resolution_state AS payment_instrument_resolution_state,
+       pr.payment_instrument_id,
+       pr.payment_instrument_display_name,
+       pc.source_context_person_ids,
+       pc.source_context_relation_types
 FROM public.bank_transactions bt
 JOIN public.bank_event_observations beo ON beo.id = bt.observation_id
-JOIN public.bank_sources bs ON bs.id = beo.bank_source_id;
+JOIN public.bank_sources bs ON bs.id = beo.bank_source_id
+JOIN chatgpt_accounting.bank_transaction_account_resolution ar
+  ON ar.bank_transaction_id = bt.id
+JOIN chatgpt_accounting.bank_transaction_payment_instrument_resolution pr
+  ON pr.bank_transaction_id = bt.id
+JOIN chatgpt_accounting.bank_transaction_person_context pc
+  ON pc.bank_transaction_id = bt.id;
 
 COMMENT ON SCHEMA chatgpt_accounting IS
 'Read-only accounting semantic layer for ChatGPT. Select views in this schema in BlazeSQL. Use analytics_* for ordinary analytics and the proof-chain views for audit questions. Never infer payer or owner from FNS source provenance.';
@@ -213,7 +283,10 @@ COMMENT ON VIEW chatgpt_accounting.analytics_purchase_items IS 'Curated item-gra
 COMMENT ON VIEW chatgpt_accounting.reconciliation_runs IS 'Accounting reconciliation run metadata.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_results IS 'Reconciliation metrics and certification status.';
 COMMENT ON VIEW chatgpt_accounting.bank_sources IS 'Bank source metadata without credentials or raw event payloads.';
-COMMENT ON VIEW chatgpt_accounting.bank_transactions IS 'Normalized cash-flow evidence. A bank transaction is not automatically a purchase, receipt, payer, or accounting certification; missing receipt linkage is not an error.';
+COMMENT ON VIEW chatgpt_accounting.bank_transaction_account_resolution IS 'One row per bank transaction with explicit account-resolution state. A resolved account display label and person relations are evidence-backed; UNKNOWN remains visible.';
+COMMENT ON VIEW chatgpt_accounting.bank_transaction_payment_instrument_resolution IS 'One row per bank transaction with separate payment-instrument resolution. Card evidence never infers a financial account.';
+COMMENT ON VIEW chatgpt_accounting.bank_transaction_person_context IS 'One row per bank transaction containing source-person context only. These relations do not prove financial-account ownership.';
+COMMENT ON VIEW chatgpt_accounting.bank_transactions IS 'One row per normalized bank transaction with explicit normalization, resolution, and source-context state. A bank transaction is not automatically a purchase, receipt, payer, or accounting certification.';
 
 COMMENT ON COLUMN chatgpt_accounting.receipts.fns_id IS 'Canonical FNS identity; not a source-person identity.';
 COMMENT ON COLUMN chatgpt_accounting.receipts.total_sum IS 'Fiscal receipt total; do not treat as confirmed cash flow.';
@@ -226,6 +299,9 @@ COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.amount IS 'Certified ac
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchase_items.item_sum IS 'Item-grain amount; do not sum with purchase-grain amounts.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.direction IS 'Explicit bank direction when evidence provides it; UNKNOWN is retained instead of inferred.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.evidence_quality IS 'Quality of normalized evidence, not confidence that the event is a purchase.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.source_context_person_ids IS 'Capture/accounting context only; never use this field as account ownership proof.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.account_resolution_state IS 'EXACT, MANUAL, RECONCILED, or UNKNOWN; only the explicit resolution row determines account assignment.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.payment_instrument_resolution_state IS 'Separate card/instrument evidence state; no card-to-account inference is implied.';
 
 REVOKE ALL ON ALL TABLES IN SCHEMA chatgpt_accounting FROM PUBLIC;
 GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader;
@@ -256,6 +332,9 @@ GRANT SELECT ON
   chatgpt_accounting.reconciliation_runs,
   chatgpt_accounting.reconciliation_results,
   chatgpt_accounting.bank_sources,
+  chatgpt_accounting.bank_transaction_account_resolution,
+  chatgpt_accounting.bank_transaction_payment_instrument_resolution,
+  chatgpt_accounting.bank_transaction_person_context,
   chatgpt_accounting.bank_transactions
 TO chatgpt_reader;
 

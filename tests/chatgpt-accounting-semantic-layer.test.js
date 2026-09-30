@@ -16,7 +16,9 @@ const views = [
   'receipt_source_observations', 'user_receipts', 'fns_source_receipt_refs', 'persons', 'fns_sources',
   'fns_source_person', 'fns_source_sync_state', 'analytics_purchases',
   'analytics_purchase_items', 'reconciliation_runs', 'reconciliation_results',
-  'bank_sources', 'bank_transactions'
+  'bank_sources', 'bank_transaction_account_resolution',
+  'bank_transaction_payment_instrument_resolution', 'bank_transaction_person_context',
+  'bank_transactions'
 ];
 
 test('semantic layer exposes the complete safe view manifest', () => {
@@ -35,6 +37,32 @@ test('semantic layer never exposes raw payload or auth material', () => {
   assert.match(sql, /GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader/);
   assert.match(sql, /GRANT SELECT ON[\s\S]+TO chatgpt_reader/);
   assert.match(sql, /REVOKE SELECT ON public\.analytics_purchases, public\.analytics_purchase_items FROM chatgpt_reader/);
+});
+
+test('bank assistant views preserve transaction grain and fail closed', () => {
+  assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.bank_transaction_account_resolution/);
+  assert.match(sql, /COALESCE\(ar\.resolution_state, 'UNKNOWN'\)/);
+  assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.bank_transaction_payment_instrument_resolution/);
+  assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.bank_transaction_person_context/);
+  assert.match(sql, /GROUP BY bt\.id, beo\.bank_source_id/);
+  assert.match(sql, /source_context_person_ids/);
+  assert.match(sql, /financial_account_person_ids/);
+  assert.match(sql, /payment_instrument_resolution_state/);
+  assert.match(sql, /ingestion_metadata->>'provider' AS provider/);
+  assert.match(sql, /ingestion_metadata->>'adapter' AS adapter/);
+  assert.match(sql, /ingestion_metadata->>'schemaVersion' AS schema_version/);
+  assert.match(sql, /JOIN chatgpt_accounting\.bank_transaction_account_resolution ar/);
+  assert.match(sql, /JOIN chatgpt_accounting\.bank_transaction_payment_instrument_resolution pr/);
+  assert.match(sql, /JOIN chatgpt_accounting\.bank_transaction_person_context pc/);
+  assert.match(sql, /source-context only|source-person context only/i);
+});
+
+test('bank assistant contract keeps identity boundaries explicit', () => {
+  assert.match(sql, /Card evidence never infers a financial account/i);
+  assert.match(sql, /These relations do not prove financial-account ownership/i);
+  assert.match(sql, /only the explicit resolution row determines account assignment/i);
+  assert.match(sql, /source_context_person_ids.*account ownership proof/i);
+  assert.doesNotMatch(sql, /source_context_person_ids.*account_owner/i);
 });
 
 test('user receipt view is active-source scoped and deduplicates household provenance', () => {

@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `bfdeea3e5cc62ff65c256725b25b5e1e33027856`
-- Current phase: Sber normalizer v3 is deployed and the final Person 1 fresh-ingestion E2E is complete
-- Current blocker: no blocker for the proven Person 1 Sber path; no historical backfill or accounting side effects are permitted
+- Current master: `2b2710f64f90eaddd9e1a8d9ad14c160daa6fa1a`
+- Current phase: Bank Assistant read-only semantic layer is under review after the final Person 1 fresh-ingestion E2E
+- Current blocker: semantic-layer review; no historical backfill or accounting side effects are permitted
 - Production artifact: exact master `bfdeea3e5cc62ff65c256725b25b5e1e33027856`, archive SHA-256 `360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review the handoff update, then build the Bank Assistant read-only semantic layer. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: review the Bank Assistant semantic-layer PR. Do not deploy it or start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
 
 ## Sber normalizer v3 current-format evidence
 
@@ -75,6 +75,22 @@ identity inventory change, grant change, or credential change was performed.
 The next phase is the Bank Assistant read-only semantic layer for the usable
 MVP. Person 2/3 onboarding and outgoing-transfer parser work remain out of
 scope.
+
+## Bank Assistant semantic-layer scope
+
+The planned assistant surface is read-only and transaction-grain. The bank
+transaction view exposes normalized event semantics and explicit account and
+payment-instrument resolution states, while separate views expose aggregated
+source-person capture context without treating it as account ownership. An
+unresolved transaction remains visible as `UNKNOWN`; a card reference never
+infers an account; raw notification/payload identifiers and credentials are
+not exposed.
+
+The provider matrix is intentionally narrow: Sber incoming/CREDIT v3 is the
+current proven bank envelope, Yandex remains deployed, and T-Bank, Alfa, Ozon,
+and VTB require future incremental evidence. No semantic-layer deployment,
+backfill, ledger posting, business event, internal-transfer matching, phone
+change, or production mutation is part of this review.
 
 ## Sber final E2E fail-closed and corpus forensics
 
