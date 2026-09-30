@@ -158,14 +158,14 @@ integration('bank ingestion works under the restricted runtime role without extr
       ingestionMetadata: { adapter: 'android-notification', provider: 'runtime.provider', deviceType: 'android', schemaVersion: '1' },
     });
     assert.equal(accountEvent.identityResolution.account.resolutionState, 'EXACT');
-    assert.equal(accountEvent.identityResolution.account.financialAccountId, account.id);
+    assert.equal(accountEvent.identityResolution.account.financialAccountId, Number(account.id));
     const cardEvent = await ingestBankEvent(runtime, {
       ...event, sourceEventId: 'runtime-card-event',
       payload: { ...event.payload, accountReference: '****1913', accountReferenceKind: 'MASKED_CARD' },
       ingestionMetadata: { adapter: 'android-notification', provider: 'runtime.provider', deviceType: 'android', schemaVersion: '1' },
     });
     assert.equal(cardEvent.identityResolution.paymentInstrument.resolutionState, 'EXACT');
-    assert.equal(cardEvent.identityResolution.paymentInstrument.paymentInstrumentId, card.id);
+    assert.equal(cardEvent.identityResolution.paymentInstrument.paymentInstrumentId, Number(card.id));
     assert.equal(cardEvent.identityResolution.account.resolutionState, 'UNKNOWN');
     await assert.rejects(() => createFinancialAccount(runtime, { institution: 'Forbidden', displayName: 'Forbidden account' }), /permission denied/);
     await assert.rejects(() => createPaymentInstrument(runtime, { scopeKey: 'default', instrumentType: 'CARD', displayName: 'Forbidden card' }), /permission denied/);
