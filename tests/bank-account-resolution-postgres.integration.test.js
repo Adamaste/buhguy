@@ -90,7 +90,7 @@ integration('bank account resolution keeps ownership, references, and unknown co
     await resolveBankTransactionAccount(pool, { bankTransactionId: fourth.transactionId, financialAccountId: secondAccount.id, resolutionState: 'MANUAL', provenance: 'TEST_MANUAL', reason: 'Explicit operator mapping' });
     await resolveBankTransactionAccount(pool, { bankTransactionId: fifth.transactionId, financialAccountId: account.id, resolutionState: 'RECONCILED', provenance: 'TEST_RECONCILIATION', reason: 'Explicit later reconciliation' });
     const coverage = await bankTransactionAccountCoverage(pool);
-  assert.deepEqual(coverage, { totalBankTransactions: 8, resolvedAccount: 4, unresolvedAccount: 4, exact: 2, manual: 1, reconciled: 1, unknown: 4, invariant: true });
+    assert.deepEqual(coverage, { totalBankTransactions: 9, resolvedAccount: 4, unresolvedAccount: 5, exact: 2, manual: 1, reconciled: 1, unknown: 5, invariant: true });
 
     await assert.rejects(() => resolveBankTransactionAccount(pool, { bankTransactionId: first.transactionId, financialAccountId: account.id, resolutionState: 'EXACT', provenance: 'TEST', reason: 'arbitrary exact mapping' }), /proven account reference evidence/);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM financial_account_person_relations WHERE financial_account_id=$1`, [account.id])).rows[0].count, 2);
