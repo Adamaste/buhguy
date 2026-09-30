@@ -122,7 +122,8 @@ SELECT bt.id, bt.occurred_at, bt.amount, bt.currency,
 FROM chatgpt_accounting.bank_transactions AS bt
 WHERE bt.normalization_status IN ('UNKNOWN', 'PARTIAL')
    OR bt.account_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
-   OR bt.payment_instrument_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
+   OR (bt.normalization_status <> 'READY'
+       AND bt.payment_instrument_resolution_state IN ('UNKNOWN', 'AMBIGUOUS'))
 ORDER BY bt.occurred_at, bt.id;
 ```
 

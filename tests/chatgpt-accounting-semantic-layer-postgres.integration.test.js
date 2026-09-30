@@ -140,7 +140,8 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
       FROM chatgpt_accounting.bank_transactions AS bt
       WHERE bt.normalization_status IN ('UNKNOWN', 'PARTIAL')
          OR bt.account_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
-         OR bt.payment_instrument_resolution_state IN ('UNKNOWN', 'AMBIGUOUS')
+         OR (bt.normalization_status <> 'READY'
+             AND bt.payment_instrument_resolution_state IN ('UNKNOWN', 'AMBIGUOUS'))
       ORDER BY bt.id`)).rows;
     assert.deepEqual(unresolved.map((row) => row.id), [rows[1].id, rows[2].id]);
 
