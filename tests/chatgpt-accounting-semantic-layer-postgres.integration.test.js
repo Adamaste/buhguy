@@ -133,7 +133,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
       WHERE bt.normalization_status = 'UNKNOWN'
         AND bt.direction = 'DEBIT'
         AND $1 = ANY(bt.payment_instrument_owner_person_ids)`, [persons[0].id])).rows;
-    assert.deepEqual(ownedDebit, [{ id: rows[1].id, account_resolution_state: 'UNKNOWN', financial_account_id: null }]);
+    assert.deepEqual(ownedDebit, [{ id: rows[2].id, account_resolution_state: 'UNKNOWN', financial_account_id: null }]);
 
     const unresolved = (await pool.query(`
       SELECT bt.id
