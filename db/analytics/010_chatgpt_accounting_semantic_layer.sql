@@ -188,7 +188,7 @@ SELECT bt.id AS bank_transaction_id,
             AND far.relation_type = 'OWNER')
        END AS financial_account_owner_person_ids,
        CASE WHEN ar.financial_account_id IS NOT NULL THEN
-         (SELECT array_agg(DISTINCT far.relation_type ORDER BY far.relation_type)
+         (SELECT array_agg(DISTINCT far.person_id ORDER BY far.person_id)
           FROM public.financial_account_person_relations far
           WHERE far.financial_account_id = ar.financial_account_id
             AND far.relation_type = 'AUTHORIZED_USER')
