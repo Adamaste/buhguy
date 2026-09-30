@@ -169,8 +169,11 @@ SELECT id, run_id, metric_code, status, amount, currency, count_items,
        reason_code, semantic_key, created_at
 FROM public.reconciliation_results;
 
+DROP VIEW IF EXISTS chatgpt_accounting.bank_transactions;
+DROP VIEW IF EXISTS chatgpt_accounting.bank_sources;
+
 CREATE OR REPLACE VIEW chatgpt_accounting.bank_sources AS
-SELECT id, source_key, source_type, display_name, enabled, created_at, updated_at
+SELECT id, source_type, display_name, enabled, created_at, updated_at
 FROM public.bank_sources;
 
 CREATE OR REPLACE VIEW chatgpt_accounting.bank_transaction_account_resolution AS
@@ -181,15 +184,16 @@ SELECT bt.id AS bank_transaction_id,
        CASE WHEN ar.financial_account_id IS NOT NULL THEN
          (SELECT array_agg(DISTINCT far.person_id ORDER BY far.person_id)
           FROM public.financial_account_person_relations far
-          WHERE far.financial_account_id = ar.financial_account_id)
-       END AS financial_account_person_ids,
+          WHERE far.financial_account_id = ar.financial_account_id
+            AND far.relation_type = 'OWNER')
+       END AS financial_account_owner_person_ids,
        CASE WHEN ar.financial_account_id IS NOT NULL THEN
          (SELECT array_agg(DISTINCT far.relation_type ORDER BY far.relation_type)
           FROM public.financial_account_person_relations far
-          WHERE far.financial_account_id = ar.financial_account_id)
-       END AS financial_account_person_relation_types,
+          WHERE far.financial_account_id = ar.financial_account_id
+            AND far.relation_type = 'AUTHORIZED_USER')
+       END AS financial_account_authorized_user_person_ids,
        ar.provenance,
-       ar.reason,
        ar.resolved_at
 FROM public.bank_transactions bt
 LEFT JOIN public.bank_transaction_account_resolution ar
@@ -202,8 +206,19 @@ SELECT bt.id AS bank_transaction_id,
        COALESCE(pr.resolution_state, 'UNKNOWN') AS resolution_state,
        pr.payment_instrument_id,
        CASE WHEN pr.payment_instrument_id IS NOT NULL THEN pi.display_name END AS payment_instrument_display_name,
+       CASE WHEN pr.payment_instrument_id IS NOT NULL THEN
+         (SELECT array_agg(DISTINCT pir.person_id ORDER BY pir.person_id)
+          FROM public.payment_instrument_person_relations pir
+          WHERE pir.payment_instrument_id = pr.payment_instrument_id
+            AND pir.relation_type = 'OWNER')
+       END AS payment_instrument_owner_person_ids,
+       CASE WHEN pr.payment_instrument_id IS NOT NULL THEN
+         (SELECT array_agg(DISTINCT pir.person_id ORDER BY pir.person_id)
+          FROM public.payment_instrument_person_relations pir
+          WHERE pir.payment_instrument_id = pr.payment_instrument_id
+            AND pir.relation_type = 'AUTHORIZED_USER')
+       END AS payment_instrument_authorized_user_person_ids,
        pr.provenance,
-       pr.reason,
        pr.resolved_at
 FROM public.bank_transactions bt
 LEFT JOIN public.bank_transaction_payment_instrument_resolution pr
@@ -225,7 +240,7 @@ GROUP BY bt.id, beo.bank_source_id;
 
 CREATE OR REPLACE VIEW chatgpt_accounting.bank_transactions AS
 SELECT bt.id, bt.observation_id, beo.bank_source_id,
-       bs.source_key, bs.source_type, bs.display_name AS source_display_name,
+       bs.source_type, bs.display_name AS source_display_name,
        bt.occurred_at, bt.amount, bt.currency, bt.direction,
        bt.merchant, bt.counterparty,
        bt.normalization_status, bt.normalization_version,
@@ -237,11 +252,13 @@ SELECT bt.id, bt.observation_id, beo.bank_source_id,
        ar.resolution_state AS account_resolution_state,
        ar.financial_account_id,
        ar.financial_account_display_name,
-       ar.financial_account_person_ids,
-       ar.financial_account_person_relation_types,
+       ar.financial_account_owner_person_ids,
+       ar.financial_account_authorized_user_person_ids,
        pr.resolution_state AS payment_instrument_resolution_state,
        pr.payment_instrument_id,
        pr.payment_instrument_display_name,
+       pr.payment_instrument_owner_person_ids,
+       pr.payment_instrument_authorized_user_person_ids,
        pc.source_context_person_ids,
        pc.source_context_relation_types
 FROM public.bank_transactions bt
@@ -283,8 +300,8 @@ COMMENT ON VIEW chatgpt_accounting.analytics_purchase_items IS 'Curated item-gra
 COMMENT ON VIEW chatgpt_accounting.reconciliation_runs IS 'Accounting reconciliation run metadata.';
 COMMENT ON VIEW chatgpt_accounting.reconciliation_results IS 'Reconciliation metrics and certification status.';
 COMMENT ON VIEW chatgpt_accounting.bank_sources IS 'Bank source metadata without credentials or raw event payloads.';
-COMMENT ON VIEW chatgpt_accounting.bank_transaction_account_resolution IS 'One row per bank transaction with explicit account-resolution state. A resolved account display label and person relations are evidence-backed; UNKNOWN remains visible.';
-COMMENT ON VIEW chatgpt_accounting.bank_transaction_payment_instrument_resolution IS 'One row per bank transaction with separate payment-instrument resolution. Card evidence never infers a financial account.';
+COMMENT ON VIEW chatgpt_accounting.bank_transaction_account_resolution IS 'One row per bank transaction with explicit account-resolution state. Owner and authorized-user person ids are evidence-backed; UNKNOWN remains visible.';
+COMMENT ON VIEW chatgpt_accounting.bank_transaction_payment_instrument_resolution IS 'One row per bank transaction with separate payment-instrument resolution and evidence-backed person relations. Card evidence never infers a financial account.';
 COMMENT ON VIEW chatgpt_accounting.bank_transaction_person_context IS 'One row per bank transaction containing source-person context only. These relations do not prove financial-account ownership.';
 COMMENT ON VIEW chatgpt_accounting.bank_transactions IS 'One row per normalized bank transaction with explicit normalization, resolution, and source-context state. A bank transaction is not automatically a purchase, receipt, payer, or accounting certification.';
 
@@ -304,6 +321,19 @@ COMMENT ON COLUMN chatgpt_accounting.bank_transactions.account_resolution_state 
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.payment_instrument_resolution_state IS 'Separate card/instrument evidence state; no card-to-account inference is implied.';
 
 REVOKE ALL ON ALL TABLES IN SCHEMA chatgpt_accounting FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON TABLE
+  public.bank_event_observations,
+  public.bank_transactions,
+  public.bank_sources,
+  public.bank_source_person,
+  public.bank_transaction_account_resolution,
+  public.bank_transaction_payment_instrument_resolution,
+  public.financial_accounts,
+  public.financial_account_person_relations,
+  public.payment_instruments,
+  public.payment_instrument_person_relations,
+  public.bank_account_references
+FROM chatgpt_reader;
 GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader;
 GRANT SELECT ON
   chatgpt_accounting.receipts,

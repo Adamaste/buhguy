@@ -65,7 +65,7 @@ chain rather than selecting the more convenient number.
 | `analytics_purchase_items` | One item of a certified acquisition | `purchase_id`, `item_position`; sum `item_sum` here only |
 | `reconciliation_runs` | One reconciliation run | `id`; results are 1:N |
 | `reconciliation_results` | One reconciliation metric | `run_id -> reconciliation_runs.id` |
-| `bank_sources` | One bank capture source | `id`; source metadata only |
+| `bank_sources` | One bank capture source | `id`; source type/display metadata only, without source key |
 | `bank_transactions` | One normalized bank transaction | `id`; one row per transaction; resolution/context columns are 1:1 or aggregated |
 | `bank_transaction_account_resolution` | One account-resolution result | `bank_transaction_id`; UNKNOWN remains visible |
 | `bank_transaction_payment_instrument_resolution` | One payment-instrument result | `bank_transaction_id`; separate from account resolution |
@@ -88,8 +88,9 @@ chain rather than selecting the more convenient number.
 The transaction view exposes `event_type`, `direction`, `amount`, `currency`,
 `normalization_status`, `normalization_version`, and `evidence_quality`. It
 also exposes explicit account and payment-instrument resolution states,
-safe display labels only for resolved identities, and aggregated source-person
-context. Unresolved values remain visible as `UNKNOWN` or NULL rather than
+  safe display labels only for resolved identities, relation-safe owner and
+  authorized-user person ids, and aggregated source-person context. Unresolved
+  values remain visible as `UNKNOWN` or NULL rather than
 being assigned to a person.
 
 The current provider-operation evidence envelope is:
@@ -99,7 +100,7 @@ The current provider-operation evidence envelope is:
 | Sber (`ru.sberbankmobile`) | PROVEN: current v3 envelope, including Person 1 account `0271` path | NOT_PROVEN |
 | T-Bank (`com.idamob.tinkoff.android`) | NOT_PROVEN | NOT_PROVEN |
 | Alfa (`ru.alfabank.mobile.android`) | NOT_PROVEN | NOT_PROVEN |
-| Yandex (`com.yandex.bank`) | PROVEN: deployed v1/v2/v3 historical envelopes as documented | NOT_PROVEN |
+| Yandex (`com.yandex.bank`) | PROVEN only to the extent supported by the deployed v1 parser/evidence | NOT_PROVEN |
 | Ozon Finance (`ru.ozon.fintech.finance`) | NOT_PROVEN | NOT_PROVEN |
 | VTB (`ru.vtb24.mobilebanking.android`) | NOT_PROVEN | NOT_PROVEN |
 

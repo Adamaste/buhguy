@@ -46,7 +46,10 @@ test('bank assistant views preserve transaction grain and fail closed', () => {
   assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.bank_transaction_person_context/);
   assert.match(sql, /GROUP BY bt\.id, beo\.bank_source_id/);
   assert.match(sql, /source_context_person_ids/);
-  assert.match(sql, /financial_account_person_ids/);
+  assert.match(sql, /financial_account_owner_person_ids/);
+  assert.match(sql, /financial_account_authorized_user_person_ids/);
+  assert.match(sql, /payment_instrument_owner_person_ids/);
+  assert.match(sql, /payment_instrument_authorized_user_person_ids/);
   assert.match(sql, /payment_instrument_resolution_state/);
   assert.match(sql, /ingestion_metadata->>'provider' AS provider/);
   assert.match(sql, /ingestion_metadata->>'adapter' AS adapter/);
@@ -55,6 +58,9 @@ test('bank assistant views preserve transaction grain and fail closed', () => {
   assert.match(sql, /JOIN chatgpt_accounting\.bank_transaction_payment_instrument_resolution pr/);
   assert.match(sql, /JOIN chatgpt_accounting\.bank_transaction_person_context pc/);
   assert.match(sql, /source-context only|source-person context only/i);
+  const bankViewDefinitions = sql.slice(sql.indexOf('CREATE OR REPLACE VIEW chatgpt_accounting.bank_sources'), sql.indexOf('COMMENT ON SCHEMA'));
+  assert.doesNotMatch(bankViewDefinitions, /\bsource_key\b/i);
+  assert.doesNotMatch(bankViewDefinitions, /\bar\.reason\b|\bpr\.reason\b/i);
 });
 
 test('bank assistant contract keeps identity boundaries explicit', () => {
@@ -63,6 +69,7 @@ test('bank assistant contract keeps identity boundaries explicit', () => {
   assert.match(sql, /only the explicit resolution row determines account assignment/i);
   assert.match(sql, /source_context_person_ids.*account ownership proof/i);
   assert.doesNotMatch(sql, /source_context_person_ids.*account_owner/i);
+  assert.match(sql, /REVOKE ALL PRIVILEGES ON TABLE[\s\S]+public\.bank_event_observations[\s\S]+FROM chatgpt_reader/);
 });
 
 test('user receipt view is active-source scoped and deduplicates household provenance', () => {

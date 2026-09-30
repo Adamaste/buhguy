@@ -51,7 +51,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
           [scope.id],
         )).rows[0];
         accountIds.push(account.id);
-        await pool.query("INSERT INTO financial_account_person_relations(financial_account_id,person_id,relation_type,provenance,reason) VALUES ($1,$2,'OWNER','SYNTHETIC','Synthetic semantic test')", [account.id, persons[0].id]);
+        await pool.query("INSERT INTO financial_account_person_relations(financial_account_id,person_id,relation_type,provenance,reason) VALUES ($1,$2,'OWNER','SYNTHETIC','Synthetic semantic test'),($1,$3,'AUTHORIZED_USER','SYNTHETIC','Synthetic semantic test')", [account.id, persons[0].id, persons[1].id]);
         await pool.query("INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic semantic test')", [tx.id, account.id]);
       }
     }
@@ -74,9 +74,10 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
        VALUES ($1, NOW(), 10.00, 'RUB', 'DEBIT', 'UNKNOWN', 'sber-bank-normalizer-v3', 'EXACT', 'UNKNOWN')
        RETURNING id`, [cardObservation.id],
     )).rows[0];
+    await pool.query("INSERT INTO payment_instrument_person_relations(payment_instrument_id,person_id,relation_type,provenance,reason) VALUES ($1,$2,'OWNER','SYNTHETIC','Synthetic card-only test'),($1,$3,'AUTHORIZED_USER','SYNTHETIC','Synthetic card-only test')", [instrument.id, persons[0].id, persons[1].id]);
     await pool.query("INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic card-only test')", [cardTransaction.id, instrument.id]);
 
-    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, account_resolution_state, financial_account_id, payment_instrument_resolution_state, payment_instrument_id, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_key='semantic-test-sber-source' ORDER BY id")).rows;
+    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, account_resolution_state, financial_account_id, financial_account_owner_person_ids, financial_account_authorized_user_person_ids, payment_instrument_resolution_state, payment_instrument_id, payment_instrument_owner_person_ids, payment_instrument_authorized_user_person_ids, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_display_name='Synthetic Sber semantic source' ORDER BY id")).rows;
     assert.equal(rows.length, 3);
     assert.equal(rows[0].account_resolution_state, 'EXACT');
     assert.ok(rows[0].financial_account_id);
@@ -87,6 +88,8 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.equal(rows[0].event_type, 'INCOMING_TRANSFER');
     assert.equal(rows[0].direction, 'CREDIT');
     assert.equal(rows[0].currency, 'RUB');
+    assert.deepEqual(rows[0].financial_account_owner_person_ids.map(Number), [Number(persons[0].id)]);
+    assert.deepEqual(rows[0].financial_account_authorized_user_person_ids.map(Number), [Number(persons[1].id)]);
     assert.deepEqual(rows[0].source_context_person_ids.map(Number).sort((a, b) => a - b), persons.map((p) => Number(p.id)).sort((a, b) => a - b));
     assert.equal(rows[1].account_resolution_state, 'UNKNOWN');
     assert.equal(rows[1].financial_account_id, null);
@@ -95,14 +98,25 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.equal(rows[2].financial_account_id, null);
     assert.equal(rows[2].payment_instrument_resolution_state, 'EXACT');
     assert.ok(rows[2].payment_instrument_id);
+    assert.deepEqual(rows[2].payment_instrument_owner_person_ids.map(Number), [Number(persons[0].id)]);
+    assert.deepEqual(rows[2].payment_instrument_authorized_user_person_ids.map(Number), [Number(persons[1].id)]);
 
     const grants = (await pool.query(`SELECT
       has_table_privilege('chatgpt_reader','chatgpt_accounting.bank_transactions','SELECT') AS semantic_select,
-      has_table_privilege('chatgpt_reader','public.bank_transactions','SELECT') AS source_select,
-      has_table_privilege('chatgpt_reader','public.bank_transactions','INSERT') AS source_insert`)).rows[0];
-    assert.equal(grants.semantic_select, true);
-    assert.equal(grants.source_select, false);
-    assert.equal(grants.source_insert, false);
+      object_name,
+      has_table_privilege('chatgpt_reader', object_name, 'SELECT') AS source_select,
+      has_table_privilege('chatgpt_reader', object_name, 'INSERT') AS source_insert,
+      has_table_privilege('chatgpt_reader', object_name, 'UPDATE') AS source_update,
+      has_table_privilege('chatgpt_reader', object_name, 'DELETE') AS source_delete
+      FROM unnest(ARRAY[
+        'public.bank_event_observations','public.bank_transactions','public.bank_sources',
+        'public.bank_source_person','public.bank_transaction_account_resolution',
+        'public.bank_transaction_payment_instrument_resolution','public.financial_accounts',
+        'public.financial_account_person_relations','public.payment_instruments',
+        'public.payment_instrument_person_relations','public.bank_account_references'
+      ]::text[]) AS object_name`)).rows;
+    assert.equal(grants.every((row) => row.semantic_select === true), true);
+    assert.equal(grants.every((row) => row.source_select === false && row.source_insert === false && row.source_update === false && row.source_delete === false), true);
   } finally {
     await pool.query('DROP SCHEMA IF EXISTS chatgpt_accounting CASCADE').catch(() => {});
     if (observationIds.length) await pool.query('DELETE FROM bank_transactions WHERE observation_id = ANY($1::bigint[])', [observationIds]).catch(() => {});

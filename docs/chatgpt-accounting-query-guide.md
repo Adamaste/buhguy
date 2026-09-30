@@ -29,9 +29,10 @@ Filter explicitly on `normalization_status`, `normalization_version`,
 transaction-grain resolution views on `bank_transaction_id`:
 
 - `bank_transaction_account_resolution` for `EXACT`, `MANUAL`, `RECONCILED`,
-  or `UNKNOWN` account state and the safe resolved-account label;
+  or `UNKNOWN` account state, safe resolved-account label, and explicit owner/
+  authorized-user person relations;
 - `bank_transaction_payment_instrument_resolution` for separate card or
-  payment-instrument evidence;
+  payment-instrument evidence with explicit owner/authorized-user relations;
 - `bank_transaction_person_context` for aggregated capture context only.
 
 Use an explicit account resolution (and its proven account-person relation)
@@ -41,8 +42,10 @@ PARTIAL evidence into a person assignment. Do not join raw source-person
 rows directly to transactions because that can multiply amounts.
 
 The current proven operation envelope is Sber incoming/CREDIT v3. Yandex
-remains a deployed provider normalizer; T-Bank, Alfa, Ozon, and VTB remain
-incremental evidence coverage rather than assumptions of READY semantics.
+incoming/CREDIT is proven only to the extent supported by its deployed v1
+parser/evidence; Yandex outgoing/DEBIT transfer is NOT_PROVEN. T-Bank, Alfa,
+Ozon, and VTB remain incremental evidence coverage rather than assumptions of
+READY semantics.
 
 ### Items
 

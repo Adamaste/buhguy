@@ -52,6 +52,7 @@ acquisitions; it is not a complete receipt inventory.
 - `public.receipt_raw`;
 - `public.bank_event_observations` and any bank raw/evidence payload;
 - raw source-event identifiers, payload hashes, credentials, and device references;
+- bank source keys and device/source identifiers;
 - session, token, cookie, password, or secret configuration objects;
 - internal `public.*` tables when the corresponding semantic view exists.
 
