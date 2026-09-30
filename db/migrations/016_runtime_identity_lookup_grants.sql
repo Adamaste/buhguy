@@ -6,6 +6,7 @@
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'receipt_collector') THEN
+    EXECUTE 'GRANT SELECT (id, observation_id, account_reference, account_reference_kind) ON public.bank_transactions TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, scope_id) ON public.financial_accounts TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, scope_id) ON public.payment_instruments TO receipt_collector';
     EXECUTE 'GRANT SELECT (provider, reference_kind, reference_value, financial_account_id, payment_instrument_id) ON public.bank_account_references TO receipt_collector';
