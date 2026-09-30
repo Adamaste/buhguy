@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { isSberBankAndroidNotification, isYandexBankProvider, normalizeSberBankEvent, normalizeYandexBankEvent } from './bank-normalization.js';
+import { resolveNewBankTransactionIdentity } from './bank-account-resolution.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
@@ -149,10 +150,9 @@ export async function ingestBankEvent(pool, input) {
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) RETURNING id`, [source.id, event.sourceEventId, dedupKey, event.observedAt, event.eventTime, payloadJson, payloadSha256, canonicalBankJson(event.ingestionMetadata)])).rows[0];
     const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,account_reference_kind,event_type,normalization_status,normalization_version,evidence_quality)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.accountReferenceKind, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
-    await client.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,resolution_state,provenance,reason)
-      VALUES($1,'UNKNOWN','INGESTION_DEFAULT','No explicit financial account mapping evidence')`, [transaction.id]);
+    const identityResolution = await resolveNewBankTransactionIdentity(client, { bankTransactionId: transaction.id });
     await client.query('COMMIT');
-    return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized };
+    return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized, identityResolution };
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') {

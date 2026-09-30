@@ -30,9 +30,11 @@ capture context only; they do not establish ownership of a financial account.
 - `bank_transaction_account_resolution` stores `EXACT`, `MANUAL`,
   `RECONCILED`, or explicit `UNKNOWN` resolution with provenance and reason.
 
-Every newly ingested bank transaction receives an `UNKNOWN` resolution in the
-same database transaction. An operator or later reconciliation step may
-replace it with an explicit account resolution. No ledger posting, business
+Every newly ingested bank transaction receives an identity resolution in the
+same database transaction. A proven, unique account reference may produce
+`EXACT`; absent, ambiguous, card-only, or out-of-scope evidence remains
+explicit `UNKNOWN`. An operator or later reconciliation step may replace it
+with an explicit account resolution. No ledger posting, business
 event, transfer matching, or ownership inference is performed here.
 
 `resolveBankTransactionAccountFromReference()` is the only `EXACT` path. It
@@ -51,6 +53,13 @@ masked suffixes never prove that a card and account are the same product.
 Resolution requires exactly one accounting scope among the source's linked
 context persons. Zero or multiple scopes fail closed; source context is never
 used as financial-account ownership.
+
+The automatic ingestion path is intentionally narrow: it uses only provider
+and reference evidence already stored on the transaction, and inserts account
+and payment-instrument resolution rows atomically with the observation and
+transaction. The runtime role receives only the column-level lookup grants and
+resolution-row insert privileges needed for this path; provisioning and
+administrative resolution remain separate.
 
 ## Administrative operator surface
 
