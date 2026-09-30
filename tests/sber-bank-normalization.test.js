@@ -31,11 +31,11 @@ test('Sber controlled incoming format is normalized exactly', () => {
     accountReferenceKind: 'MASKED_ACCOUNT',
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: 'sber-bank-normalizer-v1',
+    normalizationVersion: 'sber-bank-normalizer-v2',
   });
 });
 
-test('Sber accepts only the two proven controlled title structures', () => {
+test('Sber v2 preserves the two previously proven v1 title structures', () => {
   for (const title of [
     '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
     '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
@@ -44,6 +44,21 @@ test('Sber accepts only the two proven controlled title structures', () => {
     assert.equal(result.normalizationStatus, 'READY');
     assert.equal(result.eventType, 'INCOMING_TRANSFER');
   }
+});
+
+test('Sber v2 accepts the exact controlled checkmark title structure', () => {
+  const result = normalizeBankEvent({ ...base, payload: incoming({
+    title: '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
+    description: '+ 456 ₽ — Теперь у вас: 7 890,12 ₽ Плат. счёт •• 0000',
+    text: '+ 456 ₽ — Теперь у вас: 7 890,12 ₽ Плат. счёт •• 0000',
+  }) });
+  assert.equal(result.normalizationStatus, 'READY');
+  assert.equal(result.eventType, 'INCOMING_TRANSFER');
+  assert.equal(result.direction, 'CREDIT');
+  assert.equal(result.amount, '456.00');
+  assert.equal(result.accountReference, '0000');
+  assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v2');
 });
 
 test('Sber parser uses description before text and normalizes supported whitespace', () => {
@@ -75,6 +90,13 @@ test('Sber parser fails closed for missing or malformed evidence', () => {
     { title: '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 12 USD — Теперь у вас: 56,78 USD' },
     { title: '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 12 ₽ — Теперь у вас: 56,78 ₽ Плат. счёт •• 0000', eventTime: null },
     { title: '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '6 789,01 ₽' },
+    { title: '✅ Перевод', description: '+ 12 ₽ — Теперь у вас: 56,78 ₽ Плат. счёт •• 0000' },
+    { title: '✅ Поступление', description: '+ 12 ₽ — Теперь у вас: 56,78 ₽ Плат. счёт •• 0000' },
+    { title: '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: 'Перевод: 12 ₽' },
+    { title: '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 12 ₽ — Теперь у вас: 56,78 ₽' },
+    { title: '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 12 ₽', eventTime: null },
+    { title: '✅ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ', description: '+ 12 ₽ — Теперь у вас: 56,78 ₽ Плат. счёт •• 0000' },
+    { reference: 'ТЕСТОВАЯ ССЫЛКА' },
   ];
   for (const payload of cases) {
     const result = normalizeBankEvent({ ...base, eventTime: payload.eventTime === undefined ? base.eventTime : payload.eventTime, payload });
@@ -141,4 +163,13 @@ test('Sber normalization uses envelope eventTime and does not mutate raw observa
   const result = normalizeBankEvent({ ...base, payload });
   assert.equal(result.occurredAt, '2026-09-29T07:59:00.000Z');
   assert.equal(JSON.stringify(payload), before);
+});
+
+test('Sber reference-only summary evidence remains unsupported', () => {
+  const result = normalizeBankEvent({ ...base, payload: { reference: 'ТЕСТОВАЯ ССЫЛКА' } });
+  assert.equal(result.eventType, 'UNKNOWN');
+  assert.equal(result.direction, 'UNKNOWN');
+  assert.notEqual(result.normalizationStatus, 'READY');
+  assert.equal(result.accountReference, null);
+  assert.equal(result.accountReferenceKind, null);
 });

@@ -17,15 +17,33 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-09-30
-- Current master: `04e5dc3edcf9846a78e04216e9926244538e3105`
-- Current phase: automatic fail-closed identity resolution is deployed and validated for new bank ingestion
-- Current blocker: no production blocker; the next controlled step is Person 1 E2E validation
+- Current master: `ccd397245b527c270bf8f53eeddceaf13145b868`
+- Current phase: Sber normalizer v2 is implemented on a review branch and is not deployed
+- Current blocker: controlled Person 1 E2E observation 128 exposed an exact checkmark title envelope rejected by deployed v1; review and deploy v2 before repeating one controlled Sber E2E
 - Production artifact: exact master `04e5dc3edcf9846a78e04216e9926244538e3105`, archive SHA-256 `207330b8d1b2d4a7b2d500ea8d42e4072e43ba47b9c452e15b7895dee212b317`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: run the exact controlled Person 1 E2E and verify new-reference resolution. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: review/merge/deploy the Sber v2 parser branch, then repeat one controlled Person 1 Sber incoming-transfer E2E. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+
+## Sber normalizer v2 evidence slice
+
+The controlled Person 1 E2E produced observation 128 with provider
+`ru.sberbankmobile`, a valid Android post time, and a body matching the proven
+incoming-transfer contract including the Person 1 account reference. The
+controlled Sber evidence set is four incoming observations in total: three
+historical/proven v1 samples plus observation 128 as the separate v2 checkmark
+sample. Deployed Sber v1 rejected observation 128 only because its title used
+the newly proven exact envelope `✅ Поступление от <sender>`. Observation 129
+was separate reference-only/summary evidence with no title/body and remains
+unsupported.
+
+The feature branch for Sber normalizer v2 adds only that exact checkmark title
+envelope, keeps all existing body gates and negative cases, and bumps future
+normalized projections to `sber-bank-normalizer-v2`. Existing v1 rows remain
+immutable; no backfill or production deployment has occurred. After review and
+deployment, repeat one controlled Sber incoming-transfer E2E.
 
 ## Automatic identity resolution production deployment
 

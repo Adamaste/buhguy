@@ -77,23 +77,28 @@ Transport authentication is intentionally a separate future task because the
 repository does not currently define a suitable internal API authentication
 contract.
 
-## Sber Android normalization v1
+## Sber Android normalization v2
 
-The provider-specific `sber-bank-normalizer-v1` applies only when ingestion
+The provider-specific `sber-bank-normalizer-v2` applies only when ingestion
 metadata identifies provider `ru.sberbankmobile`, adapter
-`android-notification`, and schema version `1`. It supports the one controlled,
-real-derived incoming
-transfer format proven by two samples: the first comma-decimal RUB-symbol
+`android-notification`, and schema version `1`. Its current evidence set is
+four controlled incoming observations: three historical/proven v1 samples plus
+observation 128 as the separate v2 checkmark sample. It accepts the two
+existing exact title forms and the newly proven exact checkmark title envelope
+`✅ Поступление от <sender>`. The first integer-ruble RUB-symbol
 amount after the incoming marker is normalized as `INCOMING_TRANSFER` / `CREDIT`
 with `RUB`. A second monetary field in the same notification is treated as a
 distinct balance field and is not extracted.
 
 `occurredAt` comes from the envelope `eventTime`, which Android supplies from
 `StatusBarNotification.postTime`; the parser never parses a timestamp from
-notification text. Sender, merchant, account and card references are not
-inferred. Summary/reference-only, ambiguous, malformed, unsupported, and
+notification text. Sender, merchant, and card references are not extracted or
+inferred. The account reference is extracted only from the exact proven
+payment-account suffix `Плат. счёт ••dddd` and canonicalized as
+`MASKED_ACCOUNT`; no other account/card inference is performed.
+Summary/reference-only, ambiguous, malformed, unsupported, and
 provider/adapter-mismatched notifications remain `UNKNOWN` or `PARTIAL`.
 
-The raw observation remains immutable. No historical backfill is performed, and
-deduplication and source-event conflict behavior remain the existing ingestion
-contract.
+The raw observation remains immutable. Existing persisted v1 rows remain
+unchanged; no historical backfill is performed. Deduplication and source-event
+conflict behavior remain the existing ingestion contract.

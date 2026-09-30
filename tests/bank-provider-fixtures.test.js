@@ -16,6 +16,11 @@ const loadFixture = async (name) => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadSberV2Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'sber', 'evidence-v2.json'),
+  'utf8',
+));
+
 test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
   for (const [name, provider] of providers) {
     const fixture = await loadFixture(name);
@@ -33,8 +38,23 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, 'evidence-v1.json'), 'utf8');
-    assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
-    assert.doesNotMatch(text, /Т-Банк|Сбербанк|Озон|Альфа|Яндекс/i);
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json'] : ['evidence-v1.json'];
+    for (const version of versions) {
+      const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
+      assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
+      assert.doesNotMatch(text, /Т-Банк|Сбербанк|Озон|Альфа|Яндекс/i);
+    }
   }
+});
+
+test('Sber v2 fixture records the exact checkmark envelope separately', async () => {
+  const fixture = await loadSberV2Fixture();
+  const checkmark = fixture.clusters.find((cluster) => cluster.id === 'sber-incoming-transfer-v2-checkmark');
+  const referenceOnly = fixture.clusters.find((cluster) => cluster.id === 'sber-reference-only');
+  assert.equal(fixture.provider, 'ru.sberbankmobile');
+  assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v2');
+  assert.equal(checkmark.readyCapable, true);
+  assert.equal(checkmark.observationCount, 1);
+  assert.equal(checkmark.syntheticPayload.title, '✅ Поступление от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ');
+  assert.equal(referenceOnly.readyCapable, false);
 });
