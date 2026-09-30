@@ -12,6 +12,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
   let sourceId;
   let observationIds = [];
   let accountIds = [];
+  let instrumentIds = [];
   try {
     await pool.query(`DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'chatgpt_reader') THEN
@@ -30,7 +31,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     )).rows[0].id;
     await pool.query("INSERT INTO bank_source_person(bank_source_id, person_id, relation_type) VALUES ($1,$2,'OWNER'),($1,$3,'OWNER')", [sourceId, persons[0].id, persons[1].id]);
 
-    for (const [amount, resolution] of [['100.00', 'EXACT'], ['50.00', 'UNKNOWN']]) {
+    for (const [amount, resolution, direction] of [['100.00', 'EXACT', 'CREDIT'], ['50.00', 'UNKNOWN', 'DEBIT']]) {
       const observation = (await pool.query(
         `INSERT INTO bank_event_observations
           (bank_source_id, source_event_id, dedup_key, observed_at, event_time, payload, payload_sha256, ingestion_metadata)
@@ -41,8 +42,8 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
       const tx = (await pool.query(
         `INSERT INTO bank_transactions
           (observation_id, occurred_at, amount, currency, direction, normalization_status, normalization_version, evidence_quality, event_type)
-         VALUES ($1, NOW(), $2, 'RUB', 'CREDIT', $3, 'sber-bank-normalizer-v3', 'EXACT', 'INCOMING_TRANSFER')
-         RETURNING id`, [observation.id, amount, resolution === 'EXACT' ? 'READY' : 'UNKNOWN'],
+       VALUES ($1, NOW(), $2, 'RUB', $4, $3, 'sber-bank-normalizer-v3', 'EXACT', 'INCOMING_TRANSFER')
+         RETURNING id`, [observation.id, amount, resolution === 'EXACT' ? 'READY' : 'UNKNOWN', direction],
       )).rows[0];
       if (resolution === 'EXACT') {
         const account = (await pool.query(
@@ -55,8 +56,28 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
       }
     }
 
-    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, account_resolution_state, financial_account_id, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_key='semantic-test-sber-source' ORDER BY id")).rows;
-    assert.equal(rows.length, 2);
+    const instrument = (await pool.query(
+      "INSERT INTO payment_instruments(scope_id,financial_account_id,instrument_type,provider,display_name) VALUES ($1,NULL,'CARD','ru.sberbankmobile','Synthetic standalone card') RETURNING id",
+      [scope.id],
+    )).rows[0];
+    instrumentIds.push(instrument.id);
+    const cardObservation = (await pool.query(
+      `INSERT INTO bank_event_observations
+        (bank_source_id, source_event_id, dedup_key, observed_at, event_time, payload, payload_sha256, ingestion_metadata)
+       VALUES ($1, 'semantic-card', md5('semantic-card') || md5('semantic-card'), NOW(), NOW(), '{}'::jsonb, repeat('b',64), '{"adapter":"android-notification","provider":"ru.sberbankmobile","schemaVersion":"1"}')
+       RETURNING id`, [sourceId],
+    )).rows[0];
+    observationIds.push(cardObservation.id);
+    const cardTransaction = (await pool.query(
+      `INSERT INTO bank_transactions
+        (observation_id, occurred_at, amount, currency, direction, normalization_status, normalization_version, evidence_quality, event_type)
+       VALUES ($1, NOW(), 10.00, 'RUB', 'DEBIT', 'UNKNOWN', 'sber-bank-normalizer-v3', 'EXACT', 'UNKNOWN')
+       RETURNING id`, [cardObservation.id],
+    )).rows[0];
+    await pool.query("INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic card-only test')", [cardTransaction.id, instrument.id]);
+
+    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, account_resolution_state, financial_account_id, payment_instrument_resolution_state, payment_instrument_id, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_key='semantic-test-sber-source' ORDER BY id")).rows;
+    assert.equal(rows.length, 3);
     assert.equal(rows[0].account_resolution_state, 'EXACT');
     assert.ok(rows[0].financial_account_id);
     assert.equal(rows[0].provider, 'ru.sberbankmobile');
@@ -69,6 +90,11 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.deepEqual(rows[0].source_context_person_ids.map(Number).sort((a, b) => a - b), persons.map((p) => Number(p.id)).sort((a, b) => a - b));
     assert.equal(rows[1].account_resolution_state, 'UNKNOWN');
     assert.equal(rows[1].financial_account_id, null);
+    assert.equal(rows[1].direction, 'DEBIT');
+    assert.equal(rows[2].account_resolution_state, 'UNKNOWN');
+    assert.equal(rows[2].financial_account_id, null);
+    assert.equal(rows[2].payment_instrument_resolution_state, 'EXACT');
+    assert.ok(rows[2].payment_instrument_id);
 
     const grants = (await pool.query(`SELECT
       has_table_privilege('chatgpt_reader','chatgpt_accounting.bank_transactions','SELECT') AS semantic_select,
@@ -81,6 +107,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     await pool.query('DROP SCHEMA IF EXISTS chatgpt_accounting CASCADE').catch(() => {});
     if (observationIds.length) await pool.query('DELETE FROM bank_transactions WHERE observation_id = ANY($1::bigint[])', [observationIds]).catch(() => {});
     if (observationIds.length) await pool.query('DELETE FROM bank_event_observations WHERE id = ANY($1::bigint[])', [observationIds]).catch(() => {});
+    if (instrumentIds.length) await pool.query('DELETE FROM payment_instruments WHERE id = ANY($1::bigint[])', [instrumentIds]).catch(() => {});
     if (accountIds.length) await pool.query('DELETE FROM financial_accounts WHERE id = ANY($1::bigint[])', [accountIds]).catch(() => {});
     if (sourceId) await pool.query('DELETE FROM bank_sources WHERE id=$1', [sourceId]).catch(() => {});
     await pool.query("DELETE FROM persons WHERE person_key IN ('semantic-test-person-a','semantic-test-person-b')").catch(() => {});
