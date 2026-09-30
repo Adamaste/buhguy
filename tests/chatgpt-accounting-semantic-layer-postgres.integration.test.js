@@ -34,7 +34,7 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
       const observation = (await pool.query(
         `INSERT INTO bank_event_observations
           (bank_source_id, source_event_id, dedup_key, observed_at, event_time, payload, payload_sha256, ingestion_metadata)
-         VALUES ($1, $2, repeat('a', 64), NOW(), NOW(), '{}'::jsonb, repeat('a',64), '{"adapter":"android-notification","provider":"ru.sberbankmobile","schemaVersion":"1"}')
+         VALUES ($1, $2, md5($2) || md5($2), NOW(), NOW(), '{}'::jsonb, repeat('a',64), '{"adapter":"android-notification","provider":"ru.sberbankmobile","schemaVersion":"1"}')
          RETURNING id`, [sourceId, `semantic-${amount}`],
       )).rows[0];
       observationIds.push(observation.id);
