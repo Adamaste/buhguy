@@ -35,7 +35,7 @@ test('Sber controlled incoming format is normalized exactly', () => {
   });
 });
 
-test('Sber accepts only the two proven controlled title structures', () => {
+test('Sber v2 preserves the two previously proven v1 title structures', () => {
   for (const title of [
     '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
     '⭐ Баланс увеличился благодаря переводу от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',

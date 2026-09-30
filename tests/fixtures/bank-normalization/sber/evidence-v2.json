@@ -2,6 +2,7 @@
   "provider": "ru.sberbankmobile",
   "source": "real-derived-sanitized",
   "normalizationVersion": "sber-bank-normalizer-v2",
+  "controlledIncomingObservationCount": 4,
   "clusters": [
     {
       "id": "sber-incoming-transfer-v1",

@@ -14,9 +14,11 @@ Reviewed providers:
 - Ozon Finance: `ru.ozon.fintech.finance`
 
 The campaign proved transport through callback, Room, delivery, and backend for
-these providers. Two consecutive controlled Sber incoming captures additionally
-proved one narrow parser-ready format; other Sber notification families remain
-fail-closed.
+these providers. Sber evidence contains three historical/proven v1 incoming
+observations plus the separate controlled observation 128 supporting the v2
+checkmark envelope, for four controlled incoming observations in total.
+Observation 129 is a separate unsupported reference-only/summary event; other
+Sber notification families remain fail-closed.
 
 ## Fixture policy
 
@@ -36,20 +38,24 @@ families until a safe positive format is captured.
 
 ### Sber
 
-Three controlled incoming captures share the proven title/body structures: an
-incoming-balance marker, a plus sign, a comma-decimal RUB-symbol amount, a
-separator and a distinct balance field. The first monetary token is the proven
-transaction amount; the second monetary field is ignored. The semantic result is
-`INCOMING_TRANSFER` / `CREDIT` / `RUB`, and event time comes from Android
-`StatusBarNotification.postTime`, not notification text.
+The three historical/proven v1 incoming observations share the original
+title/body structures. Controlled observation 128 is a fourth incoming sample
+with the exact sanitized title envelope `✅ Поступление от <sender>` and the
+same strict body contract: an incoming marker, a plus sign, an integer RUB-symbol
+amount, a separator and a distinct balance field. The first monetary token is
+the transaction amount; the second monetary field is ignored. The semantic
+result is `INCOMING_TRANSFER` / `CREDIT` / `RUB`, and event time comes from
+Android `StatusBarNotification.postTime`, not notification text.
 
 The runtime parser is scoped to provider `ru.sberbankmobile` with adapter
 `android-notification` and is now versioned as `sber-bank-normalizer-v2`. In
 addition to the two v1 title forms, the controlled observation 128 proved the
-exact sanitized title envelope `✅ Поступление от <sender>`. It does not
-extract sender, merchant, account or card references. Related transfer/summary,
-reference-only, ambiguous, malformed, and unsupported notifications remain
-`UNKNOWN`/`PARTIAL`.
+exact sanitized title envelope `✅ Поступление от <sender>`. Sender, merchant,
+and card references are not extracted or displayed. An account reference is
+extracted only from the exact proven payment-account suffix `Плат. счёт ••dddd`
+and canonicalized as `MASKED_ACCOUNT`; no other account/card inference is
+performed. Related transfer/summary, reference-only, ambiguous, malformed, and
+unsupported notifications remain `UNKNOWN`/`PARTIAL`.
 
 ### Ozon Finance
 

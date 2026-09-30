@@ -31,10 +31,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 The controlled Person 1 E2E produced observation 128 with provider
 `ru.sberbankmobile`, a valid Android post time, and a body matching the proven
-incoming-transfer contract including the Person 1 account reference. Deployed
-Sber v1 rejected it only because its title used the newly proven exact envelope
-`✅ Поступление от <sender>`. Observation 129 was separate reference-only
-evidence with no title/body and remains unsupported.
+incoming-transfer contract including the Person 1 account reference. The
+controlled Sber evidence set is four incoming observations in total: three
+historical/proven v1 samples plus observation 128 as the separate v2 checkmark
+sample. Deployed Sber v1 rejected observation 128 only because its title used
+the newly proven exact envelope `✅ Поступление от <sender>`. Observation 129
+was separate reference-only/summary evidence with no title/body and remains
+unsupported.
 
 The feature branch for Sber normalizer v2 adds only that exact checkmark title
 envelope, keeps all existing body gates and negative cases, and bumps future
