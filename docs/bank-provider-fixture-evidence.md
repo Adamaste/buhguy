@@ -52,12 +52,17 @@ the current exact envelope:
 
 The active runtime parser is scoped to provider `ru.sberbankmobile` with adapter
 `android-notification`, schema version `1`, and version
-`sber-bank-normalizer-v3`. Sender, merchant, and card references are not
+`sber-bank-normalizer-v4`. Sender, merchant, and card references are not
 extracted or displayed. The account reference is extracted only from the exact
 payment-account suffix `Плат. счёт ••dddd` and canonicalized as
 `MASKED_ACCOUNT`; no other account/card inference is performed. Reference-only,
 summary, ambiguous, malformed, and unsupported notifications remain
 `UNKNOWN`/`PARTIAL`.
+
+The separately proven outgoing-shaped partial family extracts only the integer
+transaction amount, `RUB`, and the same payment-account reference. It remains
+`PARTIAL` with `eventType=UNKNOWN` and `direction=UNKNOWN`; no outgoing/debit
+semantics are inferred.
 
 ### Ozon Finance
 

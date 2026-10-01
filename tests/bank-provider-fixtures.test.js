@@ -26,6 +26,11 @@ const loadSberV3Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadSberV4Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'sber', 'evidence-v4.json'),
+  'utf8',
+));
+
 test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
   for (const [name, provider] of providers) {
     const fixture = await loadFixture(name);
@@ -43,7 +48,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json'] : ['evidence-v1.json'];
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : ['evidence-v1.json'];
     for (const version of versions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
       assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
@@ -74,4 +79,19 @@ test('Sber v3 fixture records only the current canonical envelope', async () => 
   assert.equal(current.readyCapable, true);
   assert.match(current.titleEnvelope, /^Перевод по СБП от <sender>\.$/u);
   assert.match(current.bodyEnvelope, /Баланс:/u);
+});
+
+test('Sber v4 fixture records the proven outgoing-shaped partial envelope', async () => {
+  const fixture = await loadSberV4Fixture();
+  const outgoing = fixture.clusters.find((cluster) => cluster.id === 'sber-outgoing-partial-v4');
+  const companion = fixture.clusters.find((cluster) => cluster.id === 'sber-outgoing-reference-only');
+  assert.equal(fixture.provider, 'ru.sberbankmobile');
+  assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v4');
+  assert.equal(fixture.controlledOutgoingPrimaryObservationCount, 3);
+  assert.equal(outgoing.observationCount, 3);
+  assert.equal(outgoing.readyCapable, false);
+  assert.equal(outgoing.evidence.eventType, 'UNKNOWN');
+  assert.equal(outgoing.evidence.direction, 'UNKNOWN');
+  assert.equal(outgoing.evidence.normalizationStatus, 'PARTIAL');
+  assert.equal(companion.readyCapable, false);
 });

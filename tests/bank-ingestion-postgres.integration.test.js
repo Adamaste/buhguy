@@ -87,7 +87,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
     assert.equal(sberCreated.normalization.direction, 'CREDIT');
     assert.equal(sberCreated.normalization.amount, '123.00');
-    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v3');
+    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v4');
     assert.equal(sberCreated.normalization.accountReference, '0000');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
@@ -119,6 +119,70 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
       { event_type: 'PURCHASE', amount: '42.10', currency: 'RUB', direction: 'DEBIT', normalization_status: 'READY' },
     ]);
   } finally {
+    await pool.end();
+  }
+});
+
+integration('Sber outgoing-shaped partial evidence resolves only the proven account reference', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const sourceKey = `sber-outgoing-v4-${process.pid}-${Date.now()}`;
+  let accountId;
+  try {
+    await migrate(pool);
+    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Sber outgoing v4' });
+    const person = (await pool.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`person-${sourceKey}`, 'Synthetic Sber person'])).rows[0];
+    await linkBankSourcePerson(pool, { sourceKey, personId: person.id });
+    const account = await createFinancialAccount(pool, { institution: 'Synthetic Sber', provider: 'ru.sberbankmobile', displayName: `Synthetic Sber account ${sourceKey}` });
+    accountId = Number(account.id);
+    await createBankAccountReference(pool, { financialAccountId: accountId, provider: 'ru.sberbankmobile', referenceKind: 'MASKED_ACCOUNT', referenceValue: '0271' });
+
+    const created = await ingestBankEvent(pool, {
+      sourceKey,
+      sourceEventId: 'synthetic-sber-outgoing-v4',
+      observedAt: '2026-10-01T10:00:00Z',
+      eventTime: '2026-10-01T09:59:00Z',
+      payload: {
+        title: 'ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД',
+        description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+        text: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+      },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', deviceType: 'android', schemaVersion: '1' },
+    });
+
+    assert.equal(created.status, 'created');
+    assert.equal(created.normalization.normalizationVersion, 'sber-bank-normalizer-v4');
+    assert.equal(created.normalization.normalizationStatus, 'PARTIAL');
+    assert.equal(created.normalization.evidenceQuality, 'PARTIAL');
+    assert.equal(created.normalization.eventType, 'UNKNOWN');
+    assert.equal(created.normalization.direction, 'UNKNOWN');
+    assert.equal(created.normalization.amount, '1234.00');
+    assert.equal(created.normalization.currency, 'RUB');
+    assert.equal(created.normalization.accountReference, '0271');
+    assert.equal(created.normalization.accountReferenceKind, 'MASKED_ACCOUNT');
+    assert.equal(created.identityResolution.account.resolutionState, 'EXACT');
+    assert.equal(created.identityResolution.account.financialAccountId, accountId);
+    assert.equal(created.identityResolution.account.provenance, 'OBSERVED_PROVIDER_REFERENCE');
+
+    const persisted = (await pool.query(`SELECT bt.amount,bt.currency,bt.direction,bt.event_type,bt.normalization_status,
+        bt.account_reference,bt.account_reference_kind,r.financial_account_id,r.resolution_state,r.provenance
+      FROM bank_transactions bt
+      JOIN bank_transaction_account_resolution r ON r.bank_transaction_id=bt.id
+      WHERE bt.id=$1`, [created.transactionId])).rows[0];
+    assert.deepEqual(persisted, {
+      amount: '1234.00', currency: 'RUB', direction: 'UNKNOWN', event_type: 'UNKNOWN', normalization_status: 'PARTIAL',
+      account_reference: '0271', account_reference_kind: 'MASKED_ACCOUNT', financial_account_id: accountId,
+      resolution_state: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE',
+    });
+  } finally {
+    await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    if (accountId) {
+      await pool.query('DELETE FROM bank_account_references WHERE financial_account_id=$1', [accountId]).catch(() => {});
+      await pool.query('DELETE FROM financial_accounts WHERE id=$1', [accountId]).catch(() => {});
+    }
+    await pool.query('DELETE FROM persons WHERE person_key=$1', [`person-${sourceKey}`]).catch(() => {});
     await pool.end();
   }
 });

@@ -77,7 +77,30 @@ Transport authentication is intentionally a separate future task because the
 repository does not currently define a suitable internal API authentication
 contract.
 
-## Sber Android normalization v3
+## Sber Android normalization v4
+
+The active provider-specific `sber-bank-normalizer-v4` preserves the exact
+incoming v3 envelope and adds one separately proven Sber Android outgoing-shaped
+partial envelope. The dispatch remains scoped to provider
+`ru.sberbankmobile`, adapter `android-notification`, and schema version `1`.
+
+For the incoming envelope, normalization remains `INCOMING_TRANSFER` / `CREDIT`
+with `READY` / `EXACT`, integer RUB amount, Android envelope event time, and the
+proven payment-account `MASKED_ACCOUNT` suffix.
+
+The outgoing-shaped envelope is intentionally partial. Its exact title/body
+structure contains an integer RUB amount before the stable `Баланс:` marker,
+the comma-decimal balance after that marker, and the proven payment-account
+suffix. It produces the integer amount, `currency=RUB`, and
+`accountReferenceKind=MASKED_ACCOUNT`, while preserving
+`eventType=UNKNOWN`, `direction=UNKNOWN`, `normalizationStatus=PARTIAL`, and
+`evidenceQuality=PARTIAL`. No outgoing/debit meaning is inferred.
+
+Reference-only companions, malformed or ambiguous envelopes, missing event
+time, and provider/adapter/schema mismatches remain fail-closed. Historical
+rows are immutable and are not backfilled or replayed.
+
+## Sber Android normalization v3 (historical revision)
 
 The active provider-specific `sber-bank-normalizer-v3` applies only when
 ingestion metadata identifies provider `ru.sberbankmobile`, adapter

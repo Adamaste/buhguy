@@ -24,7 +24,14 @@ const oldIncoming = (overrides = {}) => ({
   ...overrides,
 });
 
-test('Sber v3 accepts the two controlled current samples structure', () => {
+const currentOutgoing = (overrides = {}) => ({
+  title: 'ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД',
+  description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+  text: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+  ...overrides,
+});
+
+test('Sber v4 accepts the two controlled incoming samples structure', () => {
   for (const payload of [
     currentIncoming({ description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' }),
     currentIncoming({ description: '+ 456 ₽ — Баланс: 7 890,12 ₽ Плат. счёт •• 0000' }),
@@ -38,11 +45,11 @@ test('Sber v3 accepts the two controlled current samples structure', () => {
     assert.equal(result.accountReference, '0000');
     assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
     assert.equal(result.evidenceQuality, 'EXACT');
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v3');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v4');
   }
 });
 
-test('Sber v3 accepts whitespace normalization without widening the envelope', () => {
+test('Sber v4 accepts whitespace normalization without widening the envelope', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming({
     title: '  Перевод\nпо СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.  ',
     description: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -51,7 +58,7 @@ test('Sber v3 accepts whitespace normalization without widening the envelope', (
   assert.equal(result.amount, '12.00');
 });
 
-test('Sber v3 prefers description and falls back to text', () => {
+test('Sber v4 prefers description and falls back to text', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentIncoming({
     description: 'not a current Sber envelope',
     text: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -66,7 +73,7 @@ test('Sber v3 prefers description and falls back to text', () => {
   assert.equal(fallback.amount, '12.00');
 });
 
-test('Sber v3 rejects old v1 and v2 runtime envelopes', () => {
+test('Sber v4 rejects old v1 and v2 runtime envelopes', () => {
   for (const payload of [
     oldIncoming(),
     oldIncoming({ title: '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' }),
@@ -78,7 +85,7 @@ test('Sber v3 rejects old v1 and v2 runtime envelopes', () => {
   }
 });
 
-test('Sber v3 rejects title and body near misses fail closed', () => {
+test('Sber v4 rejects title and body near misses fail closed', () => {
   const cases = [
     { title: 'ТЕСТ Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: currentIncoming().description },
     { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ. ТЕСТ', description: currentIncoming().description },
@@ -106,13 +113,13 @@ test('Sber v3 rejects title and body near misses fail closed', () => {
   assert.notEqual(missingEventTime.normalizationStatus, 'READY');
 });
 
-test('Sber v3 keeps the second monetary field out of the transaction amount', () => {
+test('Sber v4 keeps the second monetary field out of the transaction amount', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming() });
   assert.equal(result.amount, '123.00');
   assert.equal(result.currency, 'RUB');
 });
 
-test('Sber v3 is provider, adapter, and schema scoped', () => {
+test('Sber v4 is provider, adapter, and schema scoped', () => {
   const otherProvider = normalizeBankEvent({ ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'other.bank' }, payload: currentIncoming() });
   assert.notEqual(otherProvider.normalizationStatus, 'READY');
 
@@ -133,10 +140,50 @@ test('Sber v3 is provider, adapter, and schema scoped', () => {
   }
 });
 
-test('Sber v3 uses envelope eventTime and does not mutate raw payload', () => {
+test('Sber v4 uses envelope eventTime and does not mutate raw payload', () => {
   const payload = currentIncoming();
   const before = JSON.stringify(payload);
   const result = normalizeBankEvent({ ...base, payload });
   assert.equal(result.occurredAt, '2026-09-30T07:59:00.000Z');
   assert.equal(JSON.stringify(payload), before);
+});
+
+test('Sber v4 extracts only the proven outgoing partial evidence', () => {
+  const result = normalizeBankEvent({ ...base, payload: currentOutgoing() });
+  assert.equal(result.normalizationStatus, 'PARTIAL');
+  assert.equal(result.evidenceQuality, 'PARTIAL');
+  assert.equal(result.eventType, 'UNKNOWN');
+  assert.equal(result.direction, 'UNKNOWN');
+  assert.equal(result.amount, '1234.00');
+  assert.equal(result.currency, 'RUB');
+  assert.equal(result.accountReference, '0271');
+  assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v4');
+  assert.equal(result.merchant, null);
+  assert.equal(result.counterparty, null);
+});
+
+test('Sber v4 rejects outgoing near misses without partial extraction', () => {
+  const cases = [
+    { title: 'Другая форма', description: currentOutgoing().description },
+    { title: 'ТЕСТОВЫЙ СЕРВИС-ПЕРЕВОД', description: currentOutgoing().description },
+    { title: currentOutgoing().title, description: '1 234 ₽ Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '1234,00 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876.54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 RUB Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 ₽ Счёт •• 0271' },
+    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 027' },
+    { title: currentOutgoing().title, description: `${currentOutgoing().description} ЛИШНИЙ ТЕКСТ` },
+    { title: currentOutgoing().title, description: currentOutgoing().description, eventTime: null },
+    { title: currentOutgoing().title, description: 'reference-only' },
+  ];
+  for (const testCase of cases) {
+    const { eventTime = base.eventTime, ...payload } = testCase;
+    const result = normalizeBankEvent({ ...base, eventTime, payload });
+    assert.notEqual(result.normalizationStatus, 'READY');
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+    assert.equal(result.amount, null);
+    assert.equal(result.accountReference, null);
+  }
 });
