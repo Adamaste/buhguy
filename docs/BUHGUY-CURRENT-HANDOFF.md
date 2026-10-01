@@ -19,7 +19,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-01
 - Current master: `58e2610406425aa7faf84080cf2ee77583b867c4`
 - Current phase: Alfa F5 v3 production deployment and fresh E2E are complete; the next provider stage is Yandex transfer/top-up forensic
-- Current blocker: v2 correctly failed closed on observation 260 because its synthetic body grammar did not match the production title-case anchors. The v3 staged parser is review-only and must preserve `eventType=UNKNOWN`, `direction=UNKNOWN`, `accountReferenceKind=NULL`, and no identity inference. Sber outgoing/debit direction remains unproven; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
+- Current blocker: Alfa F5 v3 is CLOSED. The next active stage is Yandex read-only corpus forensic, followed by transfer/top-up evidence before any parser work; artificial purchase testing is forbidden. Sber outgoing/debit direction remains unresolved. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
 - Production artifact: exact master `58e2610406425aa7faf84080cf2ee77583b867c4`, 309 files, archive SHA-256 `f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
@@ -52,8 +52,8 @@ Master CI run `36907264462` passed for master
 `58e2610406425aa7faf84080cf2ee77583b867c4`. The immutable production
 artifact contains 309 files and has archive SHA-256
 `f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`.
-The release manifest and installed file hashes matched, the bank-ingestion
-service remained healthy, and the FNS timer remained enabled and active.
+The release manifest and installed file hashes matched, and the bank-ingestion
+service remained healthy.
 
 The fresh Alfa primary was observation `263` / transaction `213`; no separate
 companion was observed. It matched the exact staged four-section v3 envelope:
