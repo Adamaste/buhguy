@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `8e56566717e346fb56371ddcb9216de68777bade`
-- Current phase: T-Bank top-up partial normalizer is deployed and its fresh production E2E is proven; next provider is Alfa
+- Current master: `78e47ac1d0705213cec2ba540060809ebdf4246f`
+- Current phase: Alfa F5 partial normalizer is implemented and reviewed in PR #54; production deployment and fresh production E2E are pending
 - Current blocker: Sber outgoing/debit direction remains unproven and must stay `UNKNOWN`; amount/RUB/account-reference extraction is production-proven. No further controlled Sber amount sample is required. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
 - Production artifact: exact master `8e56566717e346fb56371ddcb9216de68777bade`, 305 files, archive SHA-256 `dfe0438786378297d14f9c6e877051ed38097883308f138deb0f0c65d55a55ab`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Alfa Bank is next: first perform read-only corpus forensic, then only the minimum necessary controlled transfers/top-ups. After Alfa, Yandex Bank follows: first transfer/top-up evidence, then card-purchase evidence only when a real Yandex-card purchase occurs naturally; do not create artificial purchases for testing. T-Bank top-up E2E is closed and no more controlled T-Bank top-up samples are required. Ozon remains deferred because additional paid notification experiments are undesirable and no Ozon parser is authorized. Do not infer `CREDIT`/`DEBIT` from controlled-operation knowledge alone. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
+- Next action: After PR #54 merges, wait for green master CI, deploy the exact merged master through the immutable-artifact procedure, and run one fresh Alfa F5 production E2E. Verify amount/RUB/eventTime/masked-reference value while preserving `eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`; confirm that no account/card identity inference occurs. Do not perform historical replay/backfill; no additional controlled Alfa amount transfer is required. After Alfa closes, move to Yandex: transfer/top-up evidence first, then card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Alfa F5 partial normalizer
 
