@@ -170,7 +170,7 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
       WHERE bt.id=$1`, [created.transactionId])).rows[0];
     assert.deepEqual(persisted, {
       amount: '1234.00', currency: 'RUB', direction: 'UNKNOWN', event_type: 'UNKNOWN', normalization_status: 'PARTIAL',
-      account_reference: '0271', account_reference_kind: 'MASKED_ACCOUNT', financial_account_id: accountId,
+      account_reference: '0271', account_reference_kind: 'MASKED_ACCOUNT', financial_account_id: String(accountId),
       resolution_state: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE',
     });
   } finally {
