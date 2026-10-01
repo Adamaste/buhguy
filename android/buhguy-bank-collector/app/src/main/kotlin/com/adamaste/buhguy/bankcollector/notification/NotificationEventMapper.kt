@@ -31,18 +31,21 @@ class NotificationEventMapper(
             snapshot.bigText?.let { put("description", it) }
             snapshot.subText?.let { put("reference", it) }
         }.filterValues { it != null }
+        val ingestionMetadata = linkedMapOf<String, String?>().apply {
+            put("adapter", "android-notification")
+            put("provider", provider.providerKey)
+            put("deviceType", "android")
+            put("schemaVersion", "1")
+            put("sourcePackage", snapshot.packageName)
+            snapshot.channelId?.takeIf { it.isNotBlank() }?.let { put("notificationChannel", it) }
+        }
         return BankNotificationEvent(
             sourceKey = sourceKey,
             sourceEventId = deterministicSourceEventId(snapshot),
             observedAt = capturedAt.toString(),
             eventTime = Instant.ofEpochMilli(snapshot.postTime).toString(),
             payload = payload,
-            ingestionMetadata = mapOf(
-                "adapter" to "android-notification",
-                "provider" to provider.providerKey,
-                "deviceType" to "android",
-                "schemaVersion" to "1",
-            ),
+            ingestionMetadata = ingestionMetadata,
         )
     }
 

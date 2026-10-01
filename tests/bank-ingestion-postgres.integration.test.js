@@ -52,12 +52,21 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
       ...event,
       sourceEventId: 'evt-yandex-incoming',
       payload: { title: 'Входящий перевод', description: 'Пополнение на 100.00 RUB ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' },
-      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1', sourcePackage: 'ru.yandex.taximeter', notificationChannel: 'notification_channel_1' },
     });
     assert.equal(yandexPurchase.status, 'created');
     assert.equal(yandexPurchase.normalization.eventType, 'PURCHASE');
     assert.equal(yandexIncoming.status, 'created');
     assert.equal(yandexIncoming.normalization.eventType, 'INCOMING_TRANSFER');
+    const yandexMetadata = (await pool.query(`SELECT ingestion_metadata FROM bank_event_observations WHERE source_event_id='evt-yandex-incoming'`)).rows[0];
+    assert.deepEqual(yandexMetadata.ingestion_metadata, {
+      adapter: 'android-notification',
+      provider: 'com.yandex.bank',
+      deviceType: 'android',
+      schemaVersion: '1',
+      sourcePackage: 'ru.yandex.taximeter',
+      notificationChannel: 'notification_channel_1',
+    });
     const yandexBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-yandex-purchase'`)).rows[0];
     const yandexReplay = await ingestBankEvent(pool, {
       ...event,

@@ -17,15 +17,37 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `58e2610406425aa7faf84080cf2ee77583b867c4`
-- Current phase: Alfa F5 v3 production deployment and fresh E2E are complete; the next provider stage is Yandex transfer/top-up forensic
-- Current blocker: Alfa F5 v3 is CLOSED. The next active stage is Yandex read-only corpus forensic, followed by transfer/top-up evidence before any parser work; artificial purchase testing is forbidden. Sber outgoing/debit direction remains unresolved. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
+- Current master: `0a6a97f1f8c594520f12bb22218320869edfe3ff`
+- Current phase: Android source-provenance implementation is prepared from master for review; no production deployment has been performed for this change
+- Current blocker: Yandex physical source provenance is currently lost in persisted envelopes. This change is limited to preserving optional source package/channel metadata; no classifier or parser change is in scope. The deployed runtime remains the prior artifact below
 - Production artifact: exact master `58e2610406425aa7faf84080cf2ee77583b867c4`, 309 files, archive SHA-256 `f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Begin Yandex read-only corpus forensic, then collect transfer/top-up evidence before any parser work. Study Yandex card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Do not perform historical replay/backfill or another Alfa research transfer. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Review and merge the Android source-provenance change, then deploy it through the immutable-artifact path. No new Yandex bank operation is required for this provenance stage; a later classifier strong-unknown decision remains separate. Study Yandex card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Do not perform historical replay/backfill or another Alfa research transfer. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+
+## Android source provenance handoff
+
+The current GitHub master is `0a6a97f1f8c594520f12bb22218320869edfe3ff`;
+the production artifact remains the separately deployed
+`58e2610406425aa7faf84080cf2ee77583b867c4` release above until this change is
+reviewed, merged, and deployed through the normal immutable-artifact path.
+
+The Yandex corpus currently contains 71 transactions: 9 READY incoming
+transfers, 14 READY purchases, and 48 PARTIAL rows; the latest observation and
+transaction ids are 270 and 220. Physical source metadata was not preserved,
+so observations 266-270 cannot safely be assigned to a Yandex source app or
+role from the current envelopes. ADB is unavailable for this review, and no
+new bank operation is required.
+
+The model remains one canonical financial provider, `com.yandex.bank`.
+`sourcePackage` and optional `notificationChannel` are the next transport
+provenance fields; they do not prove ownership, event type, direction,
+reconciliation, or that packages should be merged, and the channel is not
+part of source-event identity. A later classifier strong-unknown decision is
+separate. No Android configuration, parser, DB schema, production data, or
+credential change is part of this stage.
 
 ## Alfa F5 partial normalizer
 

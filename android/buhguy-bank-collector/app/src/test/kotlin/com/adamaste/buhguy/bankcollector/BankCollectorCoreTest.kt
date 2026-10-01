@@ -27,6 +27,8 @@ class BankCollectorCoreTest {
         val event = mapper.map(snapshot)!!
         assertEquals(setOf("title", "text"), event.payload.keys)
         assertEquals("android-notification", event.ingestionMetadata["adapter"])
+        assertEquals("com.demo.bank", event.ingestionMetadata["sourcePackage"])
+        assertEquals(null, event.ingestionMetadata["notificationChannel"])
     }
 
     @Test fun allowlistedNotificationIsCapturedAndRetryReusesSameEventId() {
@@ -48,6 +50,8 @@ class BankCollectorCoreTest {
         val event = yandexMapper.map(yandexSnapshot)!!
 
         assertEquals("com.yandex.bank", event.ingestionMetadata["provider"])
+        assertEquals("ru.yandex.taximeter", event.ingestionMetadata["sourcePackage"])
+        assertEquals("notification_channel_1", event.ingestionMetadata["notificationChannel"])
         assertEquals(
             yandexMapper.deterministicSourceEventId(yandexSnapshot),
             yandexMapper.deterministicSourceEventId(yandexSnapshot.copy(channelId = "other")),

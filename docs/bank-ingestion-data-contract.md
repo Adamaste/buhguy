@@ -49,6 +49,15 @@ ChatGPT semantic view. `event_type` is an evidence-level classification, not a
 future accounting business event; the initial values are `UNKNOWN`, `PURCHASE`,
 and `INCOMING_TRANSFER`.
 
+Android ingestion may preserve optional transport provenance in
+`ingestionMetadata.sourcePackage` and `ingestionMetadata.notificationChannel`.
+`provider` remains the canonical financial provider used for normalization;
+the physical Android package and channel are transport evidence only. These
+fields do not prove ownership, event type, direction, reconciliation, or that
+two packages should be merged. The channel is metadata only and is excluded
+from `sourceEventId` identity, so replay and deduplication semantics are
+unchanged. Legacy envelopes without either field remain valid.
+
 ## Versioned provider normalization
 
 Provider-specific parsing is selected only from the structured ingestion
