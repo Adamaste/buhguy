@@ -1,11 +1,12 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v3';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
 const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
+const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 
 function normalizeWhitespace(value) {
@@ -95,6 +96,23 @@ function incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount }) {
   };
 }
 
+function partialSberOutgoing({ occurred, amount, accountReference }) {
+  return {
+    eventType: 'UNKNOWN',
+    occurredAt: occurred,
+    amount,
+    currency: amount === null ? null : 'RUB',
+    direction: 'UNKNOWN',
+    merchant: null,
+    counterparty: null,
+    accountReference,
+    accountReferenceKind: accountReference === null ? null : 'MASKED_ACCOUNT',
+    normalizationStatus: 'PARTIAL',
+    evidenceQuality: 'PARTIAL',
+    normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
+  };
+}
+
 export function normalizeSberBankEvent(input) {
   const payload = input.payload ?? {};
   const title = normalizeWhitespace(payload.title);
@@ -110,7 +128,16 @@ export function normalizeSberBankEvent(input) {
   const hasCurrency = body.includes('\u20bd');
 
   if (!hasIncomingTitle || !hasIncomingMarker || !amountMatch || !hasIncomingStructure || !occurred || !hasCurrency) {
-    return incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount });
+    const outgoingTitle = SBER_OUTGOING_TITLE_PATTERN.test(title);
+    const outgoingMatch = body.match(/^([0-9]+(?:[ ]+[0-9]{3})*)[ ]*₽[ ]+—[ ]+Баланс:[ ]*([0-9]+(?:[ ]+[0-9]{3})*,[0-9]{2})[ ]*₽[ ]+Плат\.[ ]*счёт[ ]*••[ ]*([0-9]{4})$/u);
+    if (outgoingTitle && outgoingMatch && occurred) {
+      return partialSberOutgoing({
+        occurred,
+        amount: `${outgoingMatch[1].replaceAll(' ', '')}.00`,
+        accountReference: outgoingMatch[3],
+      });
+    }
+    return incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount: null });
   }
 
   return {

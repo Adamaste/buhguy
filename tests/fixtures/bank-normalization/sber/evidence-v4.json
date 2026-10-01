@@ -1,0 +1,54 @@
+{
+  "provider": "ru.sberbankmobile",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "sber-bank-normalizer-v4",
+  "controlledOutgoingIndependentSampleCount": 3,
+  "controlledOutgoingPrimaryObservationCount": 4,
+  "controlledOutgoingCompanionObservationCount": 4,
+  "clusters": [
+    {
+      "id": "sber-outgoing-partial-v4",
+      "observationCount": 4,
+      "titleEnvelope": "<word> <word>-<word>",
+      "bodyEnvelope": "<grouped integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>",
+      "syntheticPayload": {
+        "title": "ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД",
+        "description": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271",
+        "text": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271"
+      },
+      "readyCapable": false,
+      "evidence": {
+        "eventType": "UNKNOWN",
+        "direction": "UNKNOWN",
+        "amount": "PRESENT_INTEGER_RUB",
+        "currency": "RUB",
+        "accountReferenceKind": "MASKED_ACCOUNT",
+        "normalizationStatus": "PARTIAL",
+        "eventTimeSource": "ANDROID_POST_TIME",
+        "debitSemantics": "NOT_PROVEN"
+      }
+    },
+    {
+      "id": "sber-outgoing-reference-only",
+      "observationCount": 4,
+      "titleEnvelope": "REFERENCE_ONLY",
+      "bodyEnvelope": "REFERENCE_ONLY",
+      "syntheticPayload": { "reference": "SYNTHETIC_REFERENCE_ONLY" },
+      "readyCapable": false,
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN"
+      }
+    }
+  ],
+  "acceptance": {
+    "activeRuntimeFormat": "V4_INCOMING_EXACT_AND_OUTGOING_PARTIAL_ONLY",
+    "negativeNearMisses": "REQUIRED_FAIL_CLOSED",
+    "providerIsolation": "REQUIRED",
+    "adapterIsolation": "REQUIRED",
+    "schemaVersionIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
