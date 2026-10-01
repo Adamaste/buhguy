@@ -16,16 +16,44 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-09-30
-- Current master: `2b2710f64f90eaddd9e1a8d9ad14c160daa6fa1a`
-- Current phase: Bank Assistant read-only semantic layer is under review after the final Person 1 fresh-ingestion E2E
-- Current blocker: semantic-layer review; no historical backfill or accounting side effects are permitted
+- Last updated: 2026-10-01
+- Current master: `423f978d0783811463d36fd8fcda84019248822d`
+- Current phase: Person 1 multi-bank operation coverage, beginning with Sber outgoing evidence
+- Current blocker: no strict Sber outgoing grammar is proven yet; no parser change or new bank operation is authorized until evidence is sufficient
 - Production artifact: exact master `bfdeea3e5cc62ff65c256725b25b5e1e33027856`, archive SHA-256 `360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review the Bank Assistant semantic-layer PR. Do not deploy it or start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work yet.
+- Next action: complete a read-only Sber outgoing corpus review, then prepare one controlled outgoing sample only if the existing corpus is insufficient. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work.
+
+## Bank Assistant semantic layer activated
+
+PR #48 is merged in master `423f978d0783811463d36fd8fcda84019248822d`;
+master CI #171 (`36752374713`) passed. The approved semantic SQL was deployed
+from that exact master with no migration, grant expansion, or bank-row rewrite.
+The `chatgpt_reader` role can select the semantic views while raw bank tables
+and writes remain blocked. BlazeSQL selection was refreshed to all 30
+`chatgpt_accounting` views, and the assistant read-path smoke test passed.
+
+A fresh real Sber incoming operation was visible through the assistant path as
+`READY / INCOMING_TRANSFER / CREDIT / EXACT` for Person 1's proven account
+evidence. The Bank Assistant is therefore usable for Person 1 proven incoming
+transfers. `READY_TO_ASK_CHATGPT_ABOUT_TRANSFERS=YES`.
+
+The next functional cycle is Person 1 multi-bank operation coverage. Its first
+target is an outgoing Sber transfer from the proven account `MASKED_ACCOUNT
+0271`. This cycle is evidence-first: it must not infer an outgoing grammar,
+change parser code, create ledger/business events, or implement
+`INTERNAL_TRANSFER` before strict controlled evidence exists.
+
+The initial read-only Sber corpus review found 27 immutable Sber observations
+and one outgoing-looking structural candidate. That is not enough for a strict
+deterministic outgoing grammar or an outgoing parser. The current baseline is
+observation `187`, transaction `144`; the `0271` reference has exactly one
+candidate account, `financial_account_id=1`. A controlled outgoing sample is
+the next permitted evidence step, followed by a second sample if the family
+still lacks independent variation.
 
 ## Sber normalizer v3 current-format evidence
 
