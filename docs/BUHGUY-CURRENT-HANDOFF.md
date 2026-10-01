@@ -19,7 +19,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-01
 - Current master: `423f978d0783811463d36fd8fcda84019248822d`
 - Current phase: Person 1 multi-bank operation coverage, beginning with Sber outgoing evidence
-- Current blocker: no strict Sber outgoing grammar is proven yet; no parser change or new bank operation is authorized until evidence is sufficient
+- Current blocker: no strict Sber outgoing grammar is proven yet and parser changes are not authorized; exactly one controlled Sber outgoing evidence operation is permitted to obtain the next independent sample. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
 - Production artifact: exact master `bfdeea3e5cc62ff65c256725b25b5e1e33027856`, archive SHA-256 `360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
@@ -51,8 +51,11 @@ The initial read-only Sber corpus review found 27 immutable Sber observations
 and one outgoing-looking structural candidate. That is not enough for a strict
 deterministic outgoing grammar or an outgoing parser. The current baseline is
 observation `187`, transaction `144`; the `0271` reference has exactly one
-candidate account, `financial_account_id=1`. A controlled outgoing sample is
-the next permitted evidence step, followed by a second sample if the family
+candidate account, `financial_account_id=1`. This proves the identity candidate
+for the registered `MASKED_ACCOUNT 0271` reference, but does not prove that the
+reference is present or stable in the Sber outgoing notification family;
+`OUTGOING_ACCOUNT_REFERENCE_PROVEN=NO`. Exactly one controlled outgoing sample
+is the next permitted evidence step; a second sample is required if the family
 still lacks independent variation.
 
 ## Sber normalizer v3 current-format evidence
