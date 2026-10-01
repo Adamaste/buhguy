@@ -45,6 +45,24 @@ class BankProviderRegistryTest {
         assertEquals("com.example.bank.one", first.ingestionMetadata["provider"])
         assertEquals("com.example.bank.two", second.ingestionMetadata["provider"])
         assertNotEquals(first.ingestionMetadata["provider"], second.ingestionMetadata["provider"])
+        assertEquals("com.example.bank.one", first.ingestionMetadata["sourcePackage"])
+        assertEquals("com.example.bank.two", second.ingestionMetadata["sourcePackage"])
+        assertNotEquals(
+            mapper.deterministicSourceEventId(NotificationSnapshot("com.example.bank.one", null, 1, null, 1L, "a", "b", null, null)),
+            mapper.deterministicSourceEventId(NotificationSnapshot("com.example.bank.two", null, 1, null, 1L, "a", "b", null, null)),
+        )
+    }
+
+    @Test fun channelIsProvenanceOnlyAndDoesNotChangeSourceEventIdentity() {
+        val registry = BankProviderRegistry.fromPackageAllowlist(setOf("com.yandex.bank"))
+        val mapper = NotificationEventMapper(registry, "android-test")
+        val first = NotificationSnapshot("com.yandex.bank", "key", 1, null, 1L, "a", "b", null, null, "notification_channel_1")
+        val second = first.copy(channelId = "notification_channel_2")
+
+        assertNotEquals(null, mapper.map(first))
+        assertEquals(mapper.deterministicSourceEventId(first), mapper.deterministicSourceEventId(second))
+        assertEquals("notification_channel_1", mapper.map(first)!!.ingestionMetadata["notificationChannel"])
+        assertEquals("notification_channel_2", mapper.map(second)!!.ingestionMetadata["notificationChannel"])
     }
 
     @Test fun invalidTransportConfigurationRemainsRetryable() {

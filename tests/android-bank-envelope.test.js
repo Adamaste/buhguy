@@ -12,5 +12,7 @@ test('Android V1 fixture matches the existing bank ingestion envelope contract',
   const validated = validateBankEventInput(fixture);
   assert.match(validated.sourceEventId, /^[a-f0-9]{64}$/);
   assert.equal(validated.ingestionMetadata.adapter, 'android-notification');
+  assert.equal(validated.ingestionMetadata.sourcePackage, 'com.demo.bank');
+  assert.equal(validated.ingestionMetadata.notificationChannel, 'bank-events');
   assert.deepEqual(Object.keys(validated.payload).sort(), ['text', 'title']);
 });

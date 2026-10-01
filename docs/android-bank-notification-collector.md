@@ -29,6 +29,14 @@ persistence. V1 stores title, text, optional bigText/subText,
 package name, notification identity, post time, and capture time. Arbitrary
 Android extras and images are not collected.
 
+The delivered envelope may also preserve `sourcePackage` and the non-blank
+`notificationChannel` as bounded transport provenance. For the Yandex
+transport alias, `ru.yandex.taximeter` with its proven channel still uses the
+canonical provider `com.yandex.bank`; direct Yandex notifications likewise
+keep the canonical provider while recording their physical package/channel.
+This provenance does not infer ownership, event type, direction,
+reconciliation, or a package merge.
+
 Logs contain only a short event-id hash prefix, package name, delivery status,
 HTTP status, and retry count. Full notification text, amounts, account/card
 references, and authentication material are not logged.

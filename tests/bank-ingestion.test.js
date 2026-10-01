@@ -24,6 +24,23 @@ test('bank boundary rejects secret-shaped or unknown fields', () => {
   assert.throws(() => validateBankEventInput({ ...event, payload: { ...event.payload, accessToken: 'not stored' } }), /prohibited secret field/);
   assert.throws(() => validateBankEventInput({ ...event, payload: { ...event.payload, receiptId: 'not matched' } }), /field is not allowed/);
   assert.throws(() => validateBankEventInput({ ...event, payload: { text: 'x'.repeat(16 * 1024) } }), /too long/);
+  assert.throws(() => validateBankEventInput({ ...event, ingestionMetadata: { ...event.ingestionMetadata, sourceVariant: 'alias' } }), /field is not allowed/);
+});
+
+test('Android provenance metadata is optional and bounded', () => {
+  const validated = validateBankEventInput({
+    ...event,
+    ingestionMetadata: {
+      ...event.ingestionMetadata,
+      provider: 'com.yandex.bank',
+      sourcePackage: 'ru.yandex.taximeter',
+      notificationChannel: 'notification_channel_1',
+    },
+  });
+  assert.equal(validated.ingestionMetadata.provider, 'com.yandex.bank');
+  assert.equal(validated.ingestionMetadata.sourcePackage, 'ru.yandex.taximeter');
+  assert.equal(validated.ingestionMetadata.notificationChannel, 'notification_channel_1');
+  assert.doesNotThrow(() => validateBankEventInput(event));
 });
 
 test('internal handler rejects an unknown source without receipt matching', async () => {

@@ -11,6 +11,8 @@
     "adapter": "android-notification",
     "provider": "demo",
     "deviceType": "android",
-    "schemaVersion": "1"
+    "schemaVersion": "1",
+    "sourcePackage": "com.demo.bank",
+    "notificationChannel": "bank-events"
   }
 }
