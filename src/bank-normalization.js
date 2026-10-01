@@ -1,7 +1,7 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
-export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v2';
+export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v3';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
@@ -16,7 +16,10 @@ const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
-const ALFA_F5_BODY_PATTERN = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})\s*;\s+перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB\s*;\s+получатель:\s+\d+\s*\*\s*\d{4}\s*;\s+\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
+const ALFA_F5_ACCOUNT_SECTION = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})$/u;
+const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB$/u;
+const ALFA_F5_RECIPIENT_SECTION = /^Получатель:\s+\d+\s*\*\s*\d{4}$/u;
+const ALFA_F5_TRAILING_SECTION = /^\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -159,13 +162,17 @@ export function normalizeAlfaBankEvent(input) {
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
   const titleMatch = title.match(ALFA_TITLE_PATTERN);
-  const bodyMatch = body.match(ALFA_F5_BODY_PATTERN);
-  if (!titleMatch || !bodyMatch || !occurred) return null;
+  const sections = body.split(';').map((section) => section.trim());
+  const accountMatch = sections.length === 4 ? sections[0].match(ALFA_F5_ACCOUNT_SECTION) : null;
+  const amountMatch = sections.length === 4 ? sections[1].match(ALFA_F5_AMOUNT_SECTION) : null;
+  const recipientMatch = sections.length === 4 ? ALFA_F5_RECIPIENT_SECTION.test(sections[2]) : false;
+  const trailingMatch = sections.length === 4 ? ALFA_F5_TRAILING_SECTION.test(sections[3]) : false;
+  if (!titleMatch || !accountMatch || !amountMatch || !recipientMatch || !trailingMatch || !occurred) return null;
   const titleInteger = titleMatch[1].replace(/^0+(?=\d)/u, '');
   const titleAmount = `${titleInteger}.${titleMatch[2] ?? '00'}`;
-  const bodyAmount = bodyMatch[2].replace(',', '.');
+  const bodyAmount = amountMatch[1].replace(',', '.');
   if (titleAmount !== bodyAmount) return null;
-  return partialAlfa({ occurred, amount: titleAmount, accountReference: bodyMatch[1] });
+  return partialAlfa({ occurred, amount: titleAmount, accountReference: accountMatch[1] });
 }
 
 export function isAlfaBankAndroidNotification(input) {

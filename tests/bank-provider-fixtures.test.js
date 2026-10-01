@@ -55,7 +55,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
     const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : ['evidence-v1.json'];
-    const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json'] : versions;
+    const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json'] : versions;
     for (const version of fixtureVersions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
       assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
@@ -150,4 +150,20 @@ test('Alfa v2 fixture records the fresh comma-decimal title variant', async () =
   ]);
   assert.equal(f5.readyCapable, false);
   assert.equal(companion.observationCount, 4);
+});
+
+test('Alfa v3 fixture records the real-derived staged F5 skeleton', async () => {
+  const fixture = JSON.parse(await readFile(path.join(root, 'fixtures', 'bank-normalization', 'alfa', 'evidence-v3.json'), 'utf8'));
+  const integer = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-referenced-integer-title-v3');
+  const decimal = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-referenced-decimal-title-v3');
+  assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
+  assert.equal(fixture.normalizationVersion, 'alfa-bank-normalizer-v3');
+  assert.equal(fixture.corpusObservationCount, 23);
+  assert.equal(fixture.f5PrimaryObservationCount, 7);
+  assert.equal(fixture.controlledF5IndependentSampleCount, 4);
+  assert.equal(integer.observationCount, 5);
+  assert.equal(decimal.observationCount, 2);
+  assert.equal(integer.readyCapable, false);
+  assert.equal(decimal.readyCapable, false);
+  assert.equal(fixture.observedVariantMatrix['minus integer title + reference absent'], 'NOT_OBSERVED');
 });
