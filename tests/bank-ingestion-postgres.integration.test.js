@@ -204,7 +204,7 @@ integration('Alfa partial reference does not infer account identity without a pr
       sourceEventId: 'synthetic-alfa-f5',
       observedAt: '2026-10-01T10:00:00Z',
       eventTime: '2026-10-01T09:59:00Z',
-      payload: { title: '- 2468 ₽', description: 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 12,34 руб; получатель: 2222*3333; 12 карта 34:56' },
+      payload: { title: '- 2468 ₽', description: 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; получатель: 2222*3333; 12 карта 34:56' },
       ingestionMetadata: { adapter: 'android-notification', provider: 'ru.alfabank.mobile.android', deviceType: 'android', schemaVersion: '1' },
     });
     assert.equal(created.normalization.accountReference, '1111');

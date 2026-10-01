@@ -11,7 +11,9 @@ const base = {
 };
 
 const title = '- 2468 ₽';
-const body = 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 12,34 руб; получатель: 2222*3333; 12 карта 34:56';
+const body = 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; получатель: 2222*3333; 12 карта 34:56';
+const secondTitle = '- 9753 ₽';
+const secondBody = body.replace('2468,00 RUB', '9753,00 RUB');
 
 function result(payload = { title, description: body }, overrides = {}) {
   return normalizeBankEvent({ ...base, ...overrides, payload });
@@ -34,6 +36,20 @@ test('Alfa F5 extracts only the proven partial facts', () => {
   });
 });
 
+test('Alfa F5 accepts a second sanitized sample only when title and body agree', () => {
+  const normalized = result({ title: secondTitle, description: secondBody });
+  assert.equal(normalized.amount, '9753.00');
+  assert.equal(normalized.currency, 'RUB');
+  assert.equal(normalized.accountReference, '1111');
+});
+
+test('Alfa F5 requires the title integer and body comma-decimal to agree', () => {
+  const normalized = result({ title, description: secondBody });
+  assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+  assert.equal(normalized.amount, null);
+  assert.equal(normalized.accountReference, null);
+});
+
 test('Alfa F5 prefers description over text and normalizes whitespace', () => {
   const normalized = result({ title: ' -\n 2468 ₽ ', description: `  ${body.replaceAll(' ', '  ')} `, text: 'not the proven family' });
   assert.equal(normalized.amount, '2468.00');
@@ -51,7 +67,7 @@ test('Alfa F5 rejects a missing title or body', () => {
 });
 
 test('Alfa F5 accepts only the integer title amount grammar', () => {
-  assert.equal(result({ title: '- 0 ₽', description: body }).amount, '0.00');
+  assert.equal(result({ title: '- 0 ₽', description: body.replace('2468,00 RUB', '0,00 RUB') }).amount, '0.00');
   assert.equal(result({ title: '- 2468.00 ₽', description: body }).amount, null);
   assert.equal(result({ title: '- 2 468 ₽', description: body }).amount, null);
 });
@@ -59,6 +75,9 @@ test('Alfa F5 accepts only the integer title amount grammar', () => {
 test('Alfa F5 requires the proven RUB symbol and rejects other currencies', () => {
   assert.equal(result({ title: '- 2468 RUB', description: body }).amount, null);
   assert.equal(result({ title: '- 2468 $', description: body }).amount, null);
+  assert.equal(result({ title, description: body.replace('2468,00 RUB', '2468,00 руб') }).amount, null);
+  assert.equal(result({ title, description: body.replace('2468,00 RUB', '2468.00 RUB') }).amount, null);
+  assert.equal(result({ title, description: body.replace('2468,00 RUB', '2468 RUB') }).amount, null);
 });
 
 test('Alfa F5 rejects historical and informational body families', () => {
@@ -100,7 +119,7 @@ test('Alfa F5 rejects malformed, ambiguous, and unsupported variants', () => {
     { title: '- 2468 ₽', description: body.replace('перевод на', 'платёж на') },
     { title: '- 2468 ₽', description: `${body} лишний текст` },
     { title: '- 2468 ₽', description: body.replace('0000*1111', '00001111') },
-    { title: '- 2468 ₽', description: body.replace('12,34 руб', '12.34 USD') },
+    { title: '- 2468 ₽', description: body.replace('2468,00 RUB', '2468.00 USD') },
     { title: 'ПЕРЕВОД - 2468 ₽', description: body },
   ]) {
     const normalized = result(payload);

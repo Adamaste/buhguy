@@ -16,7 +16,7 @@ const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)\s*₽$/u;
-const ALFA_F5_BODY_PATTERN = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})\s*;\s+перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+\d+(?:,\d{2})?\s+(?:руб\.?|RUB)\s*;\s+получатель:\s+\d+\s*\*\s*\d{4}\s*;\s+\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/iu;
+const ALFA_F5_BODY_PATTERN = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})\s*;\s+перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB\s*;\s+получатель:\s+\d+\s*\*\s*\d{4}\s*;\s+\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -161,7 +161,10 @@ export function normalizeAlfaBankEvent(input) {
   const titleMatch = title.match(ALFA_TITLE_PATTERN);
   const bodyMatch = body.match(ALFA_F5_BODY_PATTERN);
   if (!titleMatch || !bodyMatch || !occurred) return null;
-  return partialAlfa({ occurred, amount: `${titleMatch[1]}.00`, accountReference: bodyMatch[1] });
+  const titleAmount = `${titleMatch[1].replace(/^0+(?=\d)/u, '')}.00`;
+  const bodyAmount = bodyMatch[2].replace(',', '.');
+  if (titleAmount !== bodyAmount) return null;
+  return partialAlfa({ occurred, amount: titleAmount, accountReference: bodyMatch[1] });
 }
 
 export function isAlfaBankAndroidNotification(input) {

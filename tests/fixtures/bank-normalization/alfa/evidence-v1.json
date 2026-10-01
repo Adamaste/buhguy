@@ -11,7 +11,7 @@
       "controlledObservationCount": 2,
       "fields": {
         "title": { "present": true, "shape": "minus integer RUB symbol" },
-        "description": { "present": true, "shape": "fixed semicolon-separated transfer envelope with payment-account marker and one additional decimal monetary field" },
+        "description": { "present": true, "shape": "fixed semicolon-separated transfer envelope with masked-reference position and one comma-decimal RUB monetary field equal to the title amount" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
       },
@@ -19,10 +19,10 @@
       "evidence": {
         "eventType": "NOT_PROVEN",
         "direction": "NOT_PROVEN",
-        "amountGrammar": "integer RUB title position",
-        "currencyGrammar": "RUB symbol in title",
+        "amountGrammar": "integer RUB title position must equal comma-decimal RUB body position",
+        "currencyGrammar": "RUB symbol in title and uppercase RUB code in body",
         "eventTime": "ANDROID_ENVELOPE_PROVEN",
-        "accountReferenceStructure": "payment-account marker with four-digit suffix; kind NOT_PROVEN"
+        "accountReferenceStructure": "masked-reference suffix position with four digits; kind NOT_PROVEN"
       },
       "readyCapable": false
     },
@@ -47,7 +47,7 @@
       "readyCapable": false
     }
   ],
-  "provenFacts": ["amount", "RUB", "Android postTime eventTime", "masked-reference position"],
+  "provenFacts": ["title/body amount equality", "RUB", "Android postTime eventTime", "masked-reference position"],
   "unprovenFacts": ["eventType", "direction", "reference kind", "ownership"],
   "acceptance": {
     "positiveFormats": "F5 partial only",

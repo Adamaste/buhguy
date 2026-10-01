@@ -31,9 +31,10 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 The read-only Alfa corpus review covered 19 observations across 11 structural
 families. Two independent controlled primary samples establish the exact F5
-family. The feature branch adds only its narrow partial path: integer RUB
-amount, Android envelope event time, and the proven payment-account suffix
-position. It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
+family. The feature branch adds only its narrow partial path: an integer RUB
+title amount that must equal the observed comma-decimal RUB body amount,
+Android envelope event time, and the proven masked-reference suffix position.
+It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
 reference kind; no ownership or card/account inference is performed. Unmatched
 Alfa families remain on generic normalization. No further controlled Alfa
 amount transfer is required. After review and deployment, run one fresh Alfa
