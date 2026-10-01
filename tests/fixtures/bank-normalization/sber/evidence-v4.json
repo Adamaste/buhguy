@@ -2,17 +2,19 @@
   "provider": "ru.sberbankmobile",
   "source": "real-derived-sanitized",
   "normalizationVersion": "sber-bank-normalizer-v4",
-  "controlledOutgoingPrimaryObservationCount": 3,
+  "controlledOutgoingIndependentSampleCount": 3,
+  "controlledOutgoingPrimaryObservationCount": 4,
+  "controlledOutgoingCompanionObservationCount": 4,
   "clusters": [
     {
       "id": "sber-outgoing-partial-v4",
-      "observationCount": 3,
+      "observationCount": 4,
       "titleEnvelope": "<word> <word>-<word>",
       "bodyEnvelope": "<grouped integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>",
       "syntheticPayload": {
         "title": "ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД",
-        "description": "1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271",
-        "text": "1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271"
+        "description": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271",
+        "text": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271"
       },
       "readyCapable": false,
       "evidence": {
@@ -28,7 +30,7 @@
     },
     {
       "id": "sber-outgoing-reference-only",
-      "observationCount": 3,
+      "observationCount": 4,
       "titleEnvelope": "REFERENCE_ONLY",
       "bodyEnvelope": "REFERENCE_ONLY",
       "syntheticPayload": { "reference": "SYNTHETIC_REFERENCE_ONLY" },

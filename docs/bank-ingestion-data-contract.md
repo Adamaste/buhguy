@@ -102,7 +102,8 @@ rows are immutable and are not backfilled or replayed.
 
 ## Sber Android normalization v3 (historical revision)
 
-The active provider-specific `sber-bank-normalizer-v3` applies only when
+The historical provider-specific revision `sber-bank-normalizer-v3` applied only
+when
 ingestion metadata identifies provider `ru.sberbankmobile`, adapter
 `android-notification`, and schema version `1`. Two newest controlled primary
 incoming observations establish the only active current envelope:

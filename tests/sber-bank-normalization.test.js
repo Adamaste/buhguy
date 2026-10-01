@@ -26,8 +26,8 @@ const oldIncoming = (overrides = {}) => ({
 
 const currentOutgoing = (overrides = {}) => ({
   title: 'ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД',
-  description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
-  text: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+  description: '2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+  text: '2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
   ...overrides,
 });
 
@@ -148,13 +148,31 @@ test('Sber v4 uses envelope eventTime and does not mutate raw payload', () => {
   assert.equal(JSON.stringify(payload), before);
 });
 
+test('Sber v4 outgoing extraction does not cross provider, adapter, or schema scope', () => {
+  const cases = [
+    { provider: 'other.bank' },
+    { adapter: 'BANK_API' },
+    { schemaVersion: '2' },
+    { schemaVersion: undefined },
+  ];
+  for (const overrides of cases) {
+    const ingestionMetadata = { ...base.ingestionMetadata, ...overrides };
+    if (overrides.schemaVersion === undefined) delete ingestionMetadata.schemaVersion;
+    const result = normalizeBankEvent({ ...base, ingestionMetadata, payload: currentOutgoing() });
+    assert.equal(result.amount, null);
+    assert.equal(result.accountReference, null);
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+  }
+});
+
 test('Sber v4 extracts only the proven outgoing partial evidence', () => {
   const result = normalizeBankEvent({ ...base, payload: currentOutgoing() });
   assert.equal(result.normalizationStatus, 'PARTIAL');
   assert.equal(result.evidenceQuality, 'PARTIAL');
   assert.equal(result.eventType, 'UNKNOWN');
   assert.equal(result.direction, 'UNKNOWN');
-  assert.equal(result.amount, '1234.00');
+  assert.equal(result.amount, '2468.00');
   assert.equal(result.currency, 'RUB');
   assert.equal(result.accountReference, '0271');
   assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
@@ -163,16 +181,32 @@ test('Sber v4 extracts only the proven outgoing partial evidence', () => {
   assert.equal(result.counterparty, null);
 });
 
+test('Sber v4 outgoing preserves description precedence and whitespace-only text fallback', () => {
+  const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentOutgoing({
+    description: 'not an outgoing Sber envelope',
+  }) });
+  assert.equal(descriptionPreferred.amount, null);
+  assert.equal(descriptionPreferred.accountReference, null);
+  assert.equal(descriptionPreferred.normalizationStatus, 'PARTIAL');
+
+  const fallback = normalizeBankEvent({ ...base, payload: currentOutgoing({
+    description: ' \n\t ',
+  }) });
+  assert.equal(fallback.amount, '2468.00');
+  assert.equal(fallback.accountReference, '0271');
+  assert.equal(fallback.normalizationStatus, 'PARTIAL');
+});
+
 test('Sber v4 rejects outgoing near misses without partial extraction', () => {
   const cases = [
     { title: 'Другая форма', description: currentOutgoing().description },
     { title: 'ТЕСТОВЫЙ СЕРВИС-ПЕРЕВОД', description: currentOutgoing().description },
-    { title: currentOutgoing().title, description: '1 234 ₽ Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
-    { title: currentOutgoing().title, description: '1234,00 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
-    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876.54 ₽ Плат. счёт •• 0271' },
-    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 RUB Плат. счёт •• 0271' },
-    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 ₽ Счёт •• 0271' },
-    { title: currentOutgoing().title, description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 027' },
+    { title: currentOutgoing().title, description: '2 468 ₽ Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '2468,00 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '2 468 ₽ — Баланс: 9 876.54 ₽ Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '2 468 ₽ — Баланс: 9 876,54 RUB Плат. счёт •• 0271' },
+    { title: currentOutgoing().title, description: '2 468 ₽ — Баланс: 9 876,54 ₽ Счёт •• 0271' },
+    { title: currentOutgoing().title, description: '2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 027' },
     { title: currentOutgoing().title, description: `${currentOutgoing().description} ЛИШНИЙ ТЕКСТ` },
     { title: currentOutgoing().title, description: currentOutgoing().description, eventTime: null },
     { title: currentOutgoing().title, description: 'reference-only' },

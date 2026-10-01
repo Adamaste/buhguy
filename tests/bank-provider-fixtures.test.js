@@ -87,11 +87,14 @@ test('Sber v4 fixture records the proven outgoing-shaped partial envelope', asyn
   const companion = fixture.clusters.find((cluster) => cluster.id === 'sber-outgoing-reference-only');
   assert.equal(fixture.provider, 'ru.sberbankmobile');
   assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v4');
-  assert.equal(fixture.controlledOutgoingPrimaryObservationCount, 3);
-  assert.equal(outgoing.observationCount, 3);
+  assert.equal(fixture.controlledOutgoingIndependentSampleCount, 3);
+  assert.equal(fixture.controlledOutgoingPrimaryObservationCount, 4);
+  assert.equal(fixture.controlledOutgoingCompanionObservationCount, 4);
+  assert.equal(outgoing.observationCount, 4);
   assert.equal(outgoing.readyCapable, false);
   assert.equal(outgoing.evidence.eventType, 'UNKNOWN');
   assert.equal(outgoing.evidence.direction, 'UNKNOWN');
   assert.equal(outgoing.evidence.normalizationStatus, 'PARTIAL');
   assert.equal(companion.readyCapable, false);
+  assert.equal(companion.observationCount, 4);
 });

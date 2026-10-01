@@ -143,8 +143,8 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
       eventTime: '2026-10-01T09:59:00Z',
       payload: {
         title: 'ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД',
-        description: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
-        text: '1 234 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+        description: '2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
+        text: '2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271',
       },
       ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', deviceType: 'android', schemaVersion: '1' },
     });
@@ -155,7 +155,7 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
     assert.equal(created.normalization.evidenceQuality, 'PARTIAL');
     assert.equal(created.normalization.eventType, 'UNKNOWN');
     assert.equal(created.normalization.direction, 'UNKNOWN');
-    assert.equal(created.normalization.amount, '1234.00');
+    assert.equal(created.normalization.amount, '2468.00');
     assert.equal(created.normalization.currency, 'RUB');
     assert.equal(created.normalization.accountReference, '0271');
     assert.equal(created.normalization.accountReferenceKind, 'MASKED_ACCOUNT');
@@ -169,7 +169,7 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
       JOIN bank_transaction_account_resolution r ON r.bank_transaction_id=bt.id
       WHERE bt.id=$1`, [created.transactionId])).rows[0];
     assert.deepEqual(persisted, {
-      amount: '1234.00', currency: 'RUB', direction: 'UNKNOWN', event_type: 'UNKNOWN', normalization_status: 'PARTIAL',
+      amount: '2468.00', currency: 'RUB', direction: 'UNKNOWN', event_type: 'UNKNOWN', normalization_status: 'PARTIAL',
       account_reference: '0271', account_reference_kind: 'MASKED_ACCOUNT', financial_account_id: String(accountId),
       resolution_state: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE',
     });

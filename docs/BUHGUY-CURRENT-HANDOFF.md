@@ -63,8 +63,9 @@ still lacks independent variation.
 The outgoing evidence research is complete for the narrow partial envelope.
 Controlled primary samples are observations `193/195`, `201`, and `204`; the
 reference-only companions are `194/196`, `202`, and `203`. The third controlled
-ground-truth amount was `1234 RUB` and matched the integer monetary position,
-not the independent comma-decimal balance position.
+sample used a unique integer RUB amount. It matched the integer monetary
+position, not the independent comma-decimal balance position; the exact real
+amount is intentionally not retained in repository artifacts.
 
 The v4 parser may preserve only these proven facts for the exact provider,
 adapter, schema, title/body structure: integer transaction amount, `RUB`, the
