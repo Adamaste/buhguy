@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `64aef75ede5baa0dacb87394f39fd96bd2ca6f83`
-- Current phase: Alfa F5 v3 is implemented from real-derived segment evidence; production deployment and one fresh production E2E are pending
-- Current blocker: v2 correctly failed closed on observation 260 because its synthetic body grammar did not match the production title-case anchors. The v3 staged parser is review-only and must preserve `eventType=UNKNOWN`, `direction=UNKNOWN`, `accountReferenceKind=NULL`, and no identity inference. Sber outgoing/debit direction remains unproven; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
-- Production artifact: exact master `64aef75ede5baa0dacb87394f39fd96bd2ca6f83`, 308 files, archive SHA-256 `4f3d18804ed5fd643d63dd5a7a3306aa269ec326b7ae5f3c64a45ca806de15a5`
+- Current master: `58e2610406425aa7faf84080cf2ee77583b867c4`
+- Current phase: Alfa F5 v3 production deployment and fresh E2E are complete; the next provider stage is Yandex transfer/top-up forensic
+- Current blocker: Alfa F5 v3 is CLOSED. The next active stage is Yandex read-only corpus forensic, followed by transfer/top-up evidence before any parser work; artificial purchase testing is forbidden. Sber outgoing/debit direction remains unresolved. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
+- Production artifact: exact master `58e2610406425aa7faf84080cf2ee77583b867c4`, 309 files, archive SHA-256 `f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Review and merge the Alfa v3 PR, deploy exact master through the immutable-artifact procedure, and run one fresh Alfa F5 production E2E. Verify amount/RUB/eventTime/reference extraction while preserving `eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`; confirm no account/card identity inference. Do not perform historical replay/backfill or another research transfer. If Alfa passes, move to Yandex: transfer/top-up evidence first, then card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Begin Yandex read-only corpus forensic, then collect transfer/top-up evidence before any parser work. Study Yandex card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Do not perform historical replay/backfill or another Alfa research transfer. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Alfa F5 partial normalizer
 
@@ -43,8 +43,32 @@ reference kind; no ownership or card/account inference is performed. Unmatched
 Alfa families and companions remain on generic normalization. Observation 260
 failed closed under v2 without semantic corruption because the old synthetic
 body grammar used lowercase anchors; v3 corrects only that evidence-backed
-grammar. No additional research transfer is required; one fresh production E2E
-is required after v3 deployment before Alfa closes.
+grammar. No additional research transfer or fresh Alfa E2E is required; the
+post-deployment E2E has passed and Alfa is closed.
+
+## Alfa F5 v3 production E2E closeout
+
+Master CI run `36907264462` passed for master
+`58e2610406425aa7faf84080cf2ee77583b867c4`. The immutable production
+artifact contains 309 files and has archive SHA-256
+`f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`.
+The release manifest and installed file hashes matched, and the bank-ingestion
+service remained healthy.
+
+The fresh Alfa primary was observation `263` / transaction `213`; no separate
+companion was observed. It matched the exact staged four-section v3 envelope:
+title/body amount equality, RUB, Android event time, both reference segments,
+and a masked reference were present. The controlled amount matched without
+retaining the real amount in this handoff. The persisted result is
+`normalizationStatus=PARTIAL`, `evidenceQuality=PARTIAL`,
+`eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`.
+Account resolution remains `UNKNOWN` with no financial account id, and no
+payment-instrument or account/card identity inference was performed.
+
+No historical rows were replayed or backfilled, and no accounting or identity
+side effects were created. Alfa F5 is closed. The next provider stage is
+Yandex transfer/top-up forensic; card-purchase evidence is deferred until a
+real purchase occurs naturally.
 
 ## T-Bank top-up partial parser evidence
 
