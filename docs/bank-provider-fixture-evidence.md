@@ -49,18 +49,25 @@ empty families remain fail-closed; no READY T-Bank parser is authorized.
 
 ### Alfa Bank
 
-The corpus contains 19 observations across 11 structural families. Two
-independent controlled primary samples establish one exact F5 family, while
-the empty/companion family remains unsupported. The narrow
-`alfa-bank-normalizer-v1` accepts only the provider/adapter/schema-scoped F5
-envelope: a minus-prefixed integer RUB title, a comma-decimal `RUB` body
-amount that equals the title amount, the fixed semicolon-separated body
-structure, and the masked-reference suffix position. It extracts the amount,
-`RUB`, Android envelope event time, and masked suffix value, but leaves
-`eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`.
-The transfer wording is evidence for the fixture but does not authorize a
-runtime `TRANSFER` type or debit/credit direction. Other Alfa families and
-near misses remain on generic normalization.
+The current corpus contains 22 observations across 11 structural families.
+Three independent controlled primary samples establish one exact F5 body
+family, while the empty/companion family remains unsupported. Observation 257
+added the second independently observed title format after v1 had already
+failed closed on it; no semantic corruption occurred and no additional
+research transfer is required. The historical
+`alfa-bank-normalizer-v1` accepted only a minus-prefixed integer RUB title.
+The active `alfa-bank-normalizer-v2` accepts exactly either that integer title
+or a minus-prefixed comma-decimal(two digits) RUB title, requires the title
+amount to equal the comma-decimal uppercase `RUB` body amount after
+normalization, and preserves the fixed semicolon-separated body structure and
+masked-reference position. It extracts the amount, `RUB`, Android envelope
+event time, and masked suffix value, but leaves `eventType=UNKNOWN`,
+`direction=UNKNOWN`, and `accountReferenceKind=NULL`. The transfer wording is
+evidence for the fixture but does not authorize a runtime `TRANSFER` type or
+debit/credit direction. Other Alfa families, the separate companion family,
+and near misses remain on generic normalization. The updated sanitized
+evidence is recorded in `evidence-v2.json`; no real amount or raw payload is
+committed.
 
 ### Sber
 

@@ -64,14 +64,17 @@ Raw observations remain immutable. Re-normalization is an explicit, versioned
 projection operation; this change does not rewrite historical observations or
 run a production backfill.
 
-The `ru.alfabank.mobile.android` parser is intentionally narrow. For the exact
-F5 Android notification envelope, `alfa-bank-normalizer-v1` requires the
-proven integer-RUB title amount to equal the comma-decimal RUB body amount,
-then extracts that amount, the proven masked-reference suffix position, and
-Android envelope event time. It returns `PARTIAL` with `eventType=UNKNOWN`,
-`direction=UNKNOWN`, and `accountReferenceKind=NULL`; no card/account kind or
-ownership is inferred. Other Alfa families, metadata mismatches, malformed
-variants, and ambiguous notifications remain on the generic normalizer.
+The `ru.alfabank.mobile.android` parser is intentionally narrow. The historical
+`alfa-bank-normalizer-v1` revision accepted only the proven integer-RUB title
+amount when it equaled the comma-decimal uppercase-RUB body amount. The active
+`alfa-bank-normalizer-v2` revision accepts exactly that integer title form or
+the separately observed comma-decimal(two digits) title form; in both cases it
+requires normalized title/body monetary equality before extracting the amount,
+the proven masked-reference position, and Android envelope event time. It
+returns `PARTIAL` with `eventType=UNKNOWN`, `direction=UNKNOWN`, and
+`accountReferenceKind=NULL`; no card/account kind or ownership is inferred.
+Other Alfa families, metadata mismatches, malformed variants, and ambiguous
+notifications remain on the generic normalizer.
 
 ## Ingestion boundary
 

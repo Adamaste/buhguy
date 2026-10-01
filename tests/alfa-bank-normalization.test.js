@@ -32,7 +32,7 @@ test('Alfa F5 extracts only the proven partial facts', () => {
     accountReferenceKind: null,
     normalizationStatus: 'PARTIAL',
     evidenceQuality: 'PARTIAL',
-    normalizationVersion: 'alfa-bank-normalizer-v1',
+    normalizationVersion: 'alfa-bank-normalizer-v2',
   });
 });
 
@@ -43,8 +43,29 @@ test('Alfa F5 accepts a second sanitized sample only when title and body agree',
   assert.equal(normalized.accountReference, '1111');
 });
 
+test('Alfa F5 accepts comma-decimal title and body with exact normalized equality', () => {
+  const normalized = result({
+    title: '- 9753,25 ₽',
+    description: body.replace('2468,00 RUB', '9753,25 RUB'),
+  });
+  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v2');
+  assert.equal(normalized.amount, '9753.25');
+  assert.equal(normalized.currency, 'RUB');
+  assert.equal(normalized.accountReference, '1111');
+});
+
 test('Alfa F5 requires the title integer and body comma-decimal to agree', () => {
   const normalized = result({ title, description: secondBody });
+  assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+  assert.equal(normalized.amount, null);
+  assert.equal(normalized.accountReference, null);
+});
+
+test('Alfa F5 rejects comma-decimal title and body mismatch', () => {
+  const normalized = result({
+    title: '- 9753,25 ₽',
+    description: body.replace('2468,00 RUB', '9753,24 RUB'),
+  });
   assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
   assert.equal(normalized.amount, null);
   assert.equal(normalized.accountReference, null);
@@ -66,10 +87,37 @@ test('Alfa F5 rejects a missing title or body', () => {
   assert.equal(result({ title }).normalizationVersion, 'bank-normalizer-v1');
 });
 
-test('Alfa F5 accepts only the integer title amount grammar', () => {
+test('Alfa F5 accepts only the two observed title amount grammars', () => {
   assert.equal(result({ title: '- 0 ₽', description: body.replace('2468,00 RUB', '0,00 RUB') }).amount, '0.00');
+  assert.equal(result({ title: '- 9753,25 ₽', description: body.replace('2468,00 RUB', '9753,25 RUB') }).amount, '9753.25');
   assert.equal(result({ title: '- 2468.00 ₽', description: body }).amount, null);
   assert.equal(result({ title: '- 2 468 ₽', description: body }).amount, null);
+  assert.equal(result({ title: '+ 2468 ₽', description: body }).amount, null);
+  assert.equal(result({ title: '- 2468 ₽ ТЕСТ', description: body }).amount, null);
+});
+
+test('Alfa F5 rejects unsupported title decimal precision and currency forms', () => {
+  for (const title of ['- 2468,0 ₽', '- 2468,000 ₽', '- 2468.00 ₽', '- 2468 RUB']) {
+    const normalized = result({ title, description: body });
+    assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+    assert.equal(normalized.amount, null);
+    assert.equal(normalized.accountReference, null);
+  }
+});
+
+test('Alfa F5 rejects unsupported body amount and currency forms', () => {
+  for (const description of [
+    body.replace('2468,00 RUB', '2468 RUB'),
+    body.replace('2468,00 RUB', '2468.00 RUB'),
+    body.replace('2468,00 RUB', '2468,0 RUB'),
+    body.replace('2468,00 RUB', '2468,000 RUB'),
+    body.replace('2468,00 RUB', '2468,00 руб'),
+  ]) {
+    const normalized = result({ title, description });
+    assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+    assert.equal(normalized.amount, null);
+    assert.equal(normalized.accountReference, null);
+  }
 });
 
 test('Alfa F5 requires the proven RUB symbol and rejects other currencies', () => {
@@ -115,7 +163,7 @@ test('Alfa F5 keeps event type, direction, and reference kind fail-closed', () =
 
 test('Alfa F5 rejects malformed, ambiguous, and unsupported variants', () => {
   for (const payload of [
-    { title: '- 2468,00 ₽', description: body },
+    { title: '- 2468,01 ₽', description: body },
     { title: '- 2468 ₽', description: body.replace('перевод на', 'платёж на') },
     { title: '- 2468 ₽', description: `${body} лишний текст` },
     { title: '- 2468 ₽', description: body.replace('0000*1111', '00001111') },

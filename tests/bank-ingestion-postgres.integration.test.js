@@ -209,6 +209,7 @@ integration('Alfa partial reference does not infer account identity without a pr
     });
     assert.equal(created.normalization.accountReference, '1111');
     assert.equal(created.normalization.accountReferenceKind, null);
+    assert.equal(created.normalization.normalizationVersion, 'alfa-bank-normalizer-v2');
     assert.equal(created.identityResolution.account.resolutionState, 'UNKNOWN');
     assert.equal(created.identityResolution.account.financialAccountId, null);
   } finally {

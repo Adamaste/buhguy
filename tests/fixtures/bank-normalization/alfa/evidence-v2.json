@@ -1,0 +1,65 @@
+{
+  "provider": "ru.alfabank.mobile.android",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "alfa-bank-normalizer-v2",
+  "corpusObservationCount": 22,
+  "structuralFamilyCount": 11,
+  "controlledF5IndependentSampleCount": 3,
+  "clusters": [
+    {
+      "id": "alfa-f5-transfer-partial-v2",
+      "observationCount": 5,
+      "controlledObservationCount": 3,
+      "fields": {
+        "title": { "present": true, "variants": ["minus integer RUB symbol", "minus comma-decimal(two digits) RUB symbol"] },
+        "description": { "present": true, "shape": "fixed semicolon-separated transfer envelope with masked-reference position and one comma-decimal RUB monetary field equal to the title amount" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "integer or comma-decimal(two digits) RUB title position must equal comma-decimal RUB body position",
+        "currencyGrammar": "RUB symbol in title and uppercase RUB code in body",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "masked-reference suffix position with four digits; kind NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "alfa-empty-or-companion",
+      "observationCount": 4,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "none",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    }
+  ],
+  "provenFacts": ["title/body amount equality", "RUB", "Android postTime eventTime", "masked-reference position"],
+  "unprovenFacts": ["eventType", "direction", "reference kind", "ownership"],
+  "acceptance": {
+    "positiveFormats": "F5 partial v2 only",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
