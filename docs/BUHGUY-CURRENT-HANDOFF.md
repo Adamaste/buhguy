@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: complete a read-only Sber outgoing corpus review, then prepare one controlled outgoing sample only if the existing corpus is insufficient. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work.
+- Next action: perform exactly one controlled Sber outgoing evidence operation from `MASKED_ACCOUNT 0271`, then run only a read-only analysis of new data against baseline observation `187` and transaction `144`. Compare the new sample with the existing outgoing candidate to determine whether a strict structural family is proven. Do not change the parser before that analysis; keep `OUTGOING_ACCOUNT_REFERENCE_PROVEN=NO` until new evidence proves reference presence and stability in the outgoing notification family. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER reconciliation, business events, or ledger work.
 
 ## Bank Assistant semantic layer activated
 
