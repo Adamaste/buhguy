@@ -187,6 +187,42 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
   }
 });
 
+integration('Alfa partial reference does not infer account identity without a proven reference kind', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const sourceKey = `alfa-f5-${process.pid}-${Date.now()}`;
+  let accountId;
+  try {
+    await migrate(pool);
+    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Alfa F5' });
+    const person = (await pool.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`person-${sourceKey}`, 'Synthetic Alfa person'])).rows[0];
+    await linkBankSourcePerson(pool, { sourceKey, personId: person.id });
+    const account = await createFinancialAccount(pool, { institution: 'Synthetic Alfa', provider: 'ru.alfabank.mobile.android', displayName: `Synthetic Alfa account ${sourceKey}` });
+    accountId = Number(account.id);
+    await createBankAccountReference(pool, { financialAccountId: accountId, provider: 'ru.alfabank.mobile.android', referenceKind: 'MASKED_ACCOUNT', referenceValue: '1111' });
+    const created = await ingestBankEvent(pool, {
+      sourceKey,
+      sourceEventId: 'synthetic-alfa-f5',
+      observedAt: '2026-10-01T10:00:00Z',
+      eventTime: '2026-10-01T09:59:00Z',
+      payload: { title: '- 2468 ₽', description: 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 12,34 руб; получатель: 2222*3333; 12 карта 34:56' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'ru.alfabank.mobile.android', deviceType: 'android', schemaVersion: '1' },
+    });
+    assert.equal(created.normalization.accountReference, '1111');
+    assert.equal(created.normalization.accountReferenceKind, null);
+    assert.equal(created.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(created.identityResolution.account.financialAccountId, null);
+  } finally {
+    await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    if (accountId) await pool.query('DELETE FROM bank_account_references WHERE financial_account_id=$1', [accountId]).catch(() => {});
+    if (accountId) await pool.query('DELETE FROM financial_accounts WHERE id=$1', [accountId]).catch(() => {});
+    await pool.query('DELETE FROM persons WHERE person_key=$1', [`person-${sourceKey}`]).catch(() => {});
+    await pool.end();
+  }
+});
+
 integration('bank ingestion works under the restricted runtime role without extra privileges', { concurrency: false }, async () => {
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const password = crypto.randomBytes(24).toString('base64url');

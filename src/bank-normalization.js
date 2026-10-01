@@ -1,17 +1,22 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
+export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v1';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
 const TBANK_PROVIDER = 'com.idamob.tinkoff.android';
+const ALFA_PROVIDER = 'ru.alfabank.mobile.android';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
 const TBANK_ANDROID_SCHEMA_VERSION = '1';
+const ALFA_ANDROID_SCHEMA_VERSION = '1';
 const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
 const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
+const ALFA_TITLE_PATTERN = /^-\s*(\d+)\s*₽$/u;
+const ALFA_F5_BODY_PATTERN = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})\s*;\s+перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+\d+(?:,\d{2})?\s+(?:руб\.?|RUB)\s*;\s+получатель:\s+\d+\s*\*\s*\d{4}\s*;\s+\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/iu;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -129,6 +134,40 @@ export function isTbankBankAndroidNotification(input) {
   return input.ingestionMetadata?.provider === TBANK_PROVIDER
     && input.ingestionMetadata?.adapter === ANDROID_NOTIFICATION_ADAPTER
     && input.ingestionMetadata?.schemaVersion === TBANK_ANDROID_SCHEMA_VERSION;
+}
+
+function partialAlfa({ occurred, amount, accountReference }) {
+  return {
+    eventType: 'UNKNOWN',
+    occurredAt: occurred,
+    amount,
+    currency: 'RUB',
+    direction: 'UNKNOWN',
+    merchant: null,
+    counterparty: null,
+    accountReference,
+    accountReferenceKind: null,
+    normalizationStatus: 'PARTIAL',
+    evidenceQuality: 'PARTIAL',
+    normalizationVersion: ALFA_BANK_NORMALIZATION_VERSION,
+  };
+}
+
+export function normalizeAlfaBankEvent(input) {
+  const payload = input.payload ?? {};
+  const title = normalizeWhitespace(payload.title);
+  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
+  const occurred = occurredAt(input.eventTime);
+  const titleMatch = title.match(ALFA_TITLE_PATTERN);
+  const bodyMatch = body.match(ALFA_F5_BODY_PATTERN);
+  if (!titleMatch || !bodyMatch || !occurred) return null;
+  return partialAlfa({ occurred, amount: `${titleMatch[1]}.00`, accountReference: bodyMatch[1] });
+}
+
+export function isAlfaBankAndroidNotification(input) {
+  return input.ingestionMetadata?.provider === ALFA_PROVIDER
+    && input.ingestionMetadata?.adapter === ANDROID_NOTIFICATION_ADAPTER
+    && input.ingestionMetadata?.schemaVersion === ALFA_ANDROID_SCHEMA_VERSION;
 }
 
 function incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount }) {

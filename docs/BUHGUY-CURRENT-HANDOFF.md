@@ -27,6 +27,18 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current Yandex status: normalizer v1 is deployed and unchanged
 - Next action: Alfa Bank is next: first perform read-only corpus forensic, then only the minimum necessary controlled transfers/top-ups. After Alfa, Yandex Bank follows: first transfer/top-up evidence, then card-purchase evidence only when a real Yandex-card purchase occurs naturally; do not create artificial purchases for testing. T-Bank top-up E2E is closed and no more controlled T-Bank top-up samples are required. Ozon remains deferred because additional paid notification experiments are undesirable and no Ozon parser is authorized. Do not infer `CREDIT`/`DEBIT` from controlled-operation knowledge alone. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
 
+## Alfa F5 partial normalizer
+
+The read-only Alfa corpus review covered 19 observations across 11 structural
+families. Two independent controlled primary samples establish the exact F5
+family. The feature branch adds only its narrow partial path: integer RUB
+amount, Android envelope event time, and the proven payment-account suffix
+position. It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
+reference kind; no ownership or card/account inference is performed. Unmatched
+Alfa families remain on generic normalization. No further controlled Alfa
+amount transfer is required. After review and deployment, run one fresh Alfa
+E2E validation, then continue with Yandex transfer/top-up evidence.
+
 ## T-Bank top-up partial parser evidence
 
 The T-Bank forensic corpus covered 51 historical observations across 22 exact

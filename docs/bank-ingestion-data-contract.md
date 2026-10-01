@@ -64,6 +64,14 @@ Raw observations remain immutable. Re-normalization is an explicit, versioned
 projection operation; this change does not rewrite historical observations or
 run a production backfill.
 
+The `ru.alfabank.mobile.android` parser is intentionally narrow. For the exact
+F5 Android notification envelope, `alfa-bank-normalizer-v1` extracts only the
+proven integer-RUB title amount, the proven payment-account suffix, and
+Android envelope event time. It returns `PARTIAL` with `eventType=UNKNOWN`,
+`direction=UNKNOWN`, and `accountReferenceKind=NULL`; no card/account kind or
+ownership is inferred. Other Alfa families, metadata mismatches, malformed
+variants, and ambiguous notifications remain on the generic normalizer.
+
 ## Ingestion boundary
 
 The internal handler is `createBankIngestionHandler({ pool })`. It accepts a

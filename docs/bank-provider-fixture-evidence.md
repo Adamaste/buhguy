@@ -9,6 +9,7 @@ account, card, or source-event identifier is stored.
 
 Reviewed providers:
 
+- Alfa Bank: `ru.alfabank.mobile.android`
 - T-Bank: `com.idamob.tinkoff.android`
 - Sber: `ru.sberbankmobile`
 - Ozon Finance: `ru.ozon.fintech.finance`
@@ -45,6 +46,20 @@ The provider-specific result is always `PARTIAL` with `eventType=UNKNOWN` and
 `direction=UNKNOWN`. No merchant, counterparty, account, card, or ownership
 inference is performed. Malformed, near-miss, historical, informational, and
 empty families remain fail-closed; no READY T-Bank parser is authorized.
+
+### Alfa Bank
+
+The corpus contains 19 observations across 11 structural families. Two
+independent controlled primary samples establish one exact F5 family, while
+the empty/companion family remains unsupported. The narrow
+`alfa-bank-normalizer-v1` accepts only the provider/adapter/schema-scoped F5
+envelope: a minus-prefixed integer RUB title, the fixed semicolon-separated
+body structure, and the payment-account suffix position. It extracts the
+amount, `RUB`, Android envelope event time, and masked suffix value, but leaves
+`eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`.
+The transfer wording is evidence for the fixture but does not authorize a
+runtime `TRANSFER` type or debit/credit direction. Other Alfa families and
+near misses remain on generic normalization.
 
 ### Sber
 

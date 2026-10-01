@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const providers = [
+  ['alfa', 'ru.alfabank.mobile.android'],
   ['tbank', 'com.idamob.tinkoff.android'],
   ['sber', 'ru.sberbankmobile'],
   ['ozon', 'ru.ozon.fintech.finance'],
@@ -111,4 +112,17 @@ test('T-Bank fixture records only the proven top-up partial envelope', async () 
   assert.equal(topUp.evidence.eventType, 'NOT_PROVEN');
   assert.equal(topUp.evidence.direction, 'NOT_PROVEN');
   assert.equal(topUp.evidence.accountReferenceStructure, 'NOT_PROVEN');
+});
+
+test('Alfa fixture records only the proven F5 partial envelope', async () => {
+  const fixture = await loadFixture('alfa');
+  const f5 = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-transfer-partial');
+  assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
+  assert.equal(fixture.corpusObservationCount, 19);
+  assert.equal(fixture.structuralFamilyCount, 11);
+  assert.equal(fixture.controlledF5IndependentSampleCount, 2);
+  assert.equal(f5.observationCount, 4);
+  assert.equal(f5.readyCapable, false);
+  assert.equal(f5.evidence.direction, 'NOT_PROVEN');
+  assert.match(f5.evidence.amountGrammar, /integer RUB title/);
 });
