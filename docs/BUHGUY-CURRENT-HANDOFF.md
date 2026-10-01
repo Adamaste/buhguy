@@ -17,31 +17,34 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `3730449fcaa81f5a08940af8be545675a99c4943`
-- Current phase: Alfa F5 v1 is deployed; fresh E2E observation 257 correctly failed closed on the newly observed comma-decimal title variant; Alfa F5 v2 is implemented in a new review PR and production deployment is pending
-- Current blocker: Alfa v2 review/deployment is pending after the fresh v1 fail-closed E2E; Sber outgoing/debit direction remains unproven and must stay `UNKNOWN`; amount/RUB/account-reference extraction is production-proven. No further controlled Sber amount sample or Alfa research transfer is required. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
-- Production artifact: exact master `3730449fcaa81f5a08940af8be545675a99c4943`, 307 files, archive SHA-256 `87026d3417ad30906c5b910059654124b4fef40643751f05bbab8aa713c44b4d`
+- Current master: `64aef75ede5baa0dacb87394f39fd96bd2ca6f83`
+- Current phase: Alfa F5 v3 is implemented from real-derived segment evidence; production deployment and one fresh production E2E are pending
+- Current blocker: v2 correctly failed closed on observation 260 because its synthetic body grammar did not match the production title-case anchors. The v3 staged parser is review-only and must preserve `eventType=UNKNOWN`, `direction=UNKNOWN`, `accountReferenceKind=NULL`, and no identity inference. Sber outgoing/debit direction remains unproven; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
+- Production artifact: exact master `64aef75ede5baa0dacb87394f39fd96bd2ca6f83`, 308 files, archive SHA-256 `4f3d18804ed5fd643d63dd5a7a3306aa269ec326b7ae5f3c64a45ca806de15a5`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: After the Alfa v2 review PR merges, wait for green master CI, deploy the exact merged master through the immutable-artifact procedure, and run one fresh Alfa F5 production E2E. Verify amount/RUB/eventTime/masked-reference value while preserving `eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`; confirm that no account/card identity inference occurs. Do not perform historical replay/backfill; no additional research transfer is required. If Alfa passes, move to Yandex: transfer/top-up evidence first, then card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Review and merge the Alfa v3 PR, deploy exact master through the immutable-artifact procedure, and run one fresh Alfa F5 production E2E. Verify amount/RUB/eventTime/reference extraction while preserving `eventType=UNKNOWN`, `direction=UNKNOWN`, and `accountReferenceKind=NULL`; confirm no account/card identity inference. Do not perform historical replay/backfill or another research transfer. If Alfa passes, move to Yandex: transfer/top-up evidence first, then card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Alfa F5 partial normalizer
 
-The read-only Alfa corpus review now covers 22 observations across 11 structural
-families. Three independent controlled primary samples establish the exact F5
-body family and its two observed title variants. The active v2 path accepts
-either an integer RUB title or a comma-decimal(two digits) RUB title, and both
-must equal the observed comma-decimal uppercase-RUB body amount after
-normalization. It also preserves Android envelope event time and the proven
-masked-reference position. It preserves `eventType=UNKNOWN`,
-`direction=UNKNOWN`, and unknown reference kind; no ownership or card/account
-inference is performed. Unmatched Alfa families remain on generic
-normalization. Fresh observation 257 caused v1 to fail closed without semantic
-corruption; its companion 258 remained separate. No further research transfer
-is required. After v2 review and deployment, run one fresh Alfa E2E validation,
-then continue with Yandex transfer/top-up evidence.
+The read-only Alfa corpus review now covers 23 observations across four current
+forensic top-level families: integer-title F5, decimal-title F5,
+empty/companion, and other historical envelopes. The earlier exact structural
+classification retained 11 historical subfamilies; this is a separate metric,
+not the current forensic family count. Seven F5 primaries share one real-derived
+four-section body skeleton,
+with integer and comma-decimal(two digits) title variants. The active v3 staged
+path requires title/body amount equality, title-case transfer/recipient anchors,
+both proven masked-reference positions, uppercase `RUB`, and Android envelope
+event time. It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
+reference kind; no ownership or card/account inference is performed. Unmatched
+Alfa families and companions remain on generic normalization. Observation 260
+failed closed under v2 without semantic corruption because the old synthetic
+body grammar used lowercase anchors; v3 corrects only that evidence-backed
+grammar. No additional research transfer is required; one fresh production E2E
+is required after v3 deployment before Alfa closes.
 
 ## T-Bank top-up partial parser evidence
 

@@ -11,9 +11,10 @@ const base = {
 };
 
 const title = '- 2468 ₽';
-const body = 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; получатель: 2222*3333; 12 карта 34:56';
+const body = 'СИНТЕТИЧЕСКИЙ перевод счета 0000*1111; Перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; Получатель: 2222*3333; 12 карта 34:56';
 const secondTitle = '- 9753 ₽';
 const secondBody = body.replace('2468,00 RUB', '9753,00 RUB');
+const oldV2SyntheticBody = body.replace('Перевод на', 'перевод на').replace('Получатель:', 'получатель:');
 
 function result(payload = { title, description: body }, overrides = {}) {
   return normalizeBankEvent({ ...base, ...overrides, payload });
@@ -32,7 +33,7 @@ test('Alfa F5 extracts only the proven partial facts', () => {
     accountReferenceKind: null,
     normalizationStatus: 'PARTIAL',
     evidenceQuality: 'PARTIAL',
-    normalizationVersion: 'alfa-bank-normalizer-v2',
+    normalizationVersion: 'alfa-bank-normalizer-v3',
   });
 });
 
@@ -48,10 +49,17 @@ test('Alfa F5 accepts comma-decimal title and body with exact normalized equalit
     title: '- 9753,25 ₽',
     description: body.replace('2468,00 RUB', '9753,25 RUB'),
   });
-  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v2');
+  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v3');
   assert.equal(normalized.amount, '9753.25');
   assert.equal(normalized.currency, 'RUB');
   assert.equal(normalized.accountReference, '1111');
+});
+
+test('Alfa v3 rejects the old synthetic lowercase-anchor body assumption', () => {
+  const normalized = result({ title, description: oldV2SyntheticBody });
+  assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+  assert.equal(normalized.amount, null);
+  assert.equal(normalized.accountReference, null);
 });
 
 test('Alfa F5 requires the title integer and body comma-decimal to agree', () => {
@@ -140,6 +148,15 @@ test('Alfa F5 rejects extra prefix or suffix content', () => {
   assert.equal(result({ title, description: `ПРЕФИКС ${body}` }).amount, null);
 });
 
+test('Alfa v3 rejects reordered proven body sections', () => {
+  const sections = body.split(';');
+  const reorderedBody = [sections[1], sections[0], sections[2], sections[3]].join(';');
+  const normalized = result({ title, description: reorderedBody });
+  assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+  assert.equal(normalized.amount, null);
+  assert.equal(normalized.accountReference, null);
+});
+
 test('non-empty invalid description cannot be bypassed by valid text', () => {
   const normalized = result({ title, description: 'invalid Alfa body', text: body });
   assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
@@ -164,13 +181,28 @@ test('Alfa F5 keeps event type, direction, and reference kind fail-closed', () =
 test('Alfa F5 rejects malformed, ambiguous, and unsupported variants', () => {
   for (const payload of [
     { title: '- 2468,01 ₽', description: body },
-    { title: '- 2468 ₽', description: body.replace('перевод на', 'платёж на') },
+    { title: '- 2468 ₽', description: body.replace('Перевод на', 'Платёж на') },
     { title: '- 2468 ₽', description: `${body} лишний текст` },
     { title: '- 2468 ₽', description: body.replace('0000*1111', '00001111') },
     { title: '- 2468 ₽', description: body.replace('2468,00 RUB', '2468.00 USD') },
     { title: 'ПЕРЕВОД - 2468 ₽', description: body },
   ]) {
     const normalized = result(payload);
+    assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+    assert.equal(normalized.amount, null);
+    assert.equal(normalized.accountReference, null);
+  }
+});
+
+test('Alfa v3 requires every proven body section and reference position', () => {
+  for (const description of [
+    body.replace('0000*1111', '00001111'),
+    body.replace('2222*3333', '22223333'),
+    body.replace('Перевод на', 'Платёж на'),
+    body.replace('; Получатель:', ''),
+    `${body}; лишняя секция`,
+  ]) {
+    const normalized = result({ title, description });
     assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
     assert.equal(normalized.amount, null);
     assert.equal(normalized.accountReference, null);

@@ -49,25 +49,28 @@ empty families remain fail-closed; no READY T-Bank parser is authorized.
 
 ### Alfa Bank
 
-The current corpus contains 22 observations across 11 structural families.
-Three independent controlled primary samples establish one exact F5 body
-family, while the empty/companion family remains unsupported. Observation 257
-added the second independently observed title format after v1 had already
-failed closed on it; no semantic corruption occurred and no additional
-research transfer is required. The historical
-`alfa-bank-normalizer-v1` accepted only a minus-prefixed integer RUB title.
-The active `alfa-bank-normalizer-v2` accepts exactly either that integer title
-or a minus-prefixed comma-decimal(two digits) RUB title, requires the title
-amount to equal the comma-decimal uppercase `RUB` body amount after
-normalization, and preserves the fixed semicolon-separated body structure and
-masked-reference position. It extracts the amount, `RUB`, Android envelope
-event time, and masked suffix value, but leaves `eventType=UNKNOWN`,
-`direction=UNKNOWN`, and `accountReferenceKind=NULL`. The transfer wording is
-evidence for the fixture but does not authorize a runtime `TRANSFER` type or
-debit/credit direction. Other Alfa families, the separate companion family,
-and near misses remain on generic normalization. The updated sanitized
-evidence is recorded in `evidence-v2.json`; no real amount or raw payload is
-committed.
+The current forensic taxonomy contains 23 observations across four top-level
+families: integer-title F5, decimal-title F5, empty/companion, and other
+historical envelopes. An earlier exact structural classification of the same
+corpus retained 11 historical subfamilies; that is a separate metric and is
+recorded as `historicalExactStructuralFamilyCount`, not as the current forensic
+family count. The corpus includes seven F5 primary observations and four
+empty/companion observations.
+The seven F5 primaries share one deterministic four-section body skeleton.
+The first five use the proven minus-integer title and the newest two use the
+proven minus-comma-decimal(two digits) title. The body has title-case transfer
+and recipient anchors, two masked-reference positions, one comma-decimal(two
+digits) uppercase `RUB` amount, and a trailing dynamic/time section. The prior
+v1/v2 synthetic body grammar used lowercase anchors and was too restrictive;
+production fail-closed behavior prevented incorrect persistence. The active
+`alfa-bank-normalizer-v3` is based on staged real-derived segment evidence,
+requires title/body amount equality, both reference positions, and Android
+envelope event time, and extracts only amount, `RUB`, event time, and the first
+proven reference value. It leaves `eventType=UNKNOWN`, `direction=UNKNOWN`,
+and `accountReferenceKind=NULL`; no ownership or card/account kind is inferred.
+Other Alfa families, companions, missing sections, and unobserved title/reference
+combinations remain on generic normalization. The sanitized evidence is recorded
+in `evidence-v3.json`; no real amount or raw payload is committed.
 
 ### Sber
 
