@@ -17,15 +17,39 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `25ecffb0d794bd9856a1355c8cadda9d1fa32240`
-- Current phase: Person 1 Sber outgoing-shaped v4 production E2E complete; next provider/evidence target selection
+- Current master: `279cae3311d55f7b4cd82566ba220360e9077df8`
+- Current phase: T-Bank top-up partial normalizer implementation; production deployment and E2E remain pending
 - Current blocker: Sber outgoing/debit direction remains unproven and must stay `UNKNOWN`; amount/RUB/account-reference extraction is production-proven. No further controlled Sber amount sample is required. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
 - Production artifact: exact master `25ecffb0d794bd9856a1355c8cadda9d1fa32240`, 304 files, archive SHA-256 `11ef406534774f4e16cfb61dff8fcb01d383cffaff39e9c0b6d89deb4607ca5f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: choose the next deterministic Person 1 bank/provider evidence target or a genuinely independent evidence source for Sber direction. Do not collect more Sber amount-only samples: v4 amount/RUB/account-reference behavior is deployed and production-proven. Do not infer `DEBIT` from controlled-operation knowledge alone; keep direction/event type `UNKNOWN` until independent evidence proves them. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
+- Next action: review and CI the narrow T-Bank top-up partial parser, then perform its fresh production E2E after merge/deploy. No more controlled T-Bank top-up samples are required. Ozon research is deferred because additional paid notification experiments are undesirable and no Ozon parser is authorized. A separate real T-Bank card-purchase sample may be analyzed only when it naturally occurs. Do not infer `CREDIT`/`DEBIT` from controlled-operation knowledge alone. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
+
+## T-Bank top-up partial parser evidence
+
+The T-Bank forensic corpus covered 51 historical observations across 22 exact
+structural families. Two independent controlled top-up observations, `214` and
+`217`, share one body family; `218` is a separate empty companion. The title is
+absent in one sample and present in the other, so it is not required by the
+parser. The exact proven body boundary is:
+
+`Пополнение на <integer> ₽, счет RUB. <dynamic words> Доступно <comma-decimal> ₽`
+
+The first integer-RUB position is proven transaction amount, the second
+comma-decimal position after `Доступно` is a separate balance/availability
+value and is ignored, and Android envelope `eventTime` is used for occurredAt.
+The narrow `tbank-bank-normalizer-v1` is authorized only as `PARTIAL`; it must
+preserve `eventType=UNKNOWN`, `direction=UNKNOWN`, and null account/card
+references. No READY parser or ownership inference is authorized. No further
+controlled top-up sample is required.
+
+Ozon research is deferred because additional paid notification experiments are
+not desirable; its parser remains unauthorized. The next operational step after
+review, merge, and deploy is a fresh production E2E of the T-Bank partial
+parser. A separate real card-purchase sample can be investigated later when it
+naturally occurs.
 
 ## Bank Assistant semantic layer activated
 
