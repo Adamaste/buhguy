@@ -20,12 +20,12 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current master: `8e56566717e346fb56371ddcb9216de68777bade`
 - Current phase: T-Bank top-up partial normalizer is deployed and its fresh production E2E is proven; next provider is Alfa
 - Current blocker: Sber outgoing/debit direction remains unproven and must stay `UNKNOWN`; amount/RUB/account-reference extraction is production-proven. No further controlled Sber amount sample is required. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
-- Production artifact: exact master `25ecffb0d794bd9856a1355c8cadda9d1fa32240`, 304 files, archive SHA-256 `11ef406534774f4e16cfb61dff8fcb01d383cffaff39e9c0b6d89deb4607ca5f`
+- Production artifact: exact master `8e56566717e346fb56371ddcb9216de68777bade`, 305 files, archive SHA-256 `dfe0438786378297d14f9c6e877051ed38097883308f138deb0f0c65d55a55ab`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: perform the next incremental provider evidence step for Alfa. T-Bank top-up E2E is closed; no more controlled T-Bank top-up samples are required. Ozon research is deferred because additional paid notification experiments are undesirable and no Ozon parser is authorized. A separate real T-Bank card-purchase sample may be analyzed only when it naturally occurs. Do not infer `CREDIT`/`DEBIT` from controlled-operation knowledge alone. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
+- Next action: Alfa Bank is next: first perform read-only corpus forensic, then only the minimum necessary controlled transfers/top-ups. After Alfa, Yandex Bank follows: first transfer/top-up evidence, then card-purchase evidence only when a real Yandex-card purchase occurs naturally; do not create artificial purchases for testing. T-Bank top-up E2E is closed and no more controlled T-Bank top-up samples are required. Ozon remains deferred because additional paid notification experiments are undesirable and no Ozon parser is authorized. Do not infer `CREDIT`/`DEBIT` from controlled-operation knowledge alone. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
 
 ## T-Bank top-up partial parser evidence
 
@@ -69,8 +69,9 @@ provider target is Alfa.
 
 Ozon research is deferred because additional paid notification experiments are
 not desirable; its parser remains unauthorized. The next operational step is
-incremental Alfa provider evidence. A separate real T-Bank card-purchase
-sample can be investigated later when it naturally occurs.
+incremental Alfa provider evidence, beginning with read-only corpus forensic.
+A separate real T-Bank card-purchase sample can be investigated later when it
+naturally occurs.
 
 ## Bank Assistant semantic layer activated
 
