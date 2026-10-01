@@ -98,3 +98,17 @@ test('Sber v4 fixture records the proven outgoing-shaped partial envelope', asyn
   assert.equal(companion.readyCapable, false);
   assert.equal(companion.observationCount, 4);
 });
+
+test('T-Bank fixture records only the proven top-up partial envelope', async () => {
+  const fixture = await loadFixture('tbank');
+  const topUp = fixture.clusters.find((cluster) => cluster.id === 'tbank-top-up-partial-v1');
+  assert.equal(fixture.controlledTopUpIndependentSampleCount, 2);
+  assert.equal(topUp.observationCount, 2);
+  assert.equal(topUp.readyCapable, false);
+  assert.equal(topUp.evidence.amountGrammar, 'integer RUB position before Доступно');
+  assert.equal(topUp.evidence.currencyGrammar, 'RUB marker present');
+  assert.equal(topUp.evidence.eventTime, 'ANDROID_ENVELOPE_PROVEN');
+  assert.equal(topUp.evidence.eventType, 'NOT_PROVEN');
+  assert.equal(topUp.evidence.direction, 'NOT_PROVEN');
+  assert.equal(topUp.evidence.accountReferenceStructure, 'NOT_PROVEN');
+});

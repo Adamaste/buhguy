@@ -1,13 +1,14 @@
 {
   "provider": "com.idamob.tinkoff.android",
   "source": "real-derived-sanitized",
+  "controlledTopUpIndependentSampleCount": 2,
   "clusters": [
     {
-      "id": "tbank-ruble-amount-notification",
-      "observationCount": 11,
+      "id": "tbank-standard-money-balance",
+      "observationCount": 22,
       "fields": {
         "title": { "present": true, "shape": "word[-word] or word" },
-        "description": { "present": true, "shape": "words, NBSP, decimal-comma, RUB-symbol, punctuation" },
+        "description": { "present": true, "shape": "words, integer-RUB, balance-like marker, decimal-comma-RUB" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
       },
@@ -15,25 +16,39 @@
       "evidence": {
         "eventType": "NOT_PROVEN",
         "direction": "NOT_PROVEN",
-        "amountGrammar": "comma-decimal followed by RUB symbol",
+        "amountGrammar": "NOT_PROVEN",
         "currencyGrammar": "RUB symbol present",
-        "merchantStructure": "NOT_PROVEN",
-        "counterpartyStructure": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
         "accountReferenceStructure": "NOT_PROVEN"
-      },
-      "syntheticPayload": {
-        "title": "ТЕСТОВЫЙ-СТАТУС",
-        "description": "ТЕСТОВОЕ ОПИСАНИЕ\u00a0123,45 ₽, ТЕСТОВАЯ СТОРОНА. ТЕСТОВЫЙ БАНК *0000 67,89 ₽",
-        "text": "ТЕСТОВОЕ ОПИСАНИЕ\u00a0123,45 ₽, ТЕСТОВАЯ СТОРОНА. ТЕСТОВЫЙ БАНК *0000 67,89 ₽"
       },
       "readyCapable": false
     },
     {
-      "id": "tbank-informational-percent",
+      "id": "tbank-legacy-money-variants",
+      "observationCount": 5,
+      "fields": {
+        "title": { "present": "varies", "shape": "unproven historical variants" },
+        "description": { "present": true, "shape": "unproven monetary variants" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": "varies" }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "RUB marker observed",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-top-up-partial-v1",
       "observationCount": 2,
       "fields": {
-        "title": { "present": true, "shape": "word em-dash word" },
-        "description": { "present": true, "shape": "words, punctuation, percent" },
+        "title": { "present": "optional", "shape": "absent or provider title" },
+        "description": { "present": true, "shape": "Пополнение на integer-RUB, счет RUB, dynamic words, Доступно decimal-comma-RUB" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
       },
@@ -41,22 +56,37 @@
       "evidence": {
         "eventType": "NOT_PROVEN",
         "direction": "NOT_PROVEN",
-        "amountGrammar": "NOT_APPLICABLE",
-        "currencyGrammar": "NOT_PROVEN",
-        "merchantStructure": "NOT_PROVEN",
-        "counterpartyStructure": "NOT_PROVEN",
+        "amountGrammar": "integer RUB position before Доступно",
+        "currencyGrammar": "RUB marker present",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "balanceGrammar": "decimal-comma RUB after Доступно, ignored",
         "accountReferenceStructure": "NOT_PROVEN"
       },
-      "syntheticPayload": {
-        "title": "ТЕСТОВОЕ — ИНФО",
-        "description": "ТЕСТОВОЕ СООБЩЕНИЕ ОПИСАНИЕ — ТЕСТОВЫЕ УСЛОВИЯ 5%",
-        "text": "ТЕСТОВОЕ СООБЩЕНИЕ ОПИСАНИЕ — ТЕСТОВЫЕ УСЛОВИЯ 5%"
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-informational-or-non-money",
+      "observationCount": 13,
+      "fields": {
+        "title": { "present": "varies", "shape": "informational or non-money" },
+        "description": { "present": true, "shape": "informational/non-money text" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
       },
       "readyCapable": false
     },
     {
       "id": "tbank-empty-payload",
-      "observationCount": 3,
+      "observationCount": 12,
       "fields": {
         "title": { "present": false },
         "description": { "present": false },
@@ -69,17 +99,14 @@
         "direction": "NOT_PROVEN",
         "amountGrammar": "NOT_PROVEN",
         "currencyGrammar": "NOT_PROVEN",
-        "merchantStructure": "NOT_PROVEN",
-        "counterpartyStructure": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
         "accountReferenceStructure": "NOT_PROVEN"
       },
-      "syntheticPayload": {},
       "readyCapable": false
     }
   ],
   "acceptance": {
-    "positiveFormats": "NOT_PROVEN",
-    "whitespaceVariants": "NOT_APPLICABLE",
+    "positiveFormats": "top-up partial only",
     "missingMarkers": "REQUIRED_FAIL_CLOSED",
     "missingAmount": "REQUIRED_FAIL_CLOSED",
     "malformedAmount": "REQUIRED_FAIL_CLOSED",

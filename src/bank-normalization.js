@@ -1,13 +1,17 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
+export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
+const TBANK_PROVIDER = 'com.idamob.tinkoff.android';
 const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
+const TBANK_ANDROID_SCHEMA_VERSION = '1';
 const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
 const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
+const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -76,6 +80,55 @@ export function normalizeYandexBankEvent(input) {
 
 export function isYandexBankProvider(input) {
   return input.ingestionMetadata?.provider === YANDEX_PROVIDER;
+}
+
+function incompleteTbank({ occurred, hasFinancialMarker }) {
+  const partial = occurred !== null || hasFinancialMarker;
+  return {
+    eventType: 'UNKNOWN',
+    occurredAt: occurred,
+    amount: null,
+    currency: null,
+    direction: 'UNKNOWN',
+    merchant: null,
+    counterparty: null,
+    accountReference: null,
+    accountReferenceKind: null,
+    normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
+    evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
+    normalizationVersion: TBANK_BANK_NORMALIZATION_VERSION,
+  };
+}
+
+export function normalizeTbankBankEvent(input) {
+  const payload = input.payload ?? {};
+  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
+  const occurred = occurredAt(input.eventTime);
+  const match = body.match(TBANK_TOP_UP_BODY_PATTERN);
+  const hasFinancialMarker = body.startsWith('Пополнение на ');
+
+  if (!match || !occurred) return incompleteTbank({ occurred, hasFinancialMarker });
+
+  return {
+    eventType: 'UNKNOWN',
+    occurredAt: occurred,
+    amount: `${match[1]}.00`,
+    currency: 'RUB',
+    direction: 'UNKNOWN',
+    merchant: null,
+    counterparty: null,
+    accountReference: null,
+    accountReferenceKind: null,
+    normalizationStatus: 'PARTIAL',
+    evidenceQuality: 'PARTIAL',
+    normalizationVersion: TBANK_BANK_NORMALIZATION_VERSION,
+  };
+}
+
+export function isTbankBankAndroidNotification(input) {
+  return input.ingestionMetadata?.provider === TBANK_PROVIDER
+    && input.ingestionMetadata?.adapter === ANDROID_NOTIFICATION_ADAPTER
+    && input.ingestionMetadata?.schemaVersion === TBANK_ANDROID_SCHEMA_VERSION;
 }
 
 function incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount }) {

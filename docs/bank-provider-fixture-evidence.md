@@ -30,11 +30,21 @@ fail-closed with `eventType`/`direction` `NOT_PROVEN`.
 
 ### T-Bank
 
-Observed structural families include a RUB-symbol amount form with NBSP and
-comma-decimal punctuation, informational percentage text, and empty payloads.
-The evidence does not prove transaction type, direction, merchant, or
-counterparty extraction. A parser must remain `UNKNOWN`/`PARTIAL` for these
-families until a safe positive format is captured.
+The historical corpus contains 51 observations across 22 exact structural
+families. Most money, informational, and empty families remain fail-closed.
+Two independent controlled top-up samples establish one narrow partial family:
+
+- body: `Пополнение на <integer> ₽, счет RUB. <dynamic words> Доступно <comma-decimal> ₽`;
+- title is optional and is not part of the dispatch grammar;
+- the first integer-RUB position is the transaction amount;
+- the comma-decimal RUB position after `Доступно` is a balance/availability
+  value and is ignored;
+- event time comes from the Android envelope `eventTime`.
+
+The provider-specific result is always `PARTIAL` with `eventType=UNKNOWN` and
+`direction=UNKNOWN`. No merchant, counterparty, account, card, or ownership
+inference is performed. Malformed, near-miss, historical, informational, and
+empty families remain fail-closed; no READY T-Bank parser is authorized.
 
 ### Sber
 
