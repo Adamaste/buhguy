@@ -41,22 +41,19 @@ A fresh real Sber incoming operation was visible through the assistant path as
 evidence. The Bank Assistant is therefore usable for Person 1 proven incoming
 transfers. `READY_TO_ASK_CHATGPT_ABOUT_TRANSFERS=YES`.
 
-The next functional cycle is Person 1 multi-bank operation coverage. Its first
-target is an outgoing Sber transfer from the proven account `MASKED_ACCOUNT
-0271`. This cycle is evidence-first: it must not infer an outgoing grammar,
-change parser code, create ledger/business events, or implement
-`INTERNAL_TRANSFER` before strict controlled evidence exists.
+The active functional cycle remains Person 1 multi-bank operation coverage.
+Sber now has two distinct production-proven normalization paths: the exact
+incoming family remains `READY / INCOMING_TRANSFER / CREDIT / EXACT`, while
+the outgoing-shaped v4 family preserves only the proven amount, `RUB`,
+payment-account reference, and Android event time as `PARTIAL`. Its
+`eventType` and `direction` intentionally remain `UNKNOWN`.
 
-The initial read-only Sber corpus review found 27 immutable Sber observations
-and one outgoing-looking structural candidate. That is not enough for a strict
-deterministic outgoing grammar or an outgoing parser. The current baseline is
-observation `187`, transaction `144`; the `0271` reference has exactly one
-candidate account, `financial_account_id=1`. This proves the identity candidate
-for the registered `MASKED_ACCOUNT 0271` reference, but does not prove that the
-reference is present or stable in the Sber outgoing notification family;
-`OUTGOING_ACCOUNT_REFERENCE_PROVEN=NO`. Exactly one controlled outgoing sample
-is the next permitted evidence step; a second sample is required if the family
-still lacks independent variation.
+The earlier outgoing corpus review and controlled-sample campaign are closed
+research stages. They established the v4 grammar and account-reference
+stability; do not restart them or collect another amount-only Sber sample.
+Any future Sber `DEBIT` classification requires an independent structural
+marker or evidence source rather than the fact that a controlled user action
+was known to be outgoing.
 
 ## Sber normalizer v4 production deployment and Person 1 outgoing E2E
 
