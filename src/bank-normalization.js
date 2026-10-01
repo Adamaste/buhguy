@@ -1,7 +1,7 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
-export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v1';
+export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v2';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
@@ -15,7 +15,7 @@ const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M
 const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
-const ALFA_TITLE_PATTERN = /^-\s*(\d+)\s*₽$/u;
+const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
 const ALFA_F5_BODY_PATTERN = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})\s*;\s+перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB\s*;\s+получатель:\s+\d+\s*\*\s*\d{4}\s*;\s+\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
 
 function normalizeWhitespace(value) {
@@ -161,7 +161,8 @@ export function normalizeAlfaBankEvent(input) {
   const titleMatch = title.match(ALFA_TITLE_PATTERN);
   const bodyMatch = body.match(ALFA_F5_BODY_PATTERN);
   if (!titleMatch || !bodyMatch || !occurred) return null;
-  const titleAmount = `${titleMatch[1].replace(/^0+(?=\d)/u, '')}.00`;
+  const titleInteger = titleMatch[1].replace(/^0+(?=\d)/u, '');
+  const titleAmount = `${titleInteger}.${titleMatch[2] ?? '00'}`;
   const bodyAmount = bodyMatch[2].replace(',', '.');
   if (titleAmount !== bodyAmount) return null;
   return partialAlfa({ occurred, amount: titleAmount, accountReference: bodyMatch[1] });

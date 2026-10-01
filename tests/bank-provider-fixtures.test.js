@@ -32,6 +32,11 @@ const loadSberV4Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadAlfaV2Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'alfa', 'evidence-v2.json'),
+  'utf8',
+));
+
 test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
   for (const [name, provider] of providers) {
     const fixture = await loadFixture(name);
@@ -50,7 +55,8 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
     const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : ['evidence-v1.json'];
-    for (const version of versions) {
+    const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json'] : versions;
+    for (const version of fixtureVersions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
       assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
       assert.doesNotMatch(text, /Т-Банк|Сбербанк|Озон|Альфа|Яндекс/i);
@@ -125,4 +131,23 @@ test('Alfa fixture records only the proven F5 partial envelope', async () => {
   assert.equal(f5.readyCapable, false);
   assert.equal(f5.evidence.direction, 'NOT_PROVEN');
   assert.match(f5.evidence.amountGrammar, /integer RUB title/);
+});
+
+test('Alfa v2 fixture records the fresh comma-decimal title variant', async () => {
+  const fixture = await loadAlfaV2Fixture();
+  const f5 = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-transfer-partial-v2');
+  const companion = fixture.clusters.find((cluster) => cluster.id === 'alfa-empty-or-companion');
+  assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
+  assert.equal(fixture.normalizationVersion, 'alfa-bank-normalizer-v2');
+  assert.equal(fixture.corpusObservationCount, 22);
+  assert.equal(fixture.structuralFamilyCount, 11);
+  assert.equal(fixture.controlledF5IndependentSampleCount, 3);
+  assert.equal(f5.observationCount, 5);
+  assert.equal(f5.controlledObservationCount, 3);
+  assert.deepEqual(f5.fields.title.variants, [
+    'minus integer RUB symbol',
+    'minus comma-decimal(two digits) RUB symbol',
+  ]);
+  assert.equal(f5.readyCapable, false);
+  assert.equal(companion.observationCount, 4);
 });
