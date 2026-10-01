@@ -49,8 +49,13 @@ empty families remain fail-closed; no READY T-Bank parser is authorized.
 
 ### Alfa Bank
 
-The current corpus contains 23 observations across 11 structural families,
-including seven F5 primary observations and four empty/companion observations.
+The current forensic taxonomy contains 23 observations across four top-level
+families: integer-title F5, decimal-title F5, empty/companion, and other
+historical envelopes. An earlier exact structural classification of the same
+corpus retained 11 historical subfamilies; that is a separate metric and is
+recorded as `historicalExactStructuralFamilyCount`, not as the current forensic
+family count. The corpus includes seven F5 primary observations and four
+empty/companion observations.
 The seven F5 primaries share one deterministic four-section body skeleton.
 The first five use the proven minus-integer title and the newest two use the
 proven minus-comma-decimal(two digits) title. The body has title-case transfer

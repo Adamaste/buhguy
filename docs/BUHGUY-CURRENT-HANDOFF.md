@@ -29,8 +29,12 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 ## Alfa F5 partial normalizer
 
-The read-only Alfa corpus review now covers 23 observations across 11 structural
-families. Seven F5 primaries share one real-derived four-section body skeleton,
+The read-only Alfa corpus review now covers 23 observations across four current
+forensic top-level families: integer-title F5, decimal-title F5,
+empty/companion, and other historical envelopes. The earlier exact structural
+classification retained 11 historical subfamilies; this is a separate metric,
+not the current forensic family count. Seven F5 primaries share one real-derived
+four-section body skeleton,
 with integer and comma-decimal(two digits) title variants. The active v3 staged
 path requires title/body amount equality, title-case transfer/recipient anchors,
 both proven masked-reference positions, uppercase `RUB`, and Android envelope

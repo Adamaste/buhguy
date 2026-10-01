@@ -148,6 +148,15 @@ test('Alfa F5 rejects extra prefix or suffix content', () => {
   assert.equal(result({ title, description: `ПРЕФИКС ${body}` }).amount, null);
 });
 
+test('Alfa v3 rejects reordered proven body sections', () => {
+  const sections = body.split(';');
+  const reorderedBody = [sections[1], sections[0], sections[2], sections[3]].join(';');
+  const normalized = result({ title, description: reorderedBody });
+  assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
+  assert.equal(normalized.amount, null);
+  assert.equal(normalized.accountReference, null);
+});
+
 test('non-empty invalid description cannot be bypassed by valid text', () => {
   const normalized = result({ title, description: 'invalid Alfa body', text: body });
   assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');

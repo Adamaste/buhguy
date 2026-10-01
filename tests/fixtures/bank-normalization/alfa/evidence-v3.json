@@ -3,7 +3,8 @@
   "source": "real-derived-sanitized",
   "normalizationVersion": "alfa-bank-normalizer-v3",
   "corpusObservationCount": 23,
-  "structuralFamilyCount": 11,
+  "forensicFamilyCount": 4,
+  "historicalExactStructuralFamilyCount": 11,
   "f5PrimaryObservationCount": 7,
   "controlledF5IndependentSampleCount": 4,
   "clusters": [

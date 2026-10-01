@@ -159,6 +159,9 @@ test('Alfa v3 fixture records the real-derived staged F5 skeleton', async () => 
   assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
   assert.equal(fixture.normalizationVersion, 'alfa-bank-normalizer-v3');
   assert.equal(fixture.corpusObservationCount, 23);
+  assert.equal(fixture.forensicFamilyCount, 4);
+  assert.equal(fixture.historicalExactStructuralFamilyCount, 11);
+  assert.equal('structuralFamilyCount' in fixture, false);
   assert.equal(fixture.f5PrimaryObservationCount, 7);
   assert.equal(fixture.controlledF5IndependentSampleCount, 4);
   assert.equal(integer.observationCount, 5);
