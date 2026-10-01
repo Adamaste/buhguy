@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-01
-- Current master: `b62ebbed774f31047032d1256303fa453b1705b4`
-- Current phase: review of the narrow Sber outgoing-shaped partial parser
-- Current blocker: outgoing/debit direction is not proven; the v4 partial parser is limited to amount/RUB/account-reference evidence and must not assign DEBIT or an outgoing event type. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
-- Production artifact: exact master `bfdeea3e5cc62ff65c256725b25b5e1e33027856`, archive SHA-256 `360a98738450b09d8873db60000bc0c5f116a7e6a36d51fcbe8d0986457d3d97`
+- Current master: `25ecffb0d794bd9856a1355c8cadda9d1fa32240`
+- Current phase: Person 1 Sber outgoing-shaped v4 production E2E complete; next provider/evidence target selection
+- Current blocker: Sber outgoing/debit direction remains unproven and must stay `UNKNOWN`; amount/RUB/account-reference extraction is production-proven. No further controlled Sber amount sample is required. Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope
+- Production artifact: exact master `25ecffb0d794bd9856a1355c8cadda9d1fa32240`, 304 files, archive SHA-256 `11ef406534774f4e16cfb61dff8fcb01d383cffaff39e9c0b6d89deb4607ca5f`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: review the Sber v4 partial parser against the three controlled outgoing primary samples `193/195`, `201`, and `204`. Amount, RUB, account-reference position, and Android postTime evidence are proven; direction/event type remain UNKNOWN. No further controlled amount sample, historical replay, backfill, or full outgoing parser is authorized.
+- Next action: choose the next deterministic Person 1 bank/provider evidence target or a genuinely independent evidence source for Sber direction. Do not collect more Sber amount-only samples: v4 amount/RUB/account-reference behavior is deployed and production-proven. Do not infer `DEBIT` from controlled-operation knowledge alone; keep direction/event type `UNKNOWN` until independent evidence proves them. Do not start Person 2/3 onboarding, INTERNAL_TRANSFER, business events, or ledger work.
 
 ## Bank Assistant semantic layer activated
 
@@ -41,22 +41,57 @@ A fresh real Sber incoming operation was visible through the assistant path as
 evidence. The Bank Assistant is therefore usable for Person 1 proven incoming
 transfers. `READY_TO_ASK_CHATGPT_ABOUT_TRANSFERS=YES`.
 
-The next functional cycle is Person 1 multi-bank operation coverage. Its first
-target is an outgoing Sber transfer from the proven account `MASKED_ACCOUNT
-0271`. This cycle is evidence-first: it must not infer an outgoing grammar,
-change parser code, create ledger/business events, or implement
-`INTERNAL_TRANSFER` before strict controlled evidence exists.
+The active functional cycle remains Person 1 multi-bank operation coverage.
+Sber now has two distinct production-proven normalization paths: the exact
+incoming family remains `READY / INCOMING_TRANSFER / CREDIT / EXACT`, while
+the outgoing-shaped v4 family preserves only the proven amount, `RUB`,
+payment-account reference, and Android event time as `PARTIAL`. Its
+`eventType` and `direction` intentionally remain `UNKNOWN`.
 
-The initial read-only Sber corpus review found 27 immutable Sber observations
-and one outgoing-looking structural candidate. That is not enough for a strict
-deterministic outgoing grammar or an outgoing parser. The current baseline is
-observation `187`, transaction `144`; the `0271` reference has exactly one
-candidate account, `financial_account_id=1`. This proves the identity candidate
-for the registered `MASKED_ACCOUNT 0271` reference, but does not prove that the
-reference is present or stable in the Sber outgoing notification family;
-`OUTGOING_ACCOUNT_REFERENCE_PROVEN=NO`. Exactly one controlled outgoing sample
-is the next permitted evidence step; a second sample is required if the family
-still lacks independent variation.
+The earlier outgoing corpus review and controlled-sample campaign are closed
+research stages. They established the v4 grammar and account-reference
+stability; do not restart them or collect another amount-only Sber sample.
+Any future Sber `DEBIT` classification requires an independent structural
+marker or evidence source rather than the fact that a controlled user action
+was known to be outgoing.
+
+## Sber normalizer v4 production deployment and Person 1 outgoing E2E
+
+PR #50 was squash-merged into exact master
+`25ecffb0d794bd9856a1355c8cadda9d1fa32240`. Master CI run
+`36852085746` passed all jobs, including `test`, `android`, and
+`android-signed`.
+
+The backend runtime was promoted from that exact master using an immutable
+304-file artifact with archive SHA-256
+`11ef406534774f4e16cfb61dff8fcb01d383cffaff39e9c0b6d89deb4607ca5f`.
+Artifact integrity, pre-deploy backup, atomic promotion, installed manifest,
+installed hashes, service health, and active release identity all passed.
+No DB migration, analytics SQL, grant, credential, Android, historical replay,
+or backfill operation was performed as part of deployment.
+
+A fresh Person 1 Sber outgoing-shaped production E2E was then performed after
+the pre-E2E baseline observation `204` / transaction `158`. Ordinary
+ingestion created observations `206-209` and transactions `160-163`:
+
+- primary observations `207` and `208` normalized with
+  `sber-bank-normalizer-v4` as `PARTIAL` / `PARTIAL`;
+- both primary projections extracted the user-confirmed transaction amount and
+  `RUB`; the exact real amount is intentionally not retained in repository
+  artifacts;
+- both primary projections resolved to `financial_account_id=1` with
+  account-resolution state `EXACT`;
+- both primary projections preserved `eventType=UNKNOWN` and
+  `direction=UNKNOWN`, proving that v4 does not invent outgoing/debit
+  semantics;
+- companion observations `206` and `209` remained separate
+  `PARTIAL`/unknown evidence with no transaction amount or account
+  resolution.
+
+This closes the Sber v4 amount/currency/account-reference production E2E.
+No further controlled amount sample is required. Sber `DEBIT` remains a
+separate unresolved evidence question and requires an independent structural
+marker or evidence source before classification.
 
 ## Sber normalizer v4 partial outgoing evidence
 
@@ -73,8 +108,8 @@ stable payment-account `MASKED_ACCOUNT ••0271` position, and event time from
 Android `postTime`. It must return `PARTIAL` with `eventType=UNKNOWN` and
 `direction=UNKNOWN`. No `DEBIT`, outgoing event type, purchase, internal
 transfer, business event, ledger posting, historical replay, or backfill is
-allowed. This is the current review target; production has not been deployed
-from this parser branch.
+allowed. The parser is now deployed and production-validated under exactly
+those partial semantics.
 
 ## Sber normalizer v3 current-format evidence
 
