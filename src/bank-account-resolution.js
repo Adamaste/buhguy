@@ -305,6 +305,20 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
   try {
     await client.query('BEGIN');
     const context = await loadTransactionContext(client, transactionId);
+    if (context.accountReference == null && context.accountReferenceKind == null) {
+      const existing = (await client.query(`SELECT bank_transaction_id,financial_account_id,resolution_state,provenance,reason,resolved_at
+        FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
+      await client.query('ROLLBACK');
+      return {
+        status: 'NOT_APPLICABLE',
+        resolutionState: existing?.resolution_state ?? 'UNKNOWN',
+        financialAccountId: existing?.financial_account_id ?? null,
+        candidateCount: 0,
+        changed: false,
+        reason: 'Observed transaction has no proven account reference',
+        ...(existing ? { existing } : {}),
+      };
+    }
     if (context.accountReferenceKind === 'MASKED_CARD') {
       const existing = (await client.query(`SELECT bank_transaction_id,financial_account_id,resolution_state,provenance,reason,resolved_at
         FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1`, [transactionId])).rows[0];
