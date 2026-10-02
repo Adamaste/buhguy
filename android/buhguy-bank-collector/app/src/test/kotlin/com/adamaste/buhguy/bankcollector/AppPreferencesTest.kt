@@ -1,5 +1,6 @@
 package com.adamaste.buhguy.bankcollector
 
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -13,6 +14,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
 class AppPreferencesTest {
@@ -60,6 +62,7 @@ class AppPreferencesTest {
             withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
         }
         preferences.markLastCapture("time", "com.example.bank", "INSERTED", "abcdef123456")
+        shadowOf(Looper.getMainLooper()).idle()
         changed.await()
     }
 }
