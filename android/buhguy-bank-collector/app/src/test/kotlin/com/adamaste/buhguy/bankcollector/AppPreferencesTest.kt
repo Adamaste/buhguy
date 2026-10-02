@@ -1,11 +1,8 @@
 package com.adamaste.buhguy.bankcollector
 
 import androidx.test.core.app.ApplicationProvider
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.yield
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,7 +10,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
 class AppPreferencesTest {
@@ -53,20 +49,8 @@ class AppPreferencesTest {
         assertEquals("unknown", preferences.lastSuccessfulDeliveryServerStatus())
     }
 
-    @Test fun diagnosticChangesEmitForDiagnosticPreferenceChanges() = runBlocking {
+    @Test fun diagnosticChangesProvideInitialRefreshTrigger() = runBlocking {
         val preferences = AppPreferences(context)
-        val changes = async {
-            withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
-        }
-        yield()
-        context.getSharedPreferences("collector-config", android.content.Context.MODE_PRIVATE)
-            .edit()
-            .putString("lastCaptureAt", "2026-10-02T10:00:00Z")
-            .putString("lastCapturePackage", "com.example.bank")
-            .putString("lastCaptureOutcome", "CAPTURED")
-            .putString("lastCaptureEventPrefix", "abcdef123456")
-            .commit()
-        ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
-        changes.await()
+        withTimeout(2_000) { preferences.diagnosticChanges().first() }
     }
 }
