@@ -17,7 +17,7 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-02
-- Current master: `9427d8a89973d0fcbc86cdd2e43f9e2125a0e9ce`
+- Current implementation baseline: `9427d8a89973d0fcbc86cdd2e43f9e2125a0e9ce` (PR #61 merge; verify the live GitHub `master` separately because reviewed docs-only closeout commits may be newer)
 - Current phase: Android source provenance and the narrow Yandex Pro StrongUnknown classifier are deployed; StrongUnknown has not yet been observed in production
 - Current blocker: No rollout blocker. StrongUnknown persists only exact evidence-backed financial anchors with incomplete/unsupported grammar; ordinary Unknown and NonFinancial remain locally dropped. Yandex card-purchase evidence should still be studied only when a real purchase occurs naturally
 - Production artifact: exact master `e83bacb3206de1b3f8ee153929aec12c783ea486`, 309 files, archive SHA-256 `0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`
@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Wait for a natural Yandex Pro notification with an exact financial anchor and inspect the persisted StrongUnknown evidence without creating an artificial event. Preserve backend fail-closed semantics, do not perform historical replay/backfill, and study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Do not manufacture a StrongUnknown event. If a natural Yandex Pro notification is classified StrongUnknown, inspect the persisted evidence and confirm backend fail-closed semantics. This validation may happen opportunistically while the project continues; do not block unrelated roadmap work waiting for it. Do not perform historical replay/backfill, and study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Android source provenance production rollout
 
@@ -80,10 +80,9 @@ APK SHA-256 is
 `8d516fa76f38ea692a9e0898609a8dfaa9732511c7f032f554bee6736ed82890`, and
 the stable signing certificate matched
 `cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a`.
-Application data, source/server settings, allowlist, credential state, and
-notification-listener access were preserved. The application started after
-the update; the fresh diagnostic window showed no AndroidRuntime crash or
-permanent-rejection burst.
+Application data, source/server settings, allowlist, credential state,
+notification-listener access, and outbox health were preserved/verified after
+the in-place update.
 
 The classifier now captures `StrongUnknown` only for an exact proven Yandex
 Pro financial anchor when the supported grammar is incomplete or unsupported.
