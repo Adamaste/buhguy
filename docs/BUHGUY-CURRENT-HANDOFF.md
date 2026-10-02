@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-02
-- Current master: `dfbee095f827fe742565de18a86522fb938455dc`
-- Current phase: Android source provenance is deployed and production-proven on a fresh Yandex financial event; the signed collector persisted the physical source package and notification channel end to end
-- Current blocker: None for Android source provenance. That stage is closed. Strong-unknown classification remains a separate unresolved design question; Yandex card-purchase evidence should still be studied only when a real purchase occurs naturally
+- Current master: `9427d8a89973d0fcbc86cdd2e43f9e2125a0e9ce`
+- Current phase: Android source provenance and the narrow Yandex Pro StrongUnknown classifier are deployed; StrongUnknown has not yet been observed in production
+- Current blocker: No rollout blocker. StrongUnknown persists only exact evidence-backed financial anchors with incomplete/unsupported grammar; ordinary Unknown and NonFinancial remain locally dropped. Yandex card-purchase evidence should still be studied only when a real purchase occurs naturally
 - Production artifact: exact master `e83bacb3206de1b3f8ee153929aec12c783ea486`, 309 files, archive SHA-256 `0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Treat Android source provenance as closed. The post-E2E Yandex baseline is 80 transactions, max observation 309, max transaction 251. Do not perform historical replay/backfill. Strong-unknown classification remains a separate design decision. Study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Wait for a natural Yandex Pro notification with an exact financial anchor and inspect the persisted StrongUnknown evidence without creating an artificial event. Preserve backend fail-closed semantics, do not perform historical replay/backfill, and study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Android source provenance production rollout
 
@@ -66,6 +66,32 @@ transaction remained linked to observation `309` and normalized through
 `yandex-bank-normalizer-v1` as `READY / INCOMING_TRANSFER / CREDIT`. The real
 transaction amount and notification content are intentionally not retained in
 this handoff. Android source provenance is therefore closed and production-proven.
+
+## Yandex Pro StrongUnknown rollout
+
+PR #61 is merged in exact master
+`9427d8a89973d0fcbc86cdd2e43f9e2125a0e9ce`; master CI #208
+(`37018385335`) passed `test`, `android`, and `android-signed`.
+The backend was not changed or redeployed, and no database migration was
+performed.
+
+Signed artifact `11232201233` was installed in place on `R5GL30GK60F`. Its
+APK SHA-256 is
+`8d516fa76f38ea692a9e0898609a8dfaa9732511c7f032f554bee6736ed82890`, and
+the stable signing certificate matched
+`cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a`.
+Application data, source/server settings, allowlist, credential state, and
+notification-listener access were preserved. The application started after
+the update; the fresh diagnostic window showed no AndroidRuntime crash or
+permanent-rejection burst.
+
+The classifier now captures `StrongUnknown` only for an exact proven Yandex
+Pro financial anchor when the supported grammar is incomplete or unsupported.
+`Financial` and `StrongUnknown` use the existing immutable capture/outbox path;
+ordinary `Unknown` and `NonFinancial` remain locally dropped. StrongUnknown
+does not prove event type, direction, amount, currency, or ownership, and the
+backend remains fail-closed. No StrongUnknown event has yet been observed in
+production. No new bank operation was performed for this rollout.
 
 ## Alfa F5 partial normalizer
 
