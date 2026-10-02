@@ -37,6 +37,9 @@ FROM (VALUES
   ('public.bank_transactions'::text, 'DELETE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'UPDATE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'DELETE'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'INSERT'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'UPDATE'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'DELETE'::text)
   ,('public.financial_accounts'::text, 'INSERT'::text)
   ,('public.financial_accounts'::text, 'UPDATE'::text)
   ,('public.financial_accounts'::text, 'DELETE'::text)
@@ -76,6 +79,10 @@ FROM (VALUES
   ('public.bank_source_person'::text, 'relation_type'::text, 'SELECT'::text),
   ('public.persons'::text, 'id'::text, 'SELECT'::text),
   ('public.persons'::text, 'scope_id'::text, 'SELECT'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'bank_source_id'::text, 'SELECT'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'provider'::text, 'SELECT'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'financial_account_id'::text, 'SELECT'::text)
+  ,('public.bank_source_provider_account_bindings'::text, 'active'::text, 'SELECT'::text)
 ) AS lookup(object_name,column_name,privilege_name)
 ORDER BY object_name, column_name;
 

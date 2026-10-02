@@ -27,6 +27,7 @@ import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrows
 import { createBankDeviceCredential, listBankDeviceCredentials, revokeBankDeviceCredential } from './bank-device-auth.js';
 import { createProvisionedBankSource, listProvisionedBankSources, linkProvisionedBankSourcePerson, setProvisionedBankSourceEnabled } from './bank-source-provisioning.js';
 import { bankTransactionAccountCoverage, createBankAccountReference, createFinancialAccount, createPaymentInstrument, linkPaymentInstrumentAccount, listFinancialAccounts, listPaymentInstruments, relatePaymentInstrumentPerson, relateFinancialAccountPerson, resolveBankTransactionAccount, resolveBankTransactionAccountFromReference, resolveBankTransactionPaymentInstrumentFromReference, resolveHistoricalBankTransactionAccountFromObservation } from './bank-account-resolution.js';
+import { bindBankSourceProviderAccount, disableBankSourceProviderAccountBinding, listBankSourceProviderAccountBindings } from './bank-source-provider-binding.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -124,6 +125,20 @@ export async function runBankSourceCommand(args, { pool, write = printJson } = {
 
 export async function runBankAccountCommand(args, { pool, write = printJson } = {}) {
   const subcommand = args._[0];
+  if (subcommand === 'bind-source-provider') {
+    const binding = await bindBankSourceProviderAccount(pool, { sourceKey: args['source-key'], provider: args.provider, financialAccountId: args['financial-account-id'] ?? args['account-id'], reason: args.reason });
+    write({ ok: true, binding });
+    return 0;
+  }
+  if (subcommand === 'list-source-provider-bindings') {
+    write({ bindings: await listBankSourceProviderAccountBindings(pool, { sourceKey: args['source-key'] ?? null, provider: args.provider ?? null }) });
+    return 0;
+  }
+  if (subcommand === 'disable-source-provider') {
+    const binding = await disableBankSourceProviderAccountBinding(pool, { sourceKey: args['source-key'], provider: args.provider });
+    write({ ok: true, binding });
+    return 0;
+  }
   if (subcommand === 'create') {
     const account = await createFinancialAccount(pool, {
       scopeKey: args['scope-key'] ?? 'default',
@@ -232,7 +247,7 @@ export async function runBankAccountCommand(args, { pool, write = printJson } = 
     write({ coverage: await bankTransactionAccountCoverage(pool) });
     return 0;
   }
-  throw new ReceiptCollectorError('Bank account command must be create, list, list-instruments, link-person, add-instrument, link-instrument-person, link-instrument-account, add-reference, resolve-reference, resolve-instrument-reference, resolve-historical, resolve-manual or coverage');
+  throw new ReceiptCollectorError('Bank account command must be create, list, list-instruments, bind-source-provider, list-source-provider-bindings, disable-source-provider, link-person, add-instrument, link-instrument-person, link-instrument-account, add-reference, resolve-reference, resolve-instrument-reference, resolve-historical, resolve-manual or coverage');
 }
 
 export function normalizePhone(value) {

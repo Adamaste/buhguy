@@ -1,4 +1,5 @@
 import { bankPayloadSha256, normalizeBankEvent } from './bank-ingestion.js';
+import { findActiveSourceProviderAccountBinding, SOURCE_PROVIDER_BINDING_PROVENANCE } from './bank-source-provider-binding.js';
 
 const RELATION_TYPES = new Set(['OWNER', 'AUTHORIZED_USER']);
 const INSTRUMENT_TYPES = new Set(['CARD', 'VIRTUAL_CARD', 'OTHER']);
@@ -189,14 +190,14 @@ export async function resolveBankTransactionAccount(pool, { bankTransactionId, f
 
 async function loadTransactionContext(client, transactionId) {
   const result = await client.query(`SELECT bt.id, bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
-      eo.ingestion_metadata->>'provider' AS provider,
+      eo.bank_source_id AS "bankSourceId", eo.ingestion_metadata->>'provider' AS provider,
       COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
     FROM bank_transactions bt
     JOIN bank_event_observations eo ON eo.id=bt.observation_id
-    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
+    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id
     LEFT JOIN persons p ON p.id=sp.person_id
     WHERE bt.id=$1
-    GROUP BY bt.id, eo.ingestion_metadata`, [transactionId]);
+    GROUP BY bt.id, eo.bank_source_id, eo.ingestion_metadata`, [transactionId]);
   const context = result.rows[0];
   if (!context) throw new Error('Bank transaction was not found');
   if (context.scope_ids.length !== 1) throw new Error('Bank source accounting scope is not unique');
@@ -205,14 +206,14 @@ async function loadTransactionContext(client, transactionId) {
 
 async function loadIngestionContext(client, transactionId) {
   const result = await client.query(`SELECT bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
-      eo.ingestion_metadata->>'provider' AS provider,
+      eo.bank_source_id AS "bankSourceId", eo.ingestion_metadata->>'provider' AS provider,
       COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
     FROM bank_transactions bt
     JOIN bank_event_observations eo ON eo.id=bt.observation_id
-    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id AND sp.relation_type='OWNER'
+    LEFT JOIN bank_source_person sp ON sp.bank_source_id=eo.bank_source_id
     LEFT JOIN persons p ON p.id=sp.person_id
     WHERE bt.id=$1
-    GROUP BY bt.id, eo.ingestion_metadata`, [transactionId]);
+    GROUP BY bt.id, eo.bank_source_id, eo.ingestion_metadata`, [transactionId]);
   const context = result.rows[0];
   if (!context) throw new Error('Bank transaction was not found');
   return context;
@@ -273,8 +274,20 @@ export async function resolveNewBankTransactionIdentity(client, { bankTransactio
   const ambiguous = candidates.length > 1;
   const account = candidates.length === 1
     ? await insertIngestionAccountResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' })
-    : await insertIngestionAccountResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, reference kind, and scope candidates' : context.accountReferenceKind ? 'No provider, reference kind, and scope candidate' : 'Observed transaction has no proven account reference' });
+    : context.accountReference == null && context.accountReferenceKind == null
+      ? await resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId })
+      : await insertIngestionAccountResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, reference kind, and scope candidates' : context.accountReferenceKind ? 'No provider, reference kind, and scope candidate' : 'Observed transaction has no proven account reference' });
   return { account, paymentInstrument: null };
+}
+
+async function resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId }) {
+  const accountId = await findActiveSourceProviderAccountBinding(client, { bankSourceId: context.bankSourceId, provider: context.provider, scopeId });
+  if (accountId != null) return insertIngestionAccountResolution(client, {
+    transactionId, financialAccountId: accountId, resolutionState: 'MANUAL',
+    provenance: SOURCE_PROVIDER_BINDING_PROVENANCE,
+    reason: 'Explicit active source/provider account binding',
+  });
+  return insertIngestionAccountResolution(client, { transactionId, provenance: 'SOURCE_PROVIDER_BINDING_UNRESOLVED', reason: 'No active source/provider account binding' });
 }
 
 async function persistResolution(client, { transactionId, financialAccountId = null, resolutionState, provenance, reason }) {

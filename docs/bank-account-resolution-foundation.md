@@ -61,6 +61,32 @@ transaction. The runtime role receives only the column-level lookup grants and
 resolution-row insert privileges needed for this path; provisioning and
 administrative resolution remain separate.
 
+## Explicit source/provider bindings
+
+`bank_source_provider_account_bindings` is an administrative, user-confirmed
+fallback for a source/provider pair when a newly ingested transaction contains
+no account or card reference at all. It targets an existing financial account,
+requires a non-empty reason, and keeps provenance
+`USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT`. A source/provider pair has at most
+one active binding; an identical re-bind is idempotent, while replacing an
+active binding requires an explicit disable first.
+
+Binding creation requires exactly one accounting scope among all persons linked
+to the bank source, and the target account must be in that same scope. Zero or
+multiple source scopes fail closed. The relation is capture/accounting context,
+not financial-account ownership, and no OWNER relation is created.
+
+During ingestion the precedence is: proven account/card reference resolution
+first; otherwise one active source/provider binding may produce account
+resolution `MANUAL` with the binding provenance; otherwise `UNKNOWN`. Bindings
+never apply to a `MASKED_CARD` reference, an account reference with an unknown
+kind, a different provider, a different source, or an ambiguous scope. Existing
+transactions are not re-evaluated when a binding is added or disabled.
+
+The administrative surface is `bank-account bind-source-provider`,
+`list-source-provider-bindings`, and `disable-source-provider`. The runtime
+role has only column-level SELECT for the lookup and no binding DML privilege.
+
 ## Administrative operator surface
 
 The `receipt-collector bank-account` CLI is an administrative operation. It
