@@ -58,7 +58,13 @@ class AppPreferencesTest {
             withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
         }
         yield()
-        preferences.markLastCapture("2026-10-02T10:00:00Z", "com.example.bank", "CAPTURED", "abcdef123456")
+        context.getSharedPreferences("collector-config", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putString("lastCaptureAt", "2026-10-02T10:00:00Z")
+            .putString("lastCapturePackage", "com.example.bank")
+            .putString("lastCaptureOutcome", "CAPTURED")
+            .putString("lastCaptureEventPrefix", "abcdef123456")
+            .commit()
         changes.await()
     }
 }
