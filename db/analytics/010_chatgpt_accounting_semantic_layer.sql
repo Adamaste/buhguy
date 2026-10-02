@@ -271,6 +271,23 @@ JOIN chatgpt_accounting.bank_transaction_payment_instrument_resolution pr
 JOIN chatgpt_accounting.bank_transaction_person_context pc
   ON pc.bank_transaction_id = bt.id;
 
+CREATE OR REPLACE VIEW chatgpt_accounting.bank_balance_observations AS
+SELECT bbo.observation_id,
+       bbo.bank_transaction_id,
+       bbo.balance_kind,
+       bbo.amount,
+       bbo.currency,
+       bbo.event_time,
+       bbo.normalization_version,
+       COALESCE(ar.resolution_state, 'UNKNOWN') AS account_resolution_state,
+       ar.financial_account_id,
+       CASE WHEN ar.financial_account_id IS NOT NULL THEN fa.display_name END AS financial_account_display_name
+FROM public.bank_balance_observations bbo
+JOIN public.bank_transactions bt ON bt.id = bbo.bank_transaction_id
+LEFT JOIN chatgpt_accounting.bank_transaction_account_resolution ar
+  ON ar.bank_transaction_id = bt.id
+LEFT JOIN public.financial_accounts fa ON fa.id = ar.financial_account_id;
+
 COMMENT ON SCHEMA chatgpt_accounting IS
 'Read-only accounting semantic layer for ChatGPT. Select views in this schema in BlazeSQL. Use analytics_* for ordinary analytics and the proof-chain views for audit questions. Never infer payer or owner from FNS source provenance.';
 
@@ -304,6 +321,7 @@ COMMENT ON VIEW chatgpt_accounting.bank_transaction_account_resolution IS 'One r
 COMMENT ON VIEW chatgpt_accounting.bank_transaction_payment_instrument_resolution IS 'One row per bank transaction with separate payment-instrument resolution and evidence-backed person relations. Card evidence never infers a financial account.';
 COMMENT ON VIEW chatgpt_accounting.bank_transaction_person_context IS 'One row per bank transaction containing source-person context only. These relations do not prove financial-account ownership.';
 COMMENT ON VIEW chatgpt_accounting.bank_transactions IS 'One row per normalized bank transaction with explicit normalization, resolution, and source-context state. A bank transaction is not automatically a purchase, receipt, payer, or accounting certification.';
+COMMENT ON VIEW chatgpt_accounting.bank_balance_observations IS 'Provider-reported observed balance evidence. This is not a calculated, current, or accounting-certified balance.';
 
 COMMENT ON COLUMN chatgpt_accounting.receipts.fns_id IS 'Canonical FNS identity; not a source-person identity.';
 COMMENT ON COLUMN chatgpt_accounting.receipts.total_sum IS 'Fiscal receipt total; do not treat as confirmed cash flow.';
@@ -333,6 +351,7 @@ REVOKE ALL PRIVILEGES ON TABLE
   public.payment_instruments,
   public.payment_instrument_person_relations,
   public.bank_account_references
+  ,public.bank_balance_observations
 FROM chatgpt_reader;
 GRANT USAGE ON SCHEMA chatgpt_accounting TO chatgpt_reader;
 GRANT SELECT ON
@@ -365,7 +384,8 @@ GRANT SELECT ON
   chatgpt_accounting.bank_transaction_account_resolution,
   chatgpt_accounting.bank_transaction_payment_instrument_resolution,
   chatgpt_accounting.bank_transaction_person_context,
-  chatgpt_accounting.bank_transactions
+  chatgpt_accounting.bank_transactions,
+  chatgpt_accounting.bank_balance_observations
 TO chatgpt_reader;
 
 -- Keep BlazeSQL on the explicit semantic layer instead of legacy public views.

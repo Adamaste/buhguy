@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBankAndroidNotification, isYandexBankProvider, normalizeAlfaBankEvent, normalizeSberBankEvent, normalizeTbankBankEvent, normalizeYandexBankEvent } from './bank-normalization.js';
+import { extractSberProviderBalance, isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBankAndroidNotification, isYandexBankProvider, normalizeAlfaBankEvent, normalizeSberBankEvent, normalizeTbankBankEvent, normalizeYandexBankEvent } from './bank-normalization.js';
 import { resolveNewBankTransactionIdentity } from './bank-account-resolution.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
@@ -131,6 +131,17 @@ export async function linkBankSourcePerson(pool, { sourceKey, personId, relation
   await pool.query(`INSERT INTO bank_source_person(bank_source_id,person_id,relation_type) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [source.id, personId, relationType]);
 }
 
+export async function persistSberProviderBalance(client, { observationId, bankTransactionId, balance }) {
+  if (!balance) return null;
+  const result = await client.query(`INSERT INTO bank_balance_observations
+      (observation_id,bank_transaction_id,balance_kind,amount,currency,event_time,normalization_version)
+      VALUES($1,$2,$3,$4,$5,$6,$7)
+      RETURNING observation_id,bank_transaction_id,balance_kind,amount,currency,event_time,normalization_version`, [
+    observationId, bankTransactionId, balance.balanceKind, balance.amount, balance.currency, balance.eventTime, balance.normalizationVersion,
+  ]);
+  return result.rows[0];
+}
+
 export async function ingestBankEvent(pool, input) {
   const event = validateBankEventInput(input);
   const source = (await pool.query('SELECT id,enabled FROM bank_sources WHERE source_key=$1', [event.sourceKey])).rows[0];
@@ -157,8 +168,13 @@ export async function ingestBankEvent(pool, input) {
     const transaction = (await client.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,counterparty,account_reference,account_reference_kind,event_type,normalization_status,normalization_version,evidence_quality)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [observation.id, normalized.occurredAt, normalized.amount, normalized.currency, normalized.direction, normalized.merchant, normalized.counterparty, normalized.accountReference, normalized.accountReferenceKind, normalized.eventType, normalized.normalizationStatus, normalized.normalizationVersion, normalized.evidenceQuality])).rows[0];
     const identityResolution = await resolveNewBankTransactionIdentity(client, { bankTransactionId: transaction.id });
+    const balanceObservation = await persistSberProviderBalance(client, {
+      observationId: observation.id,
+      bankTransactionId: transaction.id,
+      balance: isSberBankAndroidNotification(event) ? extractSberProviderBalance(event) : null,
+    });
     await client.query('COMMIT');
-    return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized, identityResolution };
+    return { status: 'created', observationId: Number(observation.id), transactionId: Number(transaction.id), normalization: normalized, identityResolution, balanceObservation };
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') {

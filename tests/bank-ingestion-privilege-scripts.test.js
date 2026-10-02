@@ -17,6 +17,7 @@ test('bank ingestion grant script is narrowly scoped to runtime DML', async () =
   assert.match(sql, /GRANT SELECT \(id, observation_id, account_reference, account_reference_kind\) ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transaction_account_resolution TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transaction_payment_instrument_resolution TO receipt_collector/);
+  assert.match(sql, /GRANT INSERT ON public\.bank_balance_observations TO receipt_collector/);
   for (const table of ['financial_accounts', 'payment_instruments', 'bank_account_references', 'bank_source_person', 'persons']) {
     assert.match(sql, new RegExp(`GRANT SELECT \\([^)]*\\)\\s+ON public\\.${table}`));
   }
@@ -51,6 +52,7 @@ test('bank ingestion privilege check covers required and forbidden capabilities'
   assert.match(sql, /'DELETE'/);
   assert.match(sql, /'UPDATE'/);
   assert.match(sql, /bank_transaction_payment_instrument_resolution/);
+  assert.match(sql, /bank_balance_observations/);
   assert.match(sql, /financial_accounts/);
   assert.match(sql, /payment_instrument_person_relations/);
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeBankEvent } from '../src/bank-ingestion.js';
+import { extractSberProviderBalance } from '../src/bank-normalization.js';
 
 const base = {
   sourceKey: 'android-adam-samsung-s938b',
@@ -117,6 +118,32 @@ test('Sber v4 keeps the second monetary field out of the transaction amount', ()
   const result = normalizeBankEvent({ ...base, payload: currentIncoming() });
   assert.equal(result.amount, '123.00');
   assert.equal(result.currency, 'RUB');
+});
+
+test('Sber v4 extracts provider balance from the same exact incoming envelope', () => {
+  const balance = extractSberProviderBalance({ ...base, payload: currentIncoming() });
+  assert.deepEqual(balance, {
+    balanceKind: 'PROVIDER_REPORTED_BALANCE',
+    amount: '6789.01',
+    currency: 'RUB',
+    eventTime: '2026-09-30T07:59:00.000Z',
+    normalizationVersion: 'sber-bank-normalizer-v4',
+  });
+});
+
+test('Sber v4 extracts provider balance from the exact outgoing partial envelope', () => {
+  const balance = extractSberProviderBalance({ ...base, payload: currentOutgoing() });
+  assert.equal(balance.amount, '9876.54');
+  assert.equal(balance.currency, 'RUB');
+  assert.equal(balance.balanceKind, 'PROVIDER_REPORTED_BALANCE');
+});
+
+test('Sber v4 does not extract balance from near misses or other providers', () => {
+  for (const input of [
+    { ...base, payload: { ...currentIncoming(), description: `${currentIncoming().description} ЛИШНИЙ ТЕКСТ` } },
+    { ...base, payload: { ...currentIncoming(), description: '+ 123 ₽ — Теперь у вас: 6 789,01 ₽ Плат. счёт •• 0000' } },
+    { ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'other.bank' }, payload: currentIncoming() },
+  ]) assert.equal(extractSberProviderBalance(input), null);
 });
 
 test('Sber v4 is provider, adapter, and schema scoped', () => {

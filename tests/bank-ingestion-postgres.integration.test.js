@@ -98,6 +98,13 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(sberCreated.normalization.amount, '123.00');
     assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v4');
     assert.equal(sberCreated.normalization.accountReference, '0000');
+    assert.equal(sberCreated.balanceObservation.observation_id, String(sberCreated.observationId));
+    assert.equal(sberCreated.balanceObservation.bank_transaction_id, String(sberCreated.transactionId));
+    assert.equal(sberCreated.balanceObservation.balance_kind, 'PROVIDER_REPORTED_BALANCE');
+    assert.equal(sberCreated.balanceObservation.amount, '6789.01');
+    assert.equal(sberCreated.balanceObservation.currency, 'RUB');
+    assert.equal(sberCreated.balanceObservation.event_time.toISOString(), '2026-09-18T09:59:00.000Z');
+    assert.equal(sberCreated.balanceObservation.normalization_version, 'sber-bank-normalizer-v4');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
     assert.equal(sberReplay.status, 'duplicate');
@@ -106,6 +113,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.deepEqual(sberConflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
     const sberAfter = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     assert.deepEqual(sberAfter, sberBefore);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_balance_observations WHERE bank_transaction_id=$1', [sberCreated.transactionId])).rows[0].count, 1);
     const counts = await pool.query(`SELECT (SELECT count(*) FROM bank_event_observations) AS observations,
       (SELECT count(*) FROM bank_transactions) AS transactions,
       (SELECT count(*) FROM information_schema.columns WHERE table_name='bank_transactions' AND column_name IN ('receipt_id','purchase_id')) AS forbidden_links`);
@@ -171,6 +179,9 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
     assert.equal(created.identityResolution.account.resolutionState, 'EXACT');
     assert.equal(created.identityResolution.account.financialAccountId, accountId);
     assert.equal(created.identityResolution.account.provenance, 'OBSERVED_PROVIDER_REFERENCE');
+    assert.equal(created.balanceObservation.amount, '9876.54');
+    assert.equal(created.balanceObservation.currency, 'RUB');
+    assert.equal(created.balanceObservation.balance_kind, 'PROVIDER_REPORTED_BALANCE');
 
     const persisted = (await pool.query(`SELECT bt.amount,bt.currency,bt.direction,bt.event_type,bt.normalization_status,
         bt.account_reference,bt.account_reference_kind,r.financial_account_id,r.resolution_state,r.provenance
@@ -192,6 +203,39 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
       await pool.query('DELETE FROM financial_accounts WHERE id=$1', [accountId]).catch(() => {});
     }
     await pool.query('DELETE FROM persons WHERE person_key=$1', [`person-${sourceKey}`]).catch(() => {});
+    await pool.end();
+  }
+});
+
+integration('Sber balance persistence rolls back the complete event atomically on failure', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const sourceKey = `sber-balance-rollback-${process.pid}-${Date.now()}`;
+  try {
+    await migrate(pool);
+    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Sber balance rollback' });
+    await pool.query(`CREATE OR REPLACE FUNCTION test_fail_sber_balance_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic balance persistence failure'; END;
+    $$`);
+    await pool.query('CREATE TRIGGER test_fail_sber_balance_insert BEFORE INSERT ON bank_balance_observations FOR EACH ROW EXECUTE FUNCTION test_fail_sber_balance_insert()');
+
+    await assert.rejects(() => ingestBankEvent(pool, {
+      sourceKey,
+      sourceEventId: 'synthetic-sber-balance-rollback',
+      observedAt: '2026-09-18T10:00:00Z',
+      eventTime: '2026-09-18T09:59:00Z',
+      payload: { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' },
+      ingestionMetadata: { adapter: 'android-notification', provider: 'ru.sberbankmobile', schemaVersion: '1' },
+    }), /synthetic balance persistence failure/);
+
+    const rows = await pool.query(`SELECT
+      (SELECT count(*) FROM bank_event_observations WHERE source_event_id='synthetic-sber-balance-rollback') AS observations,
+      (SELECT count(*) FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE source_event_id='synthetic-sber-balance-rollback')) AS transactions,
+      (SELECT count(*) FROM bank_balance_observations WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE source_event_id='synthetic-sber-balance-rollback')) AS balances`);
+    assert.deepEqual(rows.rows[0], { observations: '0', transactions: '0', balances: '0' });
+  } finally {
+    await pool.query('DROP TRIGGER IF EXISTS test_fail_sber_balance_insert ON bank_balance_observations').catch(() => {});
+    await pool.query('DROP FUNCTION IF EXISTS test_fail_sber_balance_insert()').catch(() => {});
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
     await pool.end();
   }
 });
@@ -293,6 +337,9 @@ integration('bank ingestion works under the restricted runtime role without extr
       has_table_privilege('receipt_collector','public.bank_event_observations','UPDATE') AS observations_update,
       has_table_privilege('receipt_collector','public.bank_event_observations','DELETE') AS observations_delete,
       has_table_privilege('receipt_collector','public.bank_transactions','DELETE') AS transactions_delete,
+      has_table_privilege('receipt_collector','public.bank_balance_observations','INSERT') AS balances_insert,
+      has_table_privilege('receipt_collector','public.bank_balance_observations','UPDATE') AS balances_update,
+      has_table_privilege('receipt_collector','public.bank_balance_observations','DELETE') AS balances_delete,
       has_table_privilege('receipt_collector','public.bank_sources','REFERENCES') AS sources_references,
       has_table_privilege('receipt_collector','public.bank_event_observations','REFERENCES') AS observations_references`)).rows[0];
     assert.equal(privilegeRows.schema_create, false);
@@ -302,6 +349,9 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.observations_update, false);
     assert.equal(privilegeRows.observations_delete, false);
     assert.equal(privilegeRows.transactions_delete, false);
+    assert.equal(privilegeRows.balances_insert, true);
+    assert.equal(privilegeRows.balances_update, false);
+    assert.equal(privilegeRows.balances_delete, false);
     assert.equal(privilegeRows.sources_references, false);
     assert.equal(privilegeRows.observations_references, false);
   } finally {

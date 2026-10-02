@@ -37,3 +37,17 @@ test('payment instrument identity migration allows standalone cards and exact re
   assert.match(sql, /bank_transaction_payment_instrument_resolution/);
   assert.match(sql, /payment_instrument_id IS NOT NULL/);
 });
+
+test('provider balance migration keeps observed balances separate and immutable', async () => {
+  const sql = await readFile(new URL('../db/migrations/017_bank_balance_observations.sql', import.meta.url), 'utf8');
+  assert.match(sql, /CREATE TABLE bank_balance_observations/);
+  assert.match(sql, /observation_id BIGINT PRIMARY KEY REFERENCES bank_event_observations\(id\) ON DELETE RESTRICT/);
+  assert.match(sql, /bank_transaction_id BIGINT NOT NULL UNIQUE REFERENCES bank_transactions\(id\) ON DELETE RESTRICT/);
+  assert.match(sql, /balance_kind TEXT NOT NULL CHECK \(balance_kind = 'PROVIDER_REPORTED_BALANCE'\)/);
+  assert.match(sql, /amount NUMERIC\(14,2\) NOT NULL/);
+  assert.match(sql, /currency CHAR\(3\) NOT NULL CHECK \(currency = 'RUB'\)/);
+  assert.match(sql, /event_time TIMESTAMPTZ NOT NULL/);
+  assert.match(sql, /normalization_version TEXT NOT NULL/);
+  assert.match(sql, /GRANT INSERT ON public\.bank_balance_observations TO receipt_collector/);
+  assert.doesNotMatch(sql, /GRANT (?:SELECT|UPDATE|DELETE) ON public\.bank_balance_observations/i);
+});

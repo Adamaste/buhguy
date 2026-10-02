@@ -46,6 +46,7 @@ acquisitions; it is not a complete receipt inventory.
 - [ ] `chatgpt_accounting.bank_transaction_payment_instrument_resolution`
 - [ ] `chatgpt_accounting.bank_transaction_person_context`
 - [ ] `chatgpt_accounting.bank_transactions`
+- [ ] `chatgpt_accounting.bank_balance_observations` — provider-reported observed balances, not calculated or accounting-certified balances.
 
 ## Do not select
 

@@ -18,7 +18,7 @@ const views = [
   'analytics_purchase_items', 'reconciliation_runs', 'reconciliation_results',
   'bank_sources', 'bank_transaction_account_resolution',
   'bank_transaction_payment_instrument_resolution', 'bank_transaction_person_context',
-  'bank_transactions'
+  'bank_transactions', 'bank_balance_observations'
 ];
 
 test('semantic layer exposes the complete safe view manifest', () => {

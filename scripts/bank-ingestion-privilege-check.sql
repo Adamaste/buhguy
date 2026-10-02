@@ -12,6 +12,7 @@ FROM (VALUES
   ('public.bank_transactions'::text, 'INSERT'::text)
   ,('public.bank_transaction_account_resolution'::text, 'INSERT'::text)
   ,('public.bank_transaction_payment_instrument_resolution'::text, 'INSERT'::text)
+  ,('public.bank_balance_observations'::text, 'INSERT'::text)
 ) AS required(object_name, privilege_name)
 ORDER BY object_name, privilege_name;
 
@@ -37,6 +38,8 @@ FROM (VALUES
   ('public.bank_transactions'::text, 'DELETE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'UPDATE'::text)
   ,('public.bank_transaction_account_resolution'::text, 'DELETE'::text)
+  ,('public.bank_balance_observations'::text, 'UPDATE'::text)
+  ,('public.bank_balance_observations'::text, 'DELETE'::text)
   ,('public.financial_accounts'::text, 'INSERT'::text)
   ,('public.financial_accounts'::text, 'UPDATE'::text)
   ,('public.financial_accounts'::text, 'DELETE'::text)

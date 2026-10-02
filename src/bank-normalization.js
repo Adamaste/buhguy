@@ -216,42 +216,86 @@ function partialSberOutgoing({ occurred, amount, accountReference }) {
   };
 }
 
+function parseGroupedRubAmount(value) {
+  return value.replaceAll(' ', '').replace(',', '.');
+}
+
+function parseSberV4Envelope(input) {
+  const payload = input.payload ?? {};
+  const title = normalizeWhitespace(payload.title);
+  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
+  const occurred = occurredAt(input.eventTime);
+  const incomingTitle = SBER_INCOMING_TITLE_PATTERN.test(title);
+  const incomingMatch = body.match(/^\+\s*(\d+)\s*₽\s+—\s*Баланс:\s*(\d+(?: [0-9]{3})*,\d{2})\s*₽\s+Плат\.\s*счёт\s*••\s*(\d{4})$/u);
+  if (incomingTitle && incomingMatch && occurred) {
+    return {
+      kind: 'incoming',
+      occurred,
+      transactionAmount: `${incomingMatch[1]}.00`,
+      balanceAmount: parseGroupedRubAmount(incomingMatch[2]),
+      accountReference: incomingMatch[3],
+    };
+  }
+
+  const outgoingTitle = SBER_OUTGOING_TITLE_PATTERN.test(title);
+  const outgoingMatch = body.match(/^([0-9]+(?: [0-9]{3})*)[ ]*₽[ ]+—[ ]+Баланс:[ ]*([0-9]+(?: [0-9]{3})*,[0-9]{2})[ ]*₽[ ]+Плат\.[ ]*счёт[ ]*••[ ]*([0-9]{4})$/u);
+  if (outgoingTitle && outgoingMatch && occurred) {
+    return {
+      kind: 'outgoing',
+      occurred,
+      transactionAmount: `${outgoingMatch[1].replaceAll(' ', '')}.00`,
+      balanceAmount: parseGroupedRubAmount(outgoingMatch[2]),
+      accountReference: outgoingMatch[3],
+    };
+  }
+  return null;
+}
+
+export function extractSberProviderBalance(input) {
+  if (!isSberBankAndroidNotification(input)) return null;
+  const parsed = parseSberV4Envelope(input);
+  if (!parsed) return null;
+  return {
+    balanceKind: 'PROVIDER_REPORTED_BALANCE',
+    amount: parsed.balanceAmount,
+    currency: 'RUB',
+    eventTime: parsed.occurred,
+    normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
+  };
+}
+
 export function normalizeSberBankEvent(input) {
   const payload = input.payload ?? {};
   const title = normalizeWhitespace(payload.title);
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
   const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERN.test(title);
-  const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
-  const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
-  const accountReferenceMatch = afterAmount.match(/^—\s*Баланс:\s*\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s*₽\s+Плат\.\s*счёт\s*••\s*(\d{4})$/u);
-  const hasIncomingStructure = Boolean(accountReferenceMatch);
   const hasIncomingMarker = hasIncomingTitle && body.startsWith('+');
-  const amount = amountMatch ? `${amountMatch[1]}.00` : null;
   const hasCurrency = body.includes('\u20bd');
+  const parsed = parseSberV4Envelope(input);
 
-  if (!hasIncomingTitle || !hasIncomingMarker || !amountMatch || !hasIncomingStructure || !occurred || !hasCurrency) {
-    const outgoingTitle = SBER_OUTGOING_TITLE_PATTERN.test(title);
-    const outgoingMatch = body.match(/^([0-9]+(?:[ ]+[0-9]{3})*)[ ]*₽[ ]+—[ ]+Баланс:[ ]*([0-9]+(?:[ ]+[0-9]{3})*,[0-9]{2})[ ]*₽[ ]+Плат\.[ ]*счёт[ ]*••[ ]*([0-9]{4})$/u);
-    if (outgoingTitle && outgoingMatch && occurred) {
-      return partialSberOutgoing({
-        occurred,
-        amount: `${outgoingMatch[1].replaceAll(' ', '')}.00`,
-        accountReference: outgoingMatch[3],
-      });
-    }
-    return incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount: null });
+  if (!parsed) {
+    const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
+    return incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount: amountMatch ? `${amountMatch[1]}.00` : null });
+  }
+
+  if (parsed.kind === 'outgoing') {
+    return partialSberOutgoing({
+      occurred: parsed.occurred,
+      amount: parsed.transactionAmount,
+      accountReference: parsed.accountReference,
+    });
   }
 
   return {
     eventType: 'INCOMING_TRANSFER',
-    occurredAt: occurred,
-    amount,
+    occurredAt: parsed.occurred,
+    amount: parsed.transactionAmount,
     currency: 'RUB',
     direction: 'CREDIT',
     merchant: null,
     counterparty: null,
-    accountReference: accountReferenceMatch[1],
+    accountReference: parsed.accountReference,
     accountReferenceKind: 'MASKED_ACCOUNT',
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
