@@ -6,11 +6,13 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class MainActivityLiveDiagnosticsTest {
     @Test fun preferencesRefreshWhileActivityRemainsAlive() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
