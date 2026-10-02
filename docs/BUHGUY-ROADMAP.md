@@ -243,14 +243,9 @@ Introduce/complete a model for:
 - other assets/liabilities as needed
 - ownership/context separate from transaction-party proof
 
-Potential balance model:
+Money-flow totals are derived from observed transactions and explicit account identity evidence.
 
-opening balance
-+ credits
-- debits
-= calculated balance
-
-Where reliable balance snapshots exist, reconcile calculated state against observed snapshots.
+Provider-reported balance snapshots and balance-difference reconciliation are not an active roadmap stage. A balance difference must never be treated as proof of a missing transaction or classified cash flow; unseen operations can be incomplete, multiple, or offsetting.
 
 ### Requirements
 
