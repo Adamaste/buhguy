@@ -17,6 +17,8 @@ GRANT SELECT (provider, reference_kind, reference_value, financial_account_id, p
 GRANT SELECT (bank_source_id, person_id, relation_type) ON public.bank_source_person TO receipt_collector;
 GRANT SELECT (id, scope_id) ON public.persons TO receipt_collector;
 GRANT INSERT ON public.bank_transaction_payment_instrument_resolution TO receipt_collector;
+GRANT SELECT (bank_source_id, provider, financial_account_id, active)
+  ON public.bank_source_provider_account_bindings TO receipt_collector;
 
 GRANT USAGE ON SEQUENCE public.bank_event_observations_id_seq TO receipt_collector;
 GRANT USAGE ON SEQUENCE public.bank_transactions_id_seq TO receipt_collector;

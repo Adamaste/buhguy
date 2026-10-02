@@ -6,6 +6,7 @@ import pg from 'pg';
 import { authenticateBankDevice, createBankDeviceCredential } from '../src/bank-device-auth.js';
 import { createBankSource, ingestBankEvent, linkBankSourcePerson } from '../src/bank-ingestion.js';
 import { createBankAccountReference, createFinancialAccount, createPaymentInstrument } from '../src/bank-account-resolution.js';
+import { bindBankSourceProviderAccount } from '../src/bank-source-provider-binding.js';
 import { createProvisionedBankSource, linkProvisionedBankSourcePerson, listProvisionedBankSources, setProvisionedBankSourceEnabled } from '../src/bank-source-provisioning.js';
 import { migrate } from '../src/database.js';
 
@@ -247,6 +248,7 @@ integration('bank ingestion works under the restricted runtime role without extr
     const person = (await admin.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`runtime-person-${sourceKey}`, 'Runtime synthetic person'])).rows[0];
     await linkBankSourcePerson(admin, { sourceKey, personId: person.id });
     const account = await createFinancialAccount(admin, { institution: 'Runtime synthetic bank', provider: 'runtime.provider', displayName: 'Runtime synthetic account' });
+    await bindBankSourceProviderAccount(admin, { sourceKey, provider: 'runtime.provider', financialAccountId: account.id, reason: 'Runtime synthetic explicit source/provider binding' });
     await createBankAccountReference(admin, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****0271' });
     const card = await createPaymentInstrument(admin, { scopeKey: 'default', instrumentType: 'CARD', provider: 'runtime.provider', displayName: 'Runtime synthetic card' });
     await createBankAccountReference(admin, { paymentInstrumentId: card.id, provider: 'runtime.provider', referenceKind: 'MASKED_CARD', referenceValue: '****1913' });
@@ -271,6 +273,14 @@ integration('bank ingestion works under the restricted runtime role without extr
     });
     assert.equal(accountEvent.identityResolution.account.resolutionState, 'EXACT');
     assert.equal(accountEvent.identityResolution.account.financialAccountId, Number(account.id));
+    const bindingEvent = await ingestBankEvent(runtime, {
+      ...event, sourceEventId: 'runtime-binding-event',
+      payload: (() => { const { accountReference, accountReferenceKind, ...payload } = event.payload; return payload; })(),
+      ingestionMetadata: { ...event.ingestionMetadata, provider: 'runtime.provider' },
+    });
+    assert.equal(bindingEvent.identityResolution.account.resolutionState, 'MANUAL');
+    assert.equal(bindingEvent.identityResolution.account.financialAccountId, Number(account.id));
+    assert.equal(bindingEvent.identityResolution.account.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
     const cardEvent = await ingestBankEvent(runtime, {
       ...event, sourceEventId: 'runtime-card-event',
       payload: { ...event.payload, accountReference: '****1913', accountReferenceKind: 'MASKED_CARD' },
@@ -304,6 +314,16 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.transactions_delete, false);
     assert.equal(privilegeRows.sources_references, false);
     assert.equal(privilegeRows.observations_references, false);
+    const bindingPrivileges = (await admin.query("SELECT has_column_privilege('receipt_collector','public.bank_source_provider_account_bindings','bank_source_id','SELECT') AS source_select, has_column_privilege('receipt_collector','public.bank_source_provider_account_bindings','provider','SELECT') AS provider_select, has_column_privilege('receipt_collector','public.bank_source_provider_account_bindings','financial_account_id','SELECT') AS account_select, has_column_privilege('receipt_collector','public.bank_source_provider_account_bindings','active','SELECT') AS active_select, has_table_privilege('receipt_collector','public.bank_source_provider_account_bindings','INSERT') AS binding_insert, has_table_privilege('receipt_collector','public.bank_source_provider_account_bindings','UPDATE') AS binding_update, has_table_privilege('receipt_collector','public.bank_source_provider_account_bindings','DELETE') AS binding_delete")).rows[0];
+    assert.deepEqual(bindingPrivileges, {
+      source_select: true,
+      provider_select: true,
+      account_select: true,
+      active_select: true,
+      binding_insert: false,
+      binding_update: false,
+      binding_delete: false
+    });
   } finally {
     if (runtime) await runtime.end();
     await admin.query('DELETE FROM bank_device_credentials WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});

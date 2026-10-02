@@ -37,3 +37,15 @@ test('payment instrument identity migration allows standalone cards and exact re
   assert.match(sql, /bank_transaction_payment_instrument_resolution/);
   assert.match(sql, /payment_instrument_id IS NOT NULL/);
 });
+
+test('source/provider binding migration is scoped, active-unique, and runtime read-only', async () => {
+  const sql = await readFile(new URL('../db/migrations/017_bank_source_provider_account_bindings.sql', import.meta.url), 'utf8');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS bank_source_provider_account_bindings/);
+  assert.match(sql, /bank_source_id BIGINT NOT NULL REFERENCES bank_sources\(id\)/);
+  assert.match(sql, /financial_account_id BIGINT NOT NULL REFERENCES financial_accounts\(id\)/);
+  assert.match(sql, /provenance TEXT NOT NULL CHECK \(provenance = 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT'\)/);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS bank_source_provider_active_binding_idx/);
+  assert.match(sql, /WHERE active/);
+  assert.match(sql, /GRANT SELECT \(bank_source_id, provider, financial_account_id, active\)/);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE) ON public\.bank_source_provider_account_bindings/i);
+});
