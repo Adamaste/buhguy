@@ -1,6 +1,7 @@
 package com.adamaste.buhguy.bankcollector
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
@@ -55,7 +56,7 @@ class AppPreferencesTest {
         val preferences = AppPreferences(context)
         withTimeout(2_000) { preferences.diagnosticChanges().first() }
 
-        val changed = async {
+        val changed = async(start = CoroutineStart.UNDISPATCHED) {
             withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
         }
         preferences.markLastCapture("time", "com.example.bank", "INSERTED", "abcdef123456")
