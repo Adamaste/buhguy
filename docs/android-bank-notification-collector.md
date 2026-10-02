@@ -22,12 +22,22 @@ Android bank app
 
 Explicitly configured package-only sources are accepted. A logical provider may
 also define a narrowly scoped transport alias with a channel gate and local
-provider-specific classifier. Non-financial and unknown alias notifications
-are discarded before persistence. Notifications from all other applications,
+provider-specific classifier. Non-financial and ordinary unknown alias
+notifications are discarded before persistence. A classifier may explicitly
+mark a notification `StrongUnknown` only when one of its exact, evidence-backed
+financial anchors is present; that state is persisted as immutable evidence but
+does not prove event type, direction, amount, or currency. Notifications from all other applications,
 including SMS, email, messaging, and system packages, are ignored before
 persistence. V1 stores title, text, optional bigText/subText,
 package name, notification identity, post time, and capture time. Arbitrary
 Android extras and images are not collected.
+
+For the Yandex Pro transport alias, the only strong financial anchors are a
+normalized body beginning with `Покупка на`, a title exactly equal to
+`Входящий перевод`, or a normalized body beginning with `Пополнение на`.
+Complete supported grammar remains `Financial`; an anchored but incomplete or
+unsupported format is `StrongUnknown` and is captured for immutable evidence.
+The backend normalizer remains fail-closed for that evidence.
 
 The delivered envelope may also preserve `sourcePackage` and the non-blank
 `notificationChannel` as bounded transport provenance. For the Yandex

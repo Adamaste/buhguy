@@ -1,9 +1,12 @@
 package com.adamaste.buhguy.bankcollector
 
 import com.adamaste.buhguy.bankcollector.notification.NotificationSnapshot
+import com.adamaste.buhguy.bankcollector.notification.YandexClassifierReason
+import com.adamaste.buhguy.bankcollector.notification.YandexCaptureDecision
 import com.adamaste.buhguy.bankcollector.notification.YandexFinancialType
 import com.adamaste.buhguy.bankcollector.notification.YandexProClassification
 import com.adamaste.buhguy.bankcollector.notification.YandexProFinancialClassifier
+import com.adamaste.buhguy.bankcollector.notification.yandexCaptureDecision
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -53,10 +56,56 @@ class YandexProFinancialClassifierTest {
 
     @Test fun partialOrUnsupportedFinancialContentIsUnknown() {
         assertTrue(classifier.classify(snapshot(title = "Событие", text = "123.45 RUB")) is YandexProClassification.Unknown)
-        assertTrue(classifier.classify(snapshot(title = "Покупка", text = "Покупка на RUB")) is YandexProClassification.Unknown)
-        assertTrue(classifier.classify(snapshot(title = "Входящий перевод", text = "Пополнение на 123.45 USD")) is YandexProClassification.Unknown)
+        assertTrue(classifier.classify(snapshot(title = "Покупка", text = "Покупка на RUB")) is YandexProClassification.StrongUnknown)
+        assertTrue(classifier.classify(snapshot(title = "Входящий перевод", text = "Пополнение на 123.45 USD")) is YandexProClassification.StrongUnknown)
         assertTrue(classifier.classify(snapshot(title = "Перевод", text = "Перевод на 123.45 RUB")) is YandexProClassification.Unknown)
         assertTrue(classifier.classify(snapshot(title = null, text = null)) is YandexProClassification.Unknown)
+    }
+
+    @Test fun purchaseAnchorWithMalformedAmountIsStrongUnknown() {
+        val result = classifier.classify(snapshot(text = "Покупка на RUB"))
+
+        assertEquals(
+            YandexClassifierReason.STRONG_UNKNOWN_PURCHASE_ANCHOR,
+            (result as YandexProClassification.StrongUnknown).reason,
+        )
+    }
+
+    @Test fun purchaseAnchorWithUnsupportedCurrencyIsStrongUnknown() {
+        assertTrue(classifier.classify(snapshot(text = "Покупка на 123.45 USD")) is YandexProClassification.StrongUnknown)
+    }
+
+    @Test fun incomingTitleWithoutCompleteBodyIsStrongUnknown() {
+        val result = classifier.classify(snapshot(title = "Входящий перевод", text = "Событие"))
+
+        assertEquals(
+            YandexClassifierReason.STRONG_UNKNOWN_INCOMING_TITLE_ANCHOR,
+            (result as YandexProClassification.StrongUnknown).reason,
+        )
+    }
+
+    @Test fun incomingBodyAnchorWithoutExactTitleIsStrongUnknown() {
+        val result = classifier.classify(snapshot(title = "Уведомление", text = "Пополнение на 123.45 RUB"))
+
+        assertEquals(
+            YandexClassifierReason.STRONG_UNKNOWN_INCOMING_BODY_ANCHOR,
+            (result as YandexProClassification.StrongUnknown).reason,
+        )
+    }
+
+    @Test fun strongAnchorsCaptureButOrdinaryUnknownAndNonFinancialDrop() {
+        assertEquals(
+            YandexCaptureDecision.CAPTURE,
+            yandexCaptureDecision(YandexProClassification.StrongUnknown(YandexClassifierReason.STRONG_UNKNOWN_PURCHASE_ANCHOR)),
+        )
+        assertEquals(
+            YandexCaptureDecision.DROP,
+            yandexCaptureDecision(YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_PARTIAL_FINANCIAL_PATTERN)),
+        )
+        assertEquals(
+            YandexCaptureDecision.DROP,
+            yandexCaptureDecision(YandexProClassification.NonFinancial(YandexClassifierReason.NON_FINANCIAL_NO_FINANCIAL_MARKER)),
+        )
     }
 
     @Test fun bigTextIsPreferredOverText() {
@@ -72,12 +121,8 @@ class YandexProFinancialClassifierTest {
     }
 
     @Test fun diagnosticsDoNotContainContent() {
-        val result = classifier.classify(snapshot())
-        val reason = when (result) {
-            is YandexProClassification.Financial -> result.type.name
-            is YandexProClassification.NonFinancial -> result.reason.name
-            is YandexProClassification.Unknown -> result.reason.name
-        }
+        val result = classifier.classify(snapshot(text = "Покупка на 123.45 USD"))
+        val reason = (result as YandexProClassification.StrongUnknown).reason.name
 
         assertFalse(reason.contains("123.45"))
         assertFalse(reason.contains("ТЕСТОВЫЙ"))
