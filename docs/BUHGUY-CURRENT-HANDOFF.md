@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-02
-- Current master: `e83bacb3206de1b3f8ee153929aec12c783ea486`
-- Current phase: Android source provenance is deployed and the signed collector was updated in place; no new Yandex financial operation has been performed
-- Current blocker: The next evidence step is to wait for a natural Yandex financial notification and inspect persisted `sourcePackage` and optional `notificationChannel`. No classifier or parser change is in scope; strong-unknown classification remains a separate unresolved question
+- Current master: `dfbee095f827fe742565de18a86522fb938455dc`
+- Current phase: Android source provenance is deployed and production-proven on a fresh Yandex financial event; the signed collector persisted the physical source package and notification channel end to end
+- Current blocker: None for Android source provenance. That stage is closed. Strong-unknown classification remains a separate unresolved design question; Yandex card-purchase evidence should still be studied only when a real purchase occurs naturally
 - Production artifact: exact master `e83bacb3206de1b3f8ee153929aec12c783ea486`, 309 files, archive SHA-256 `0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Wait for the next natural Yandex financial notification, then inspect persisted `sourcePackage` and optional `notificationChannel` against the baseline (79 Yandex transactions, max observation 304, max transaction 246). Do not create an artificial purchase or perform historical replay/backfill. Study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Treat Android source provenance as closed. The post-E2E Yandex baseline is 80 transactions, max observation 309, max transaction 251. Do not perform historical replay/backfill. Strong-unknown classification remains a separate design decision. Study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Android source provenance production rollout
 
@@ -58,8 +58,14 @@ crash or permanent-rejection burst.
 The transport contract remains canonical provider `com.yandex.bank`, with
 `sourcePackage` always sent and `notificationChannel` sent only when the
 actual channel is non-blank. Existing observations 266-270 retain no
-retroactive source-app attribution. Provenance capture is ready; no new bank
-operation should be created until the next natural Yandex financial event.
+retroactive source-app attribution. Fresh production observation `309` /
+transaction `251` then proved the new transport provenance end to end:
+`sourcePackage=ru.yandex.taximeter` and
+`notificationChannel=notification_channel_1` were persisted, while the
+transaction remained linked to observation `309` and normalized through
+`yandex-bank-normalizer-v1` as `READY / INCOMING_TRANSFER / CREDIT`. The real
+transaction amount and notification content are intentionally not retained in
+this handoff. Android source provenance is therefore closed and production-proven.
 
 ## Alfa F5 partial normalizer
 
