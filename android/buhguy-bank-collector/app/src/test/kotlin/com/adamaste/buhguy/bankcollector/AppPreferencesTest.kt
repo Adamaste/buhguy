@@ -61,7 +61,8 @@ class AppPreferencesTest {
         val changed = async(start = CoroutineStart.UNDISPATCHED) {
             withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
         }
-        preferences.markLastCapture("time", "com.example.bank", "INSERTED", "abcdef123456")
+        context.getSharedPreferences("collector-config", android.content.Context.MODE_PRIVATE)
+            .edit().putString("lastCaptureAt", "time").commit()
         shadowOf(Looper.getMainLooper()).idle()
         changed.await()
     }
