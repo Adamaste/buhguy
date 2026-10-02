@@ -1,9 +1,13 @@
 package com.adamaste.buhguy.bankcollector
 
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class DiagnosticsSnapshotTest {
     @Test fun renderingContainsSafeLiveFieldsOnly() {
         val rendered = DiagnosticsSnapshot(
@@ -29,5 +33,16 @@ class DiagnosticsSnapshotTest {
         assertFalse(rendered.contains("notification text"))
         assertFalse(rendered.contains("payload"))
         assertFalse(rendered.contains("credential"))
+    }
+
+    @Test fun snapshotReadsUpdatedPreferencesWithoutActivityRecreation() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val preferences = AppPreferences(context)
+        preferences.markLastCapture("time-1", "com.example.one", "CAPTURED", "111111111111")
+        assertTrue(preferences.diagnosticsSnapshot(0).render().contains("com.example.one"))
+        preferences.markLastCapture("time-2", "com.example.two", "INSERTED", "222222222222")
+        val rendered = preferences.diagnosticsSnapshot(3).render()
+        assertTrue(rendered.contains("Pending events: 3"))
+        assertTrue(rendered.contains("INSERTED com.example.two 222222222222"))
     }
 }
