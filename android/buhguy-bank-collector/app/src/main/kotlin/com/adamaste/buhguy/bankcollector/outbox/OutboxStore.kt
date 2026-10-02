@@ -11,6 +11,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import com.adamaste.buhguy.bankcollector.model.OutboxEvent
 import com.adamaste.buhguy.bankcollector.model.OutboxStatus
+import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "bank_notification_outbox", indices = [Index(value = ["sourceEventId"], unique = true)])
 data class OutboxEntity(
@@ -42,6 +43,9 @@ interface OutboxDao {
 
     @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'PENDING'")
     suspend fun pendingCount(): Int
+
+    @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'PENDING'")
+    fun pendingCountFlow(): Flow<Int>
 }
 
 @Database(entities = [OutboxEntity::class], version = 1, exportSchema = false)

@@ -11,7 +11,9 @@ import android.text.InputType
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -57,19 +59,17 @@ class MainActivity : AppCompatActivity() {
             text = "Test connection / deliver pending"
             setOnClickListener { com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@MainActivity) }
         })
-        val pending = TextView(this).apply { text = "Pending events: loading...\nLast successful delivery: ${preferences.lastSuccessfulDelivery()}" }
+        val pending = TextView(this).apply {
+            tag = "diagnostics"
+            text = "Pending events: loading..."
+        }
         layout.addView(pending)
-        lifecycleScope.launch(Dispatchers.IO) {
-            val count = (application as BankCollectorApplication).database.outbox().pendingCount()
-            launch(Dispatchers.Main) {
-                pending.text = listOf(
-                    "Pending events: $count",
-                    "Last successful delivery: ${preferences.lastSuccessfulDelivery()}",
-                    "Last capture: ${preferences.lastCaptureOutcome()} ${preferences.lastCapturePackage()} ${preferences.lastCaptureEventPrefix()} at ${preferences.lastCaptureAt()}",
-                    "Last callback: ${preferences.lastCallbackStage()} ${preferences.lastCallbackPackage()} at ${preferences.lastCallbackAt()}",
-                    "Listener lifecycle: ${preferences.lastListenerState()} at ${preferences.lastListenerStateAt()}",
-                    "Auth provisioning is separate.",
-                ).joinToString("\n")
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val pendingFlow = (application as BankCollectorApplication).database.outbox().pendingCountFlow()
+                preferences.diagnosticChanges()
+                    .combine(pendingFlow) { _, count -> count }
+                    .collect { count -> pending.text = preferences.diagnosticsSnapshot(count).render() }
             }
         }
         setContentView(layout)
