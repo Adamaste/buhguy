@@ -72,19 +72,23 @@ class BankNotificationListenerService : NotificationListenerService() {
                         BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_financial", reason = classification.type.name),
                     )
                 }
+                is YandexProClassification.StrongUnknown -> {
+                    BankCaptureDiagnostics.log(
+                        BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_strong_unknown", reason = classification.reason.name),
+                    )
+                }
                 is YandexProClassification.NonFinancial -> {
                     BankCaptureDiagnostics.log(
                         BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_non_financial", reason = classification.reason.name),
                     )
-                    return
                 }
                 is YandexProClassification.Unknown -> {
                     BankCaptureDiagnostics.log(
                         BankCaptureLogEvent(packageName = sbn.packageName, stage = "classifier_unknown", reason = classification.reason.name),
                     )
-                    return
                 }
             }
+            if (yandexCaptureDecision(classification) == YandexCaptureDecision.DROP) return
         }
         val captured = NotificationCapture(mapper).capture(snapshot, Instant.now())
         if (captured == null) {

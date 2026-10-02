@@ -13,12 +13,27 @@ enum class YandexClassifierReason {
     UNKNOWN_CURRENCY,
     UNKNOWN_UNSUPPORTED_FINANCIAL_TYPE,
     UNKNOWN_MISSING_REQUIRED_FIELD,
+    STRONG_UNKNOWN_PURCHASE_ANCHOR,
+    STRONG_UNKNOWN_INCOMING_TITLE_ANCHOR,
+    STRONG_UNKNOWN_INCOMING_BODY_ANCHOR,
 }
 
 sealed interface YandexProClassification {
     data class Financial(val type: YandexFinancialType) : YandexProClassification
     data class NonFinancial(val reason: YandexClassifierReason) : YandexProClassification
     data class Unknown(val reason: YandexClassifierReason) : YandexProClassification
+    data class StrongUnknown(val reason: YandexClassifierReason) : YandexProClassification
+}
+
+enum class YandexCaptureDecision { CAPTURE, DROP }
+
+fun yandexCaptureDecision(classification: YandexProClassification): YandexCaptureDecision = when (classification) {
+    is YandexProClassification.Financial,
+    is YandexProClassification.StrongUnknown,
+    -> YandexCaptureDecision.CAPTURE
+    is YandexProClassification.NonFinancial,
+    is YandexProClassification.Unknown,
+    -> YandexCaptureDecision.DROP
 }
 
 class YandexProFinancialClassifier {
@@ -38,29 +53,50 @@ class YandexProFinancialClassifier {
         if (!purchaseMarker && !(incomingTitle || incomingMarker) && !amountLike && !unsupportedMarker) {
             return YandexProClassification.NonFinancial(YandexClassifierReason.NON_FINANCIAL_NO_FINANCIAL_MARKER)
         }
-        if (unsupportedMarker && !purchaseMarker && !(incomingTitle && incomingMarker)) {
+        if (unsupportedMarker && !purchaseMarker && !incomingTitle && !incomingMarker) {
             return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_UNSUPPORTED_FINANCIAL_TYPE)
         }
-        if (purchaseMarker) return classifyAmount(body, PURCHASE_AMOUNT, YandexFinancialType.PURCHASE)
+        if (purchaseMarker) {
+            return classifyAmount(
+                body,
+                PURCHASE_AMOUNT,
+                YandexFinancialType.PURCHASE,
+                YandexClassifierReason.STRONG_UNKNOWN_PURCHASE_ANCHOR,
+            )
+        }
         if (incomingTitle || incomingMarker) {
-            if (!incomingTitle || !incomingMarker) return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_PARTIAL_FINANCIAL_PATTERN)
-            return classifyAmount(body, INCOMING_AMOUNT, YandexFinancialType.INCOMING_TRANSFER)
+            if (!incomingTitle) {
+                return YandexProClassification.StrongUnknown(YandexClassifierReason.STRONG_UNKNOWN_INCOMING_BODY_ANCHOR)
+            }
+            if (!incomingMarker) {
+                return YandexProClassification.StrongUnknown(YandexClassifierReason.STRONG_UNKNOWN_INCOMING_TITLE_ANCHOR)
+            }
+            return classifyAmount(
+                body,
+                INCOMING_AMOUNT,
+                YandexFinancialType.INCOMING_TRANSFER,
+                YandexClassifierReason.STRONG_UNKNOWN_INCOMING_TITLE_ANCHOR,
+            )
         }
         return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_PARTIAL_FINANCIAL_PATTERN)
     }
 
-    private fun classifyAmount(body: String?, pattern: Regex, type: YandexFinancialType): YandexProClassification {
-        if (body == null) return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_MISSING_REQUIRED_FIELD)
+    private fun classifyAmount(
+        body: String?,
+        pattern: Regex,
+        type: YandexFinancialType,
+        strongUnknownReason: YandexClassifierReason,
+    ): YandexProClassification {
+        if (body == null) return YandexProClassification.StrongUnknown(strongUnknownReason)
         val match = pattern.find(body)
         if (match == null) {
-            if (body.contains(Regex("\\d+[.,]?\\d*\\s+[A-ZА-Я]{2,}"))) return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_CURRENCY)
-            return YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_AMOUNT_INVALID)
+            return YandexProClassification.StrongUnknown(strongUnknownReason)
         }
         return try {
             BigDecimal(match.groupValues[1])
             YandexProClassification.Financial(type)
         } catch (_: NumberFormatException) {
-            YandexProClassification.Unknown(YandexClassifierReason.UNKNOWN_AMOUNT_INVALID)
+            YandexProClassification.StrongUnknown(strongUnknownReason)
         }
     }
 
