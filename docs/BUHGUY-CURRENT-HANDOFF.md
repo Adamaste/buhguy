@@ -17,15 +17,48 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-02
-- Current implementation baseline: `9427d8a89973d0fcbc86cdd2e43f9e2125a0e9ce` (PR #61 merge; verify the live GitHub `master` separately because reviewed docs-only closeout commits may be newer)
-- Current phase: Android source provenance and the narrow Yandex Pro StrongUnknown classifier are deployed; StrongUnknown has not yet been observed in production
-- Current blocker: No rollout blocker. StrongUnknown persists only exact evidence-backed financial anchors with incomplete/unsupported grammar; ordinary Unknown and NonFinancial remain locally dropped. Yandex card-purchase evidence should still be studied only when a real purchase occurs naturally
-- Production artifact: exact master `e83bacb3206de1b3f8ee153929aec12c783ea486`, 309 files, archive SHA-256 `0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`
+- Current implementation baseline: `2a91dd065d31000b84ea753a29ef708251b87866` (PR #64 merge; explicit source/provider account binding support is deployed in production)
+- Current phase: first-phone Android collector acceptance. Explicit source/provider -> financial-account fallback support is deployed; no real binding has been created yet. StrongUnknown remains opportunistic and has not yet been observed in production
+- Current blocker: No rollout blocker. The remaining first-phone acceptance items are the stale Android diagnostics state and the still-unproven VTB live transport path. Do not manufacture bank operations solely for validation
+- Production artifact: exact master `2a91dd065d31000b84ea753a29ef708251b87866`, 311 files, archive SHA-256 `670b3c153ce86a650e10df1a9b7a15e23b36984257d26cbf748ace28971f50be`; installed manifest and hashes match
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Do not manufacture a StrongUnknown event. If a natural Yandex Pro notification is classified StrongUnknown, inspect the persisted evidence and confirm backend fail-closed semantics. This validation may happen opportunistically while the project continues; do not block unrelated roadmap work waiting for it. Do not perform historical replay/backfill, and study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: finish first-phone collector acceptance before multi-device work: investigate/fix stale Android diagnostics without generating a financial operation, and validate VTB transport only when a natural notification is available. StrongUnknown and Yandex card-purchase evidence remain opportunistic and must not block progress. Do not perform historical replay/backfill. Ozon parser work remains deferred; Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+
+## Source/provider account binding production rollout
+
+PR #64 is merged in exact master
+`2a91dd065d31000b84ea753a29ef708251b87866`; master CI #222
+(`37041466349`) passed `test`, `android`, and `android-signed`.
+
+Production rollout completed from a 311-file immutable artifact with archive
+SHA-256 `670b3c153ce86a650e10df1a9b7a15e23b36984257d26cbf748ace28971f50be`.
+Pre-deploy backup, atomic promotion, installed manifest/hash verification,
+service health, and timer health all passed. Migration
+`017_bank_source_provider_account_bindings.sql` is current.
+
+The binding table exists and intentionally contains zero rows. The runtime role
+has only the reviewed column-level SELECT needed for binding lookup and cannot
+INSERT/UPDATE/DELETE bindings. No real binding, financial account, historical
+replay/backfill, new bank operation, Android change, credential change, existing
+bank-row rewrite, or account-resolution rewrite occurred.
+
+The primary Android source key is `android-adam-samsung-s938b`. Production
+currently inventories three financial accounts, and no Yandex financial account
+exists yet; therefore no Yandex source/provider/account binding can be created
+without a separate explicit account-provisioning decision.
+
+External HTTPS from the rollout operator path was not confirmed in the final
+report, while local backend `/healthz` returned 200 and the service and timer
+were active. Treat that as an access-path observation, not evidence that the
+backend rollout failed.
+
+Provider-reported balance snapshots/reconciliation are not an active project
+stage. Bank cash-flow accounting should continue from observed transactions and
+explicit account identity evidence; do not infer missing transactions from
+balance differences.
 
 ## Android source provenance production rollout
 
