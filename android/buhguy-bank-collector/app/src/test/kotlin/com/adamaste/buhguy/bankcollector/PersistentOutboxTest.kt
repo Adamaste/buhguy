@@ -12,9 +12,35 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.UUID
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 @RunWith(RobolectricTestRunner::class)
 class PersistentOutboxTest {
+    @Test fun pendingCountFlowTracksInsertAndTerminalStatuses() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val databaseName = "outbox-flow-${UUID.randomUUID()}.db"
+        val database = Room.databaseBuilder(context, CollectorDatabase::class.java, databaseName)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = database.outbox()
+            assertEquals(0, dao.pendingCountFlow().first())
+            val event = OutboxEntity(sourceEventId = "flow-event", packageName = "com.example.bank", eventJson = "{}")
+            val firstId = dao.insert(event)
+            assertEquals(1, dao.pendingCountFlow().first())
+            dao.setStatus(firstId, "SENT")
+            assertEquals(0, dao.pendingCountFlow().first())
+            val secondId = dao.insert(event.copy(sourceEventId = "flow-event-2"))
+            dao.setStatus(secondId, "PERMANENTLY_REJECTED")
+            assertEquals(0, dao.pendingCountFlow().first())
+        } finally {
+            database.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     @Test fun duplicateEventIsIgnoredAndPendingSurvivesReopen() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val databaseName = "outbox-${UUID.randomUUID()}.db"

@@ -10,6 +10,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.adamaste.buhguy.bankcollector.BankCollectorApplication
+import com.adamaste.buhguy.bankcollector.AppPreferences
+import com.adamaste.buhguy.bankcollector.notification.BankCaptureDiagnostics
 import java.util.concurrent.TimeUnit
 import java.time.Instant
 
@@ -29,21 +31,28 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
             when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus, result.serverCode)) {
                 DeliveryDecision.Sent -> {
                     database.outbox().setStatus(entity.id, "SENT")
-                    com.adamaste.buhguy.bankcollector.AppPreferences(applicationContext).markSuccessfulDelivery(Instant.now().toString())
-                    Log.i("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=SENT retry=${entity.retryCount}")
+                    val eventPrefix = BankCaptureDiagnostics.eventPrefix(entity.sourceEventId)
+                    val serverStatus = result.serverStatus?.takeIf { it == "created" || it == "duplicate" } ?: "unknown"
+                    AppPreferences(applicationContext).markSuccessfulDelivery(
+                        timestamp = Instant.now().toString(),
+                        packageName = entity.packageName,
+                        eventPrefix = eventPrefix,
+                        serverStatus = serverStatus,
+                    )
+                    Log.i("BankDelivery", "event=$eventPrefix package=${entity.packageName} status=SENT retry=${entity.retryCount}")
                 }
                 is DeliveryDecision.PermanentlyRejected -> {
                     database.outbox().setStatus(entity.id, "PERMANENTLY_REJECTED", decision.reason)
-                    Log.w("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=REJECTED http=${result.httpStatus}")
+                    Log.w("BankDelivery", "event=${BankCaptureDiagnostics.eventPrefix(entity.sourceEventId)} package=${entity.packageName} status=REJECTED http=${result.httpStatus}")
                 }
                 is DeliveryDecision.PreservePending -> {
                     database.outbox().markPendingIssue(entity.id, decision.reason)
-                    Log.w("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=PENDING reason=${decision.reason}")
+                    Log.w("BankDelivery", "event=${BankCaptureDiagnostics.eventPrefix(entity.sourceEventId)} package=${entity.packageName} status=PENDING reason=${decision.reason}")
                     return Result.success()
                 }
                 DeliveryDecision.Retry -> {
                     database.outbox().markRetry(entity.id, "transient delivery failure")
-                    Log.w("BankDelivery", "event=${entity.sourceEventId.take(12)} package=${entity.packageName} status=RETRY http=${result.httpStatus} retry=${entity.retryCount + 1}")
+                    Log.w("BankDelivery", "event=${BankCaptureDiagnostics.eventPrefix(entity.sourceEventId)} package=${entity.packageName} status=RETRY http=${result.httpStatus} retry=${entity.retryCount + 1}")
                     return Result.retry()
                 }
             }
