@@ -2,9 +2,11 @@ package com.adamaste.buhguy.bankcollector
 
 import com.adamaste.buhguy.bankcollector.notification.NotificationSnapshot
 import com.adamaste.buhguy.bankcollector.notification.YandexClassifierReason
+import com.adamaste.buhguy.bankcollector.notification.YandexCaptureDecision
 import com.adamaste.buhguy.bankcollector.notification.YandexFinancialType
 import com.adamaste.buhguy.bankcollector.notification.YandexProClassification
 import com.adamaste.buhguy.bankcollector.notification.YandexProFinancialClassifier
+import com.adamaste.buhguy.bankcollector.notification.yandexCaptureDecision
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
