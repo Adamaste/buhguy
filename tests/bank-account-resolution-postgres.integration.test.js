@@ -132,6 +132,8 @@ integration('source/provider binding is explicit, reference-first, scoped, and f
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const suffix = `${process.pid}-${Date.now()}`;
   const sourceKey = `binding-source-${suffix}`;
+  const otherSourceKey = `binding-other-source-${suffix}`;
+  const noScopeSourceKey = `binding-no-scope-${suffix}`;
   const multiScopeKey = `binding-multi-${suffix}`;
   let accountIds = [];
   let cardId;
@@ -158,6 +160,25 @@ integration('source/provider binding is explicit, reference-first, scoped, and f
     assert.equal(bound.identityResolution.account.resolutionState, 'MANUAL');
     assert.equal(bound.identityResolution.account.financialAccountId, Number(boundAccount.id));
     assert.equal(bound.identityResolution.account.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
+    const noReferenceRetry = await resolveBankTransactionAccountFromReference(pool, { bankTransactionId: bound.transactionId });
+    assert.equal(noReferenceRetry.status, 'NOT_APPLICABLE');
+    assert.equal(noReferenceRetry.resolutionState, 'MANUAL');
+    assert.equal(Number(noReferenceRetry.financialAccountId), Number(boundAccount.id));
+    assert.equal(noReferenceRetry.changed, false);
+    const boundPersisted = (await pool.query('SELECT financial_account_id,resolution_state,provenance FROM bank_transaction_account_resolution WHERE bank_transaction_id=$1', [bound.transactionId])).rows[0];
+    assert.equal(Number(boundPersisted.financial_account_id), Number(boundAccount.id));
+    assert.equal(boundPersisted.resolution_state, 'MANUAL');
+    assert.equal(boundPersisted.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
+
+    const otherProvider = await ingestBankEvent(pool, event('binding-other-provider', 'other.provider'));
+    assert.equal(otherProvider.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(otherProvider.identityResolution.account.financialAccountId, null);
+
+    await createBankSource(pool, { sourceKey: otherSourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic other binding source' });
+    await linkBankSourcePerson(pool, { sourceKey: otherSourceKey, personId: person.id });
+    const otherSource = await ingestBankEvent(pool, event('binding-other-source', 'binding.provider', undefined, otherSourceKey));
+    assert.equal(otherSource.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(otherSource.identityResolution.account.financialAccountId, null);
 
     const exact = await ingestBankEvent(pool, event('binding-reference-wins', 'binding.provider', { amount: '13.00', currency: 'RUB', direction: 'UNKNOWN', accountReference: 'REF-2222', accountReferenceKind: 'MASKED_ACCOUNT' }));
     assert.equal(exact.identityResolution.account.resolutionState, 'EXACT');
@@ -181,11 +202,16 @@ integration('source/provider binding is explicit, reference-first, scoped, and f
     const otherPerson = (await pool.query('INSERT INTO persons(scope_id,person_key,display_name) VALUES($1,$2,$3) RETURNING id', [otherScope.id, `binding-other-${suffix}`, 'Synthetic second context'])).rows[0];
     await linkBankSourcePerson(pool, { sourceKey, personId: otherPerson.id });
     await assert.rejects(() => bindBankSourceProviderAccount(pool, { sourceKey, provider: 'other.provider', financialAccountId: boundAccount.id, reason: 'Ambiguous scope must fail' }), (error) => error.code === 'SOURCE_SCOPE_AMBIGUOUS');
+
+    await createBankSource(pool, { sourceKey: noScopeSourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic no-scope binding source' });
+    await assert.rejects(() => bindBankSourceProviderAccount(pool, { sourceKey: noScopeSourceKey, provider: 'binding.provider', financialAccountId: boundAccount.id, reason: 'No scope must fail' }), (error) => error.code === 'SOURCE_SCOPE_UNRESOLVED');
   } finally {
-    await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
-    await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
-    await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
-    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    for (const cleanupSourceKey of [sourceKey, otherSourceKey, noScopeSourceKey]) {
+      await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [cleanupSourceKey]).catch(() => {});
+      await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [cleanupSourceKey]).catch(() => {});
+      await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [cleanupSourceKey]).catch(() => {});
+      await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [cleanupSourceKey]).catch(() => {});
+    }
     if (cardId) await pool.query('DELETE FROM bank_account_references WHERE payment_instrument_id=$1', [cardId]).catch(() => {});
     if (cardId) await pool.query('DELETE FROM payment_instruments WHERE id=$1', [cardId]).catch(() => {});
     if (accountIds.length) await pool.query('DELETE FROM bank_account_references WHERE financial_account_id=ANY($1::bigint[])', [accountIds]).catch(() => {});
