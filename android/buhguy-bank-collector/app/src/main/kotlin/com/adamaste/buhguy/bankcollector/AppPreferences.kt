@@ -66,8 +66,8 @@ class AppPreferences(context: Context) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == null || key in DIAGNOSTIC_KEYS) trySend(Unit).isSuccess
         }
-        trySend(Unit)
         preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
         awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
 
