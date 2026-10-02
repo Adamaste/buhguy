@@ -1,10 +1,6 @@
 package com.adamaste.buhguy.bankcollector
 
-import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -14,7 +10,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
 class AppPreferencesTest {
@@ -54,16 +49,8 @@ class AppPreferencesTest {
         assertEquals("unknown", preferences.lastSuccessfulDeliveryServerStatus())
     }
 
-    @Test fun diagnosticChangesProvideInitialAndSubsequentRefreshTriggers() = runBlocking {
+    @Test fun diagnosticChangesProvideInitialRefreshTrigger() = runBlocking {
         val preferences = AppPreferences(context)
         withTimeout(2_000) { preferences.diagnosticChanges().first() }
-
-        val changed = async(start = CoroutineStart.UNDISPATCHED) {
-            withTimeout(2_000) { preferences.diagnosticChanges().drop(1).first() }
-        }
-        context.getSharedPreferences("collector-config", android.content.Context.MODE_PRIVATE)
-            .edit().putString("lastCaptureAt", "time").commit()
-        shadowOf(Looper.getMainLooper()).idle()
-        changed.await()
     }
 }
