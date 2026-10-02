@@ -16,38 +16,50 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-01
-- Current master: `0a6a97f1f8c594520f12bb22218320869edfe3ff`
-- Current phase: Android source-provenance implementation is prepared from master for review; no production deployment has been performed for this change
-- Current blocker: Yandex physical source provenance is currently lost in persisted envelopes. This change is limited to preserving optional source package/channel metadata; no classifier or parser change is in scope. The deployed runtime remains the prior artifact below
-- Production artifact: exact master `58e2610406425aa7faf84080cf2ee77583b867c4`, 309 files, archive SHA-256 `f45269892ea3e536881b72023e8739f8995adef772d48f8b3212b43f9ce3591f`
+- Last updated: 2026-10-02
+- Current master: `e83bacb3206de1b3f8ee153929aec12c783ea486`
+- Current phase: Android source provenance is deployed and the signed collector was updated in place; no new Yandex financial operation has been performed
+- Current blocker: The next evidence step is to wait for a natural Yandex financial notification and inspect persisted `sourcePackage` and optional `notificationChannel`. No classifier or parser change is in scope; strong-unknown classification remains a separate unresolved question
+- Production artifact: exact master `e83bacb3206de1b3f8ee153929aec12c783ea486`, 309 files, archive SHA-256 `0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: Review and merge the Android source-provenance change, then deploy it through the immutable-artifact path. No new Yandex bank operation is required for this provenance stage; a later classifier strong-unknown decision remains separate. Study Yandex card-purchase evidence only when a real purchase occurs naturally; do not create artificial purchases. Do not perform historical replay/backfill or another Alfa research transfer. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: Wait for the next natural Yandex financial notification, then inspect persisted `sourcePackage` and optional `notificationChannel` against the baseline (79 Yandex transactions, max observation 304, max transaction 246). Do not create an artificial purchase or perform historical replay/backfill. Study Yandex card-purchase evidence only when a real purchase occurs naturally. Ozon remains deferred. Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
-## Android source provenance handoff
+## Android source provenance production rollout
 
-The current GitHub master is `0a6a97f1f8c594520f12bb22218320869edfe3ff`;
-the production artifact remains the separately deployed
-`58e2610406425aa7faf84080cf2ee77583b867c4` release above until this change is
-reviewed, merged, and deployed through the normal immutable-artifact path.
+Master CI #200 (`36924491330`) passed. The backend exact master
+`e83bacb3206de1b3f8ee153929aec12c783ea486` is deployed from a 309-file
+immutable artifact with archive SHA-256
+`0fb94c620e76049d0626416a642ec4e65f84675ad1b56e3555c2885116d6936d`.
+Manifest and installed hashes match, and service health passed. No database
+migration, historical replay, backfill, grant, credential, or bank-row change
+was performed by the deploy.
 
-The Yandex corpus currently contains 71 transactions: 9 READY incoming
-transfers, 14 READY purchases, and 48 PARTIAL rows; the latest observation and
-transaction ids are 270 and 220. Physical source metadata was not preserved,
-so observations 266-270 cannot safely be assigned to a Yandex source app or
-role from the current envelopes. ADB is unavailable for this review, and no
-new bank operation is required.
+During rollout diagnosis, a temporary production-access failure was isolated to
+the network route rather than the application release: access recovered after
+changing the `happ-xray` route, with HTTPS `/healthz` returning 200 and SSH
+completing successfully. One soft reboot had been performed before the route
+issue was isolated; no hard reboot was performed. The full recovery gate passed
+before this deployment.
 
-The model remains one canonical financial provider, `com.yandex.bank`.
-`sourcePackage` and optional `notificationChannel` are the next transport
-provenance fields; they do not prove ownership, event type, direction,
-reconciliation, or that packages should be merged, and the channel is not
-part of source-event identity. A later classifier strong-unknown decision is
-separate. No Android configuration, parser, DB schema, production data, or
-credential change is part of this stage.
+The master-signed collector artifact `11193376632` was verified by the CI
+certificate gate and installed in place on `R5GL30GK60F`. The expected APK
+SHA-256 is
+`7e731822ccea40879dbdfb1ddf5ff88e627379e104272a4ca93ca6f3556fd4f1` and the
+stable signing certificate SHA-256 is
+`cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a`.
+Application data, source/server settings, credential state, allowlist,
+and notification-listener access were preserved. The application started
+after the update, and the fresh diagnostic window showed no AndroidRuntime
+crash or permanent-rejection burst.
+
+The transport contract remains canonical provider `com.yandex.bank`, with
+`sourcePackage` always sent and `notificationChannel` sent only when the
+actual channel is non-blank. Existing observations 266-270 retain no
+retroactive source-app attribution. Provenance capture is ready; no new bank
+operation should be created until the next natural Yandex financial event.
 
 ## Alfa F5 partial normalizer
 
