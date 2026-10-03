@@ -16,16 +16,16 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-02
-- Current implementation baseline: `2a91dd065d31000b84ea753a29ef708251b87866` (PR #64 merge; explicit source/provider account binding support is deployed in production)
-- Current phase: first-phone Android collector acceptance. Explicit source/provider -> financial-account fallback support is deployed; no real binding has been created yet. StrongUnknown remains opportunistic and has not yet been observed in production
-- Current blocker: No rollout blocker. The remaining first-phone acceptance items are the stale Android diagnostics state and the still-unproven VTB live transport path. Do not manufacture bank operations solely for validation
-- Production artifact: exact master `2a91dd065d31000b84ea753a29ef708251b87866`, 311 files, archive SHA-256 `670b3c153ce86a650e10df1a9b7a15e23b36984257d26cbf748ace28971f50be`; installed manifest and hashes match
+- Last updated: 2026-10-03
+- Current implementation baseline: `12f9800bf56866591a2d81958137d0830c6725eb` (PR #67 merge; Sber normalizer v5 is deployed in production)
+- Current phase: Sber v5 production rollout is complete. The exact outgoing family is evidence-backed and deployed; no Android update was required or performed, and the fresh post-deploy Sber v5 E2E remains pending a natural event
+- Current blocker: No rollout blocker. Do not manufacture a bank operation solely for Sber v5 validation. Historical v4 rows remain immutable; the next natural Sber outgoing event may be inspected opportunistically
+- Production artifact: exact master `12f9800bf56866591a2d81958137d0830c6725eb`, 315 files, archive SHA-256 `a84b5a070124c676d3cfa7708c457d15bb52afabeb92b1a06ba9ac215dccbceb`; installed manifest and hashes match
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - Current observability anomaly: fresh UI diagnostics still show the previous Alfa capture and delivery values; no raw notification content was retained, and the cause of this stale persistent state is not yet proven
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: finish first-phone collector acceptance before multi-device work: investigate/fix stale Android diagnostics without generating a financial operation, and validate VTB transport only when a natural notification is available. StrongUnknown and Yandex card-purchase evidence remain opportunistic and must not block progress. Do not perform historical replay/backfill. Ozon parser work remains deferred; Sber outgoing direction remains `UNKNOWN`; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
+- Next action: wait for a natural Sber outgoing notification and inspect its v5 production result without replay/backfill; continue first-phone acceptance and validate VTB transport only when a natural notification is available. StrongUnknown and Yandex card-purchase evidence remain opportunistic and must not block progress. Ozon parser work remains deferred; Person 2/3, INTERNAL_TRANSFER, business events, and ledger work remain out of scope.
 
 ## Source/provider account binding production rollout
 
@@ -297,6 +297,34 @@ Android `postTime`. It must return `PARTIAL` with `eventType=UNKNOWN` and
 transfer, business event, ledger posting, historical replay, or backfill is
 allowed. The parser is now deployed and production-validated under exactly
 those partial semantics.
+
+## Sber normalizer v5 production deployment
+
+PR #67 was merged into exact master
+`12f9800bf56866591a2d81958137d0830c6725eb`. Master CI run
+`37113055784` passed `test` with the PostgreSQL integration gate, `android`,
+and `android-signed`.
+
+The backend was promoted from a 315-file immutable artifact with archive
+SHA-256
+`a84b5a070124c676d3cfa7708c457d15bb52afabeb92b1a06ba9ac215dccbceb`.
+Remote artifact verification, pre-deploy rollback backup, atomic systemd
+promotion, installed manifest/hash verification, and `/healthz` service
+health all passed. Schema migration `017` was already current; no migration,
+grant, credential, Android, historical replay, or backfill operation was
+performed.
+
+The deployed runtime imports `sber-bank-normalizer-v5`. A non-mutating smoke
+test against the sanitized v5 fixture returned
+`OUTGOING_TRANSFER / DEBIT / READY / EXACT`. The fresh controlled evidence
+remains primary observation `357` with reference-only companion `359`; both
+were captured before this deployment and remain immutable historical v4 rows.
+No fresh post-deploy Sber v5 production E2E has been claimed; it remains
+`PENDING_NATURAL_EVENT`. No new bank operation was performed for this rollout.
+
+Android was not updated because PR #67 changes backend normalization only.
+The existing collector configuration, listener access, allowlist, and
+credentials were not touched.
 
 ## Sber normalizer v3 current-format evidence
 
