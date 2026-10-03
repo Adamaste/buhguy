@@ -32,6 +32,11 @@ const loadSberV4Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadSberV5Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'sber', 'evidence-v5.json'),
+  'utf8',
+));
+
 const loadAlfaV2Fixture = async () => JSON.parse(await readFile(
   path.join(root, 'fixtures', 'bank-normalization', 'alfa', 'evidence-v2.json'),
   'utf8',
@@ -54,7 +59,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : ['evidence-v1.json'];
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json'] : ['evidence-v1.json'];
     const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json'] : versions;
     for (const version of fixtureVersions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
@@ -104,6 +109,25 @@ test('Sber v4 fixture records the proven outgoing-shaped partial envelope', asyn
   assert.equal(outgoing.evidence.normalizationStatus, 'PARTIAL');
   assert.equal(companion.readyCapable, false);
   assert.equal(companion.observationCount, 4);
+});
+
+test('Sber v5 fixture records the same outgoing envelope with proven semantics', async () => {
+  const fixture = await loadSberV5Fixture();
+  const outgoing = fixture.clusters.find((cluster) => cluster.id === 'sber-outgoing-exact-v5');
+  const companion = fixture.clusters.find((cluster) => cluster.id === 'sber-outgoing-reference-only-v5');
+  assert.equal(fixture.provider, 'ru.sberbankmobile');
+  assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v5');
+  assert.equal(fixture.controlledOutgoingIndependentSampleCount, 4);
+  assert.equal(fixture.controlledOutgoingPrimaryObservationCount, 5);
+  assert.equal(fixture.controlledOutgoingCompanionObservationCount, 5);
+  assert.equal(outgoing.observationCount, 5);
+  assert.equal(outgoing.readyCapable, true);
+  assert.equal(outgoing.evidence.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(outgoing.evidence.direction, 'DEBIT');
+  assert.equal(outgoing.evidence.normalizationStatus, 'READY');
+  assert.equal(outgoing.evidence.evidenceQuality, 'EXACT');
+  assert.equal(fixture.incomingContract.semanticRevision, 'PRESERVED_FROM_V4');
+  assert.equal(companion.readyCapable, false);
 });
 
 test('T-Bank fixture records only the proven top-up partial envelope', async () => {

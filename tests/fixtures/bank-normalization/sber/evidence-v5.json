@@ -1,0 +1,62 @@
+{
+  "provider": "ru.sberbankmobile",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "sber-bank-normalizer-v5",
+  "controlledOutgoingIndependentSampleCount": 4,
+  "controlledOutgoingPrimaryObservationCount": 5,
+  "controlledOutgoingCompanionObservationCount": 5,
+  "clusters": [
+    {
+      "id": "sber-outgoing-exact-v5",
+      "observationCount": 5,
+      "titleEnvelope": "<word> <word>-<word>",
+      "bodyEnvelope": "<grouped integer> ₽ — Баланс: <grouped comma-decimal balance> ₽ Плат. счёт ••<four digits>",
+      "syntheticPayload": {
+        "title": "ТЕСТОВЫЙ СЕРВИС‑ПЕРЕВОД",
+        "description": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271",
+        "text": "2 468 ₽ — Баланс: 9 876,54 ₽ Плат. счёт •• 0271"
+      },
+      "readyCapable": true,
+      "evidence": {
+        "eventType": "OUTGOING_TRANSFER",
+        "direction": "DEBIT",
+        "amount": "PRESENT_INTEGER_RUB",
+        "currency": "RUB",
+        "accountReferenceKind": "MASKED_ACCOUNT",
+        "normalizationStatus": "READY",
+        "evidenceQuality": "EXACT",
+        "eventTimeSource": "ANDROID_POST_TIME",
+        "semanticRevision": "NEW_CONTROLLED_SAMPLE_PROVES_EXISTING_V4_ENVELOPE"
+      }
+    },
+    {
+      "id": "sber-outgoing-reference-only-v5",
+      "observationCount": 5,
+      "titleEnvelope": "REFERENCE_ONLY",
+      "bodyEnvelope": "REFERENCE_ONLY",
+      "syntheticPayload": { "reference": "SYNTHETIC_REFERENCE_ONLY" },
+      "readyCapable": false,
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN"
+      }
+    }
+  ],
+  "incomingContract": {
+    "eventType": "INCOMING_TRANSFER",
+    "direction": "CREDIT",
+    "normalizationStatus": "READY",
+    "evidenceQuality": "EXACT",
+    "semanticRevision": "PRESERVED_FROM_V4"
+  },
+  "acceptance": {
+    "activeRuntimeFormat": "V5_INCOMING_EXACT_AND_OUTGOING_EXACT",
+    "negativeNearMisses": "REQUIRED_FAIL_CLOSED",
+    "providerIsolation": "REQUIRED",
+    "adapterIsolation": "REQUIRED",
+    "schemaVersionIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}

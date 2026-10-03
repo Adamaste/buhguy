@@ -1,5 +1,5 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v4';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v5';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v3';
 
@@ -199,19 +199,19 @@ function incompleteSber({ occurred, hasIncomingMarker, hasCurrency, amount }) {
   };
 }
 
-function partialSberOutgoing({ occurred, amount, accountReference }) {
+function normalizeSberOutgoing({ occurred, amount, accountReference }) {
   return {
-    eventType: 'UNKNOWN',
+    eventType: 'OUTGOING_TRANSFER',
     occurredAt: occurred,
     amount,
     currency: amount === null ? null : 'RUB',
-    direction: 'UNKNOWN',
+    direction: 'DEBIT',
     merchant: null,
     counterparty: null,
     accountReference,
     accountReferenceKind: accountReference === null ? null : 'MASKED_ACCOUNT',
-    normalizationStatus: 'PARTIAL',
-    evidenceQuality: 'PARTIAL',
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
     normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
   };
 }
@@ -234,7 +234,7 @@ export function normalizeSberBankEvent(input) {
     const outgoingTitle = SBER_OUTGOING_TITLE_PATTERN.test(title);
     const outgoingMatch = body.match(/^([0-9]+(?:[ ]+[0-9]{3})*)[ ]*₽[ ]+—[ ]+Баланс:[ ]*([0-9]+(?:[ ]+[0-9]{3})*,[0-9]{2})[ ]*₽[ ]+Плат\.[ ]*счёт[ ]*••[ ]*([0-9]{4})$/u);
     if (outgoingTitle && outgoingMatch && occurred) {
-      return partialSberOutgoing({
+      return normalizeSberOutgoing({
         occurred,
         amount: `${outgoingMatch[1].replaceAll(' ', '')}.00`,
         accountReference: outgoingMatch[3],

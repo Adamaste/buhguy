@@ -99,28 +99,35 @@ Transport authentication is intentionally a separate future task because the
 repository does not currently define a suitable internal API authentication
 contract.
 
-## Sber Android normalization v4
+## Sber Android normalization v5
 
-The active provider-specific `sber-bank-normalizer-v4` preserves the exact
-incoming v3 envelope and adds one separately proven Sber Android outgoing-shaped
-partial envelope. The dispatch remains scoped to provider
+The active provider-specific `sber-bank-normalizer-v5` preserves the exact
+incoming envelope and promotes one separately proven Sber Android
+outgoing-shaped envelope. The dispatch remains scoped to provider
 `ru.sberbankmobile`, adapter `android-notification`, and schema version `1`.
 
 For the incoming envelope, normalization remains `INCOMING_TRANSFER` / `CREDIT`
 with `READY` / `EXACT`, integer RUB amount, Android envelope event time, and the
 proven payment-account `MASKED_ACCOUNT` suffix.
 
-The outgoing-shaped envelope is intentionally partial. Its exact title/body
-structure contains an integer RUB amount before the stable `Баланс:` marker,
-the comma-decimal balance after that marker, and the proven payment-account
-suffix. It produces the integer amount, `currency=RUB`, and
-`accountReferenceKind=MASKED_ACCOUNT`, while preserving
-`eventType=UNKNOWN`, `direction=UNKNOWN`, `normalizationStatus=PARTIAL`, and
-`evidenceQuality=PARTIAL`. No outgoing/debit meaning is inferred.
+The outgoing-shaped envelope has an exact title/body structure containing an
+integer RUB amount before the stable `Баланс:` marker, the comma-decimal
+balance after that marker, and the proven payment-account suffix. It produces
+`OUTGOING_TRANSFER` / `DEBIT` with `READY` / `EXACT`, the integer amount,
+`currency=RUB`, and `accountReferenceKind=MASKED_ACCOUNT`. The promotion is
+limited to the unchanged v4 grammar and does not infer recipient identity,
+destination account, purchase, or expense semantics.
 
 Reference-only companions, malformed or ambiguous envelopes, missing event
 time, and provider/adapter/schema mismatches remain fail-closed. Historical
-rows are immutable and are not backfilled or replayed.
+rows are immutable and are not backfilled or replayed. Existing v4 rows retain
+their persisted version and semantics.
+
+## Sber Android normalization v4 (historical revision)
+
+The historical v4 outgoing-shaped envelope had the same exact grammar but
+remained `PARTIAL` with `eventType=UNKNOWN` and `direction=UNKNOWN` until the
+additional controlled evidence established the v5 semantic revision.
 
 ## Sber Android normalization v3 (historical revision)
 

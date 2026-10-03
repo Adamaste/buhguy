@@ -31,7 +31,7 @@ const currentOutgoing = (overrides = {}) => ({
   ...overrides,
 });
 
-test('Sber v4 accepts the two controlled incoming samples structure', () => {
+test('Sber v5 preserves the exact controlled incoming structure', () => {
   for (const payload of [
     currentIncoming({ description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' }),
     currentIncoming({ description: '+ 456 ₽ — Баланс: 7 890,12 ₽ Плат. счёт •• 0000' }),
@@ -45,11 +45,11 @@ test('Sber v4 accepts the two controlled incoming samples structure', () => {
     assert.equal(result.accountReference, '0000');
     assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
     assert.equal(result.evidenceQuality, 'EXACT');
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v4');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
   }
 });
 
-test('Sber v4 accepts whitespace normalization without widening the envelope', () => {
+test('Sber v5 accepts whitespace normalization without widening the envelope', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming({
     title: '  Перевод\nпо СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.  ',
     description: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -58,7 +58,7 @@ test('Sber v4 accepts whitespace normalization without widening the envelope', (
   assert.equal(result.amount, '12.00');
 });
 
-test('Sber v4 prefers description and falls back to text', () => {
+test('Sber v5 prefers description and falls back to text', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentIncoming({
     description: 'not a current Sber envelope',
     text: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -73,7 +73,7 @@ test('Sber v4 prefers description and falls back to text', () => {
   assert.equal(fallback.amount, '12.00');
 });
 
-test('Sber v4 rejects old v1 and v2 runtime envelopes', () => {
+test('Sber v5 rejects old v1 and v2 runtime envelopes', () => {
   for (const payload of [
     oldIncoming(),
     oldIncoming({ title: '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' }),
@@ -85,7 +85,7 @@ test('Sber v4 rejects old v1 and v2 runtime envelopes', () => {
   }
 });
 
-test('Sber v4 rejects title and body near misses fail closed', () => {
+test('Sber v5 rejects title and body near misses fail closed', () => {
   const cases = [
     { title: 'ТЕСТ Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: currentIncoming().description },
     { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ. ТЕСТ', description: currentIncoming().description },
@@ -113,13 +113,13 @@ test('Sber v4 rejects title and body near misses fail closed', () => {
   assert.notEqual(missingEventTime.normalizationStatus, 'READY');
 });
 
-test('Sber v4 keeps the second monetary field out of the transaction amount', () => {
+test('Sber v5 keeps the second monetary field out of the transaction amount', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming() });
   assert.equal(result.amount, '123.00');
   assert.equal(result.currency, 'RUB');
 });
 
-test('Sber v4 is provider, adapter, and schema scoped', () => {
+test('Sber v5 is provider, adapter, and schema scoped', () => {
   const otherProvider = normalizeBankEvent({ ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'other.bank' }, payload: currentIncoming() });
   assert.notEqual(otherProvider.normalizationStatus, 'READY');
 
@@ -140,7 +140,7 @@ test('Sber v4 is provider, adapter, and schema scoped', () => {
   }
 });
 
-test('Sber v4 uses envelope eventTime and does not mutate raw payload', () => {
+test('Sber v5 uses envelope eventTime and does not mutate raw payload', () => {
   const payload = currentIncoming();
   const before = JSON.stringify(payload);
   const result = normalizeBankEvent({ ...base, payload });
@@ -148,7 +148,7 @@ test('Sber v4 uses envelope eventTime and does not mutate raw payload', () => {
   assert.equal(JSON.stringify(payload), before);
 });
 
-test('Sber v4 outgoing extraction does not cross provider, adapter, or schema scope', () => {
+test('Sber v5 outgoing extraction does not cross provider, adapter, or schema scope', () => {
   const cases = [
     { provider: 'other.bank' },
     { adapter: 'BANK_API' },
@@ -166,22 +166,22 @@ test('Sber v4 outgoing extraction does not cross provider, adapter, or schema sc
   }
 });
 
-test('Sber v4 extracts only the proven outgoing partial evidence', () => {
+test('Sber v5 promotes only the exact proven outgoing evidence', () => {
   const result = normalizeBankEvent({ ...base, payload: currentOutgoing() });
-  assert.equal(result.normalizationStatus, 'PARTIAL');
-  assert.equal(result.evidenceQuality, 'PARTIAL');
-  assert.equal(result.eventType, 'UNKNOWN');
-  assert.equal(result.direction, 'UNKNOWN');
+  assert.equal(result.normalizationStatus, 'READY');
+  assert.equal(result.evidenceQuality, 'EXACT');
+  assert.equal(result.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(result.direction, 'DEBIT');
   assert.equal(result.amount, '2468.00');
   assert.equal(result.currency, 'RUB');
   assert.equal(result.accountReference, '0271');
   assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
-  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v4');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
   assert.equal(result.merchant, null);
   assert.equal(result.counterparty, null);
 });
 
-test('Sber v4 outgoing preserves description precedence and whitespace-only text fallback', () => {
+test('Sber v5 outgoing preserves description precedence and whitespace-only text fallback', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentOutgoing({
     description: 'not an outgoing Sber envelope',
   }) });
@@ -194,10 +194,10 @@ test('Sber v4 outgoing preserves description precedence and whitespace-only text
   }) });
   assert.equal(fallback.amount, '2468.00');
   assert.equal(fallback.accountReference, '0271');
-  assert.equal(fallback.normalizationStatus, 'PARTIAL');
+  assert.equal(fallback.normalizationStatus, 'READY');
 });
 
-test('Sber v4 rejects outgoing near misses without partial extraction', () => {
+test('Sber v5 rejects outgoing near misses without partial extraction', () => {
   const cases = [
     { title: 'Другая форма', description: currentOutgoing().description },
     { title: 'ТЕСТОВЫЙ СЕРВИС-ПЕРЕВОД', description: currentOutgoing().description },

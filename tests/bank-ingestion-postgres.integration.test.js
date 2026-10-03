@@ -97,7 +97,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
     assert.equal(sberCreated.normalization.direction, 'CREDIT');
     assert.equal(sberCreated.normalization.amount, '123.00');
-    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v4');
+    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v5');
     assert.equal(sberCreated.normalization.accountReference, '0000');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
@@ -133,13 +133,13 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
   }
 });
 
-integration('Sber outgoing-shaped partial evidence resolves only the proven account reference', { concurrency: false }, async () => {
+integration('Sber outgoing v5 evidence resolves only the proven account reference', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-  const sourceKey = `sber-outgoing-v4-${process.pid}-${Date.now()}`;
+  const sourceKey = `sber-outgoing-v5-${process.pid}-${Date.now()}`;
   let accountId;
   try {
     await migrate(pool);
-    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Sber outgoing v4' });
+    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Sber outgoing v5' });
     const person = (await pool.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`person-${sourceKey}`, 'Synthetic Sber person'])).rows[0];
     await linkBankSourcePerson(pool, { sourceKey, personId: person.id });
     const account = await createFinancialAccount(pool, { institution: 'Synthetic Sber', provider: 'ru.sberbankmobile', displayName: `Synthetic Sber account ${sourceKey}` });
@@ -148,7 +148,7 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
 
     const created = await ingestBankEvent(pool, {
       sourceKey,
-      sourceEventId: 'synthetic-sber-outgoing-v4',
+      sourceEventId: 'synthetic-sber-outgoing-v5',
       observedAt: '2026-10-01T10:00:00Z',
       eventTime: '2026-10-01T09:59:00Z',
       payload: {
@@ -160,11 +160,11 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
     });
 
     assert.equal(created.status, 'created');
-    assert.equal(created.normalization.normalizationVersion, 'sber-bank-normalizer-v4');
-    assert.equal(created.normalization.normalizationStatus, 'PARTIAL');
-    assert.equal(created.normalization.evidenceQuality, 'PARTIAL');
-    assert.equal(created.normalization.eventType, 'UNKNOWN');
-    assert.equal(created.normalization.direction, 'UNKNOWN');
+    assert.equal(created.normalization.normalizationVersion, 'sber-bank-normalizer-v5');
+    assert.equal(created.normalization.normalizationStatus, 'READY');
+    assert.equal(created.normalization.evidenceQuality, 'EXACT');
+    assert.equal(created.normalization.eventType, 'OUTGOING_TRANSFER');
+    assert.equal(created.normalization.direction, 'DEBIT');
     assert.equal(created.normalization.amount, '2468.00');
     assert.equal(created.normalization.currency, 'RUB');
     assert.equal(created.normalization.accountReference, '0271');
@@ -179,7 +179,7 @@ integration('Sber outgoing-shaped partial evidence resolves only the proven acco
       JOIN bank_transaction_account_resolution r ON r.bank_transaction_id=bt.id
       WHERE bt.id=$1`, [created.transactionId])).rows[0];
     assert.deepEqual(persisted, {
-      amount: '2468.00', currency: 'RUB', direction: 'UNKNOWN', event_type: 'UNKNOWN', normalization_status: 'PARTIAL',
+      amount: '2468.00', currency: 'RUB', direction: 'DEBIT', event_type: 'OUTGOING_TRANSFER', normalization_status: 'READY',
       account_reference: '0271', account_reference_kind: 'MASKED_ACCOUNT', financial_account_id: String(accountId),
       resolution_state: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE',
     });

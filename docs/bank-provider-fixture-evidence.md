@@ -86,19 +86,24 @@ the current exact envelope:
 - semantic result: `INCOMING_TRANSFER` / `CREDIT` / `RUB`;
 - event time comes from Android `StatusBarNotification.postTime`, not text.
 
-The active runtime parser is scoped to provider `ru.sberbankmobile` with adapter
-`android-notification`, schema version `1`, and version
-`sber-bank-normalizer-v4`. Sender, merchant, and card references are not
+The historical v4 runtime parser was scoped to provider `ru.sberbankmobile`
+with adapter `android-notification` and schema version `1`. Sender, merchant,
+and card references are not
 extracted or displayed. The account reference is extracted only from the exact
 payment-account suffix `Плат. счёт ••dddd` and canonicalized as
 `MASKED_ACCOUNT`; no other account/card inference is performed. Reference-only,
 summary, ambiguous, malformed, and unsupported notifications remain
 `UNKNOWN`/`PARTIAL`.
 
-The separately proven outgoing-shaped partial family extracts only the integer
-transaction amount, `RUB`, and the same payment-account reference. It remains
-`PARTIAL` with `eventType=UNKNOWN` and `direction=UNKNOWN`; no outgoing/debit
-semantics are inferred.
+The separately proven outgoing-shaped partial family is preserved as historical
+v4 evidence: it extracts only the integer transaction amount, `RUB`, and the
+same payment-account reference, while keeping `PARTIAL`, `UNKNOWN`, and
+`UNKNOWN` semantics. A new independent controlled real sample matched that
+exact unchanged envelope and proved its outgoing/debit semantics. The v5
+revision therefore promotes only that exact provider/adapter/schema-scoped
+family to `OUTGOING_TRANSFER` / `DEBIT` / `READY` / `EXACT`. It does not widen
+the title or body grammar, and reference-only, malformed, unsupported, and
+near-miss envelopes remain fail-closed.
 
 ### Ozon Finance
 
