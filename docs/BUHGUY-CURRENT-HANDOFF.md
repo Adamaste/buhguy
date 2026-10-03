@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: merge the corrected handoff PR #68 after review; keep Sber v5 E2E and VTB transport opportunistic, then take the next narrow fixture-backed parser slice from reviewed Alfa outgoing, T-Bank incoming, Ozon incoming, or Yandex Pay evidence. Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
+- Next action: keep Sber v5 fresh E2E and VTB transport opportunistic until natural notifications occur; development is not blocked by either wait. Take the next narrow fixture-backed parser slice from reviewed Alfa outgoing/DEBIT F5, T-Bank incoming/CREDIT top-up, Ozon incoming/CREDIT, or Yandex Pay source/outgoing evidence, with no automatic provider choice implied here. Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
 
 ## Source/provider account binding production rollout
 
@@ -208,10 +208,11 @@ changed, and no replay, backfill, ledger, business event, or internal transfer
 was created. This closes the T-Bank top-up partial-parser E2E; at that
 historical stage, the next provider target was Alfa.
 
-Ozon research is deferred because additional paid notification experiments are
-not desirable; its parser remains unauthorized. At that historical stage, the
-next operational step was incremental Alfa provider evidence, beginning with
-read-only corpus forensic.
+At that historical stage, Ozon research was deferred because additional paid
+notification experiments were not desirable; its parser remained unauthorized.
+At that historical stage, the next operational step was incremental Alfa
+provider evidence, beginning with read-only corpus forensic. Ozon remains on
+the current deferred list and its runtime path remains generic/fail-closed.
 A separate real T-Bank card-purchase sample can be investigated later when it
 naturally occurs.
 
@@ -547,8 +548,9 @@ mapping change was performed. The two additional pre-deploy observations were
 verified as ordinary runtime notification ingestions with `UNKNOWN` and
 `INGESTION_DEFAULT` resolution.
 
-The next operational step is a controlled Person 1 E2E using existing
-provisioned evidence. Do not infer ownership from source context alone.
+At that historical stage, the next operational step was a controlled Person 1
+E2E using existing provisioned evidence. Ownership was not to be inferred from
+source context alone.
 
 ## Automatic new-ingestion identity resolution (deployed)
 
@@ -700,10 +702,11 @@ The deployment did not change phone state, Android configuration, device
 credentials, Datadog configuration, or database grants. Observation 18 was
 not backfilled; the dry-run only validated parser behavior in memory.
 
-PR #24 is merged. T-Bank remains policy-blocked by its notification permission
-state; this deployment did not change that device policy. The next functional
-stage is bank coverage and provider parsers for Alfa, Sber, VTB, Ozon, and
-T-Bank, with each parser kept fail-closed and evidence-preserving.
+PR #24 is merged. At that historical stage, T-Bank remained policy-blocked by
+its notification permission state; that deployment did not change the device
+policy. At that stage, the next functional stage was bank coverage and
+provider parsers for Alfa, Sber, VTB, Ozon, and T-Bank, with each parser kept
+fail-closed and evidence-preserving.
 
 ## Bank account resolution foundation production deployment
 
@@ -818,7 +821,7 @@ reference, not a specific card. Historical bank transactions and immutable
 observations were not updated, re-ingested, or backfilled. Coverage remains
 81 total and 81 `UNKNOWN`; historical resolution rows remain unchanged.
 
-The next step is reviewed historical resolution for controlled Sber
+At that historical stage, the next step was reviewed historical resolution for controlled Sber
 observations 72/75/79 using immutable observation evidence and explicit
 provenance. `INTERNAL_TRANSFER` reconciliation remains out of scope until
 both sides of an own-account transfer have proven account identity.
@@ -1129,7 +1132,8 @@ Read-only Android policy inspection found:
 
 This is a concrete explanation for why T-Bank produced no NotificationManager record and no collector callback in REAL2.
 
-Treat the T-Bank branch of this test as **policy-blocked**, not as evidence of a collector failure.
+At that historical stage, treat the T-Bank branch of this test as
+**policy-blocked**, not as evidence of a collector failure.
 
 Do not continue T-Bank callback debugging unless notification policy is intentionally changed in a separately reviewed/user-approved step and a later test is needed.
 
@@ -1179,7 +1183,10 @@ Therefore:
 
 Do not claim that the Yandex push definitely arrived at the app. That runtime fact has not been proven.
 
-## Latest Yandex Pro live-notification finding
+## Historical Yandex Pro live-notification finding
+
+This section records the pre-classifier Yandex investigation and is retained
+for forensic context only; it is not the current operational next action.
 
 A later live NotificationManager capture materially changed the Yandex diagnosis.
 
@@ -1213,7 +1220,11 @@ Operational interpretation:
 - all six currently observed `ru.yandex.taximeter` active records used `notification_channel_1`
 - however, historical exclusivity of that channel to financial notifications is not yet proven
 
-Do not simply add all of `ru.yandex.taximeter` to the allowlist. First establish whether `notification_channel_1` is sufficiently finance-specific. If it is, prefer a backward-compatible package+optional-channel rule while preserving existing package-only behavior for normal bank apps.
+At that historical stage, do not simply add all of `ru.yandex.taximeter` to the
+allowlist. The investigation first needed to establish whether
+`notification_channel_1` was sufficiently finance-specific. If it had been,
+the preferred direction was a backward-compatible package+optional-channel
+rule while preserving existing package-only behavior for normal bank apps.
 
 The earlier static-analysis branch for `com.yandex.bank` is suspended unless later evidence makes it relevant again.
 
@@ -1235,7 +1246,9 @@ Result:
 - the app uses Flutter/AOT code in `libapp.so`; generic notification-channel APIs were visible but did not prove module exclusivity
 - therefore `FINANCIAL_CHANNEL_ISOLATION=NOT_PROVEN`
 
-Do not implement a channel-only allow rule yet. The next useful evidence is a privacy-safe discriminator available on the `StatusBarNotification`/Notification metadata of the six known financial records (for example tag shape/prefix, group, category, creator/intent identity, or another stable non-content field). If no reliable metadata discriminator exists, a deliberately scoped provider-specific content classifier with regression fixtures may be required, but do not introduce brittle regex heuristics without evidence.
+The following guidance applied during the pre-classifier Yandex investigation and is retained as historical rationale. The provider-specific local classifier has since been implemented and deployed; do not restart this investigation as a current next action.
+
+Do not implement a channel-only allow rule yet. At that stage, the next useful evidence was a privacy-safe discriminator available on the `StatusBarNotification`/Notification metadata of the six known financial records (for example tag shape/prefix, group, category, creator/intent identity, or another stable non-content field). If no reliable metadata discriminator existed, a deliberately scoped provider-specific content classifier with regression fixtures could be required, but brittle regex heuristics were not justified without evidence.
 
 
 ### Yandex Pro metadata-discriminator follow-up
@@ -1258,7 +1271,7 @@ Result:
 - `METADATA_DISCRIMINATOR_DECISION=CANDIDATE_ONLY`
 - metadata-only filtering is not sufficiently proven for production
 - further generic reverse engineering is not justified by the available evidence
-- the next design should use a narrow Yandex Pro transport match plus a provider-specific local financial classifier before persistence/backend delivery
+- the resulting design direction was a narrow Yandex Pro transport match plus a provider-specific local financial classifier before persistence/backend delivery
 - `FINANCIAL` may proceed to mapping/outbox
 - `NON_FINANCIAL` and `UNKNOWN` must be dropped locally with safe diagnostics and no raw-content logging
 - classifier behavior must be defined from sanitized regression fixtures before implementation
@@ -1274,28 +1287,21 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-PR #68 is the current docs-only handoff update and must be reviewed before
-merge. After it is merged:
-
-1. Keep Sber v5 fresh production E2E opportunistic until a natural outgoing
-   notification occurs; do not manufacture another operation solely for
-   validation.
-2. Keep VTB transport opportunistic until a natural VTB notification occurs;
-   do not manufacture another operation solely for validation.
-3. Proceed with the next narrow fixture-backed parser-semantic slice using
-   already reviewed evidence. Candidate slices are Alfa outgoing/DEBIT F5,
-   T-Bank incoming/CREDIT top-up, Ozon incoming/CREDIT, and Yandex Pay
-   source/outgoing evidence.
-4. Give each candidate its own exact fixture, code review, and fail-closed
-   gate. None is automatically production-authorized by this handoff.
-5. Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger
-   work in the same slice.
+Sber v5 rollout is complete. Keep fresh Sber v5 E2E and VTB transport
+opportunistic until natural notifications occur; those waits do not block
+development. Continue with one narrow evidence-backed parser slice from the
+reviewed provider evidence, with each provider separately fixture-gated and
+fail-closed. Do not start reconciliation, INTERNAL_TRANSFER, business events,
+or ledger work in the same slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
 Android diagnostics issue is closed by PR #66; it is not a current blocker.
 
-## How to interpret the next evidence
+## Historical Yandex diagnostic interpretation guidance
+
+This section is retained for forensic context only and is not the current
+operational next action.
 
 For Yandex static APK forensics:
 
@@ -1311,11 +1317,9 @@ For future collector evidence, the already established stage interpretation rema
 - `CAPTURED` without Room insert: Room/duplicate/error issue
 - `INSERTED` without backend: WorkManager/network/auth issue; this path has already succeeded for Alfa
 
-## What comes after the current blocker
+## Historical parser-design principles
 
-Once reliable capture/delivery is established for supported banks, the next functional milestone is bank-specific parsing and normalization.
-
-The collector is intentionally RAW_ONLY-oriented today. Future parsers should extract only evidence actually present, such as:
+Provider parsers must continue to extract only evidence actually present, such as:
 
 - debit/credit direction
 - amount
