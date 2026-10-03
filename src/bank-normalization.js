@@ -1,7 +1,7 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v5';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
-export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v3';
+export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
 const SBER_PROVIDER = 'ru.sberbankmobile';
@@ -139,19 +139,19 @@ export function isTbankBankAndroidNotification(input) {
     && input.ingestionMetadata?.schemaVersion === TBANK_ANDROID_SCHEMA_VERSION;
 }
 
-function partialAlfa({ occurred, amount, accountReference }) {
+function exactAlfa({ occurred, amount, accountReference }) {
   return {
-    eventType: 'UNKNOWN',
+    eventType: 'OUTGOING_TRANSFER',
     occurredAt: occurred,
     amount,
     currency: 'RUB',
-    direction: 'UNKNOWN',
+    direction: 'DEBIT',
     merchant: null,
     counterparty: null,
     accountReference,
     accountReferenceKind: null,
-    normalizationStatus: 'PARTIAL',
-    evidenceQuality: 'PARTIAL',
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
     normalizationVersion: ALFA_BANK_NORMALIZATION_VERSION,
   };
 }
@@ -172,7 +172,7 @@ export function normalizeAlfaBankEvent(input) {
   const titleAmount = `${titleInteger}.${titleMatch[2] ?? '00'}`;
   const bodyAmount = amountMatch[1].replace(',', '.');
   if (titleAmount !== bodyAmount) return null;
-  return partialAlfa({ occurred, amount: titleAmount, accountReference: accountMatch[1] });
+  return exactAlfa({ occurred, amount: titleAmount, accountReference: accountMatch[1] });
 }
 
 export function isAlfaBankAndroidNotification(input) {

@@ -20,20 +20,20 @@ function result(payload = { title, description: body }, overrides = {}) {
   return normalizeBankEvent({ ...base, ...overrides, payload });
 }
 
-test('Alfa F5 extracts only the proven partial facts', () => {
+test('Alfa F5 promotes the exact proven outgoing semantics', () => {
   assert.deepEqual(result(), {
-    eventType: 'UNKNOWN',
+    eventType: 'OUTGOING_TRANSFER',
     occurredAt: '2026-10-01T09:59:00.000Z',
     amount: '2468.00',
     currency: 'RUB',
-    direction: 'UNKNOWN',
+    direction: 'DEBIT',
     merchant: null,
     counterparty: null,
     accountReference: '1111',
     accountReferenceKind: null,
-    normalizationStatus: 'PARTIAL',
-    evidenceQuality: 'PARTIAL',
-    normalizationVersion: 'alfa-bank-normalizer-v3',
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
+    normalizationVersion: 'alfa-bank-normalizer-v4',
   });
 });
 
@@ -42,6 +42,11 @@ test('Alfa F5 accepts a second sanitized sample only when title and body agree',
   assert.equal(normalized.amount, '9753.00');
   assert.equal(normalized.currency, 'RUB');
   assert.equal(normalized.accountReference, '1111');
+  assert.equal(normalized.normalizationStatus, 'READY');
+  assert.equal(normalized.evidenceQuality, 'EXACT');
+  assert.equal(normalized.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(normalized.direction, 'DEBIT');
+  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v4');
 });
 
 test('Alfa F5 accepts comma-decimal title and body with exact normalized equality', () => {
@@ -49,10 +54,14 @@ test('Alfa F5 accepts comma-decimal title and body with exact normalized equalit
     title: '- 9753,25 ₽',
     description: body.replace('2468,00 RUB', '9753,25 RUB'),
   });
-  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v3');
+  assert.equal(normalized.normalizationVersion, 'alfa-bank-normalizer-v4');
   assert.equal(normalized.amount, '9753.25');
   assert.equal(normalized.currency, 'RUB');
   assert.equal(normalized.accountReference, '1111');
+  assert.equal(normalized.normalizationStatus, 'READY');
+  assert.equal(normalized.evidenceQuality, 'EXACT');
+  assert.equal(normalized.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(normalized.direction, 'DEBIT');
 });
 
 test('Alfa v3 rejects the old synthetic lowercase-anchor body assumption', () => {
@@ -85,8 +94,16 @@ test('Alfa F5 prefers description over text and normalizes whitespace', () => {
   assert.equal(normalized.accountReference, '1111');
 });
 
+test('Alfa F5 semantic promotion does not mutate the raw payload', () => {
+  const payload = { title, description: body, text: body };
+  const before = structuredClone(payload);
+  const normalized = result(payload);
+  assert.equal(normalized.normalizationStatus, 'READY');
+  assert.deepEqual(payload, before);
+});
+
 test('Alfa F5 falls back to text only when description is absent or blank', () => {
-  assert.equal(result({ title, description: '', text: body }).normalizationStatus, 'PARTIAL');
+  assert.equal(result({ title, description: '', text: body }).normalizationStatus, 'READY');
   assert.equal(result({ title, description: '   ', text: body }).accountReference, '1111');
 });
 
@@ -169,13 +186,15 @@ test('missing event time prevents Alfa partial extraction', () => {
   assert.equal(normalized.amount, null);
 });
 
-test('Alfa F5 keeps event type, direction, and reference kind fail-closed', () => {
+test('Alfa F5 keeps reference kind and identity semantics fail-closed', () => {
   const normalized = result();
-  assert.equal(normalized.eventType, 'UNKNOWN');
-  assert.equal(normalized.direction, 'UNKNOWN');
+  assert.equal(normalized.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(normalized.direction, 'DEBIT');
   assert.equal(normalized.accountReferenceKind, null);
   assert.equal(normalized.merchant, null);
   assert.equal(normalized.counterparty, null);
+  assert.equal(normalized.normalizationStatus, 'READY');
+  assert.equal(normalized.evidenceQuality, 'EXACT');
 });
 
 test('Alfa F5 rejects malformed, ambiguous, and unsupported variants', () => {

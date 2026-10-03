@@ -42,6 +42,11 @@ const loadAlfaV2Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadAlfaV4Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'alfa', 'evidence-v4.json'),
+  'utf8',
+));
+
 test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed', async () => {
   for (const [name, provider] of providers) {
     const fixture = await loadFixture(name);
@@ -60,7 +65,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
     const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json'] : ['evidence-v1.json'];
-    const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json'] : versions;
+    const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : versions;
     for (const version of fixtureVersions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
       assert.doesNotMatch(text, /"sourceEventId"|"payloadSha|real card|real account/i);
@@ -193,4 +198,22 @@ test('Alfa v3 fixture records the real-derived staged F5 skeleton', async () => 
   assert.equal(integer.readyCapable, false);
   assert.equal(decimal.readyCapable, false);
   assert.equal(fixture.observedVariantMatrix['minus integer title + reference absent'], 'NOT_OBSERVED');
+});
+
+test('Alfa v4 fixture promotes only the exact F5 outgoing envelope', async () => {
+  const fixture = await loadAlfaV4Fixture();
+  const f5 = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-outgoing-exact-v4');
+  const companion = fixture.clusters.find((cluster) => cluster.id === 'alfa-companion-empty-v4');
+  const historical = fixture.clusters.find((cluster) => cluster.id === 'alfa-other-historical-families-v4');
+  assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
+  assert.equal(fixture.normalizationVersion, 'alfa-bank-normalizer-v4');
+  assert.equal(fixture.previousStructuralRevision, 'alfa-bank-normalizer-v3');
+  assert.equal(fixture.f5PrimaryObservationCount, 8);
+  assert.equal(fixture.controlledF5IndependentSampleCount, 5);
+  assert.equal(f5.readyCapable, true);
+  assert.equal(f5.evidence.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(f5.evidence.direction, 'DEBIT');
+  assert.equal(f5.evidence.accountReferenceStructure, 'first masked-reference position with four digits; kind NOT_PROVEN');
+  assert.equal(companion.readyCapable, false);
+  assert.equal(historical.readyCapable, false);
 });

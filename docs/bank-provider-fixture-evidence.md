@@ -49,28 +49,33 @@ empty families remain fail-closed; no READY T-Bank parser is authorized.
 
 ### Alfa Bank
 
-The current forensic taxonomy contains 23 observations across four top-level
+The current forensic taxonomy contains 24 observations across four top-level
 families: integer-title F5, decimal-title F5, empty/companion, and other
 historical envelopes. An earlier exact structural classification of the same
 corpus retained 11 historical subfamilies; that is a separate metric and is
 recorded as `historicalExactStructuralFamilyCount`, not as the current forensic
-family count. The corpus includes seven F5 primary observations and four
-empty/companion observations.
-The seven F5 primaries share one deterministic four-section body skeleton.
+family count. The corpus includes eight F5 primary observations and four
+empty/companion observations after the fresh controlled Alfa outgoing sample.
+The eight F5 primaries share one deterministic four-section body skeleton.
 The first five use the proven minus-integer title and the newest two use the
 proven minus-comma-decimal(two digits) title. The body has title-case transfer
 and recipient anchors, two masked-reference positions, one comma-decimal(two
 digits) uppercase `RUB` amount, and a trailing dynamic/time section. The prior
 v1/v2 synthetic body grammar used lowercase anchors and was too restrictive;
-production fail-closed behavior prevented incorrect persistence. The active
-`alfa-bank-normalizer-v3` is based on staged real-derived segment evidence,
-requires title/body amount equality, both reference positions, and Android
-envelope event time, and extracts only amount, `RUB`, event time, and the first
-proven reference value. It leaves `eventType=UNKNOWN`, `direction=UNKNOWN`,
-and `accountReferenceKind=NULL`; no ownership or card/account kind is inferred.
-Other Alfa families, companions, missing sections, and unobserved title/reference
-combinations remain on generic normalization. The sanitized evidence is recorded
-in `evidence-v3.json`; no real amount or raw payload is committed.
+production fail-closed behavior prevented incorrect persistence. The historical
+`alfa-bank-normalizer-v3` is based on staged real-derived segment evidence and
+left `eventType=UNKNOWN` and `direction=UNKNOWN`; its sanitized record is
+immutable in `evidence-v3.json`. A fresh controlled outgoing sample
+(observation 353) matched that unchanged exact F5 envelope and proves
+`OUTGOING_TRANSFER / DEBIT` for the family. The active
+`alfa-bank-normalizer-v4` therefore promotes only the exact F5 envelope to
+`READY / EXACT`, while preserving title/body amount equality, both reference
+positions, uppercase `RUB`, Android envelope event time, and the first proven
+reference value. `accountReferenceKind=NULL` remains intentional: no account or
+card kind, ownership, or destination identity is inferred. Other Alfa families,
+companions, missing sections, and unobserved title/reference combinations remain
+on generic normalization. The sanitized v4 evidence is recorded in
+`evidence-v4.json`; no real amount or raw payload is committed.
 
 ### Sber
 
