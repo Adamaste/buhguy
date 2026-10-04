@@ -68,15 +68,17 @@ integration('bank cash-flow projection is SELECT-only and scope-safe', { concurr
     await pool.query('INSERT INTO bank_source_person(bank_source_id,person_id,relation_type) VALUES($1,$2,$3),($4,$5,$3)', [sourceB, personB, 'OWNER', sourceAmbiguous, personB]);
     const accountA = (await pool.query(`INSERT INTO financial_accounts(scope_id,institution,provider,display_name,currency) VALUES($1,'Synthetic Bank','synthetic','Projection account A','RUB') RETURNING id`, [scopeA])).rows[0];
     const accountB = (await pool.query(`INSERT INTO financial_accounts(scope_id,institution,provider,display_name,currency) VALUES($1,'Synthetic Bank','synthetic','Projection account B','RUB') RETURNING id`, [scopeB])).rows[0];
-    accountIds.push(accountA.id, accountB.id);
+    const accountAId = Number(accountA.id);
+    const accountBId = Number(accountB.id);
+    accountIds.push(accountAId, accountBId);
 
-    const purchaseId = await createTransaction(sourceA, { key: 'purchase', amount: '10.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' });
-    const outgoingId = await createTransaction(sourceA, { key: 'outgoing', amount: '20.00', currency: 'RUB', direction: 'DEBIT', eventType: 'OUTGOING_TRANSFER', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: accountA.id, state: 'EXACT' } });
-    const incomingId = await createTransaction(sourceA, { key: 'incoming', amount: '30.00', currency: 'RUB', direction: 'CREDIT', eventType: 'INCOMING_TRANSFER', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: null, state: 'UNKNOWN' } });
-    const unknownId = await createTransaction(sourceA, { key: 'unknown', amount: '40.00', currency: 'RUB', direction: 'UNKNOWN', eventType: 'UNKNOWN', status: 'PARTIAL', evidenceQuality: 'PARTIAL' });
-    const conflictId = await createTransaction(sourceA, { key: 'conflict', amount: '50.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: accountB.id, state: 'EXACT' } });
-    const ambiguousId = await createTransaction(sourceAmbiguous, { key: 'ambiguous', amount: '60.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' });
-    const isolatedId = await createTransaction(sourceB, { key: 'isolated', amount: '70.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' });
+    const purchaseId = Number(await createTransaction(sourceA, { key: 'purchase', amount: '10.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' }));
+    const outgoingId = Number(await createTransaction(sourceA, { key: 'outgoing', amount: '20.00', currency: 'RUB', direction: 'DEBIT', eventType: 'OUTGOING_TRANSFER', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: accountAId, state: 'EXACT' } }));
+    const incomingId = Number(await createTransaction(sourceA, { key: 'incoming', amount: '30.00', currency: 'RUB', direction: 'CREDIT', eventType: 'INCOMING_TRANSFER', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: null, state: 'UNKNOWN' } }));
+    const unknownId = Number(await createTransaction(sourceA, { key: 'unknown', amount: '40.00', currency: 'RUB', direction: 'UNKNOWN', eventType: 'UNKNOWN', status: 'PARTIAL', evidenceQuality: 'PARTIAL' }));
+    const conflictId = Number(await createTransaction(sourceA, { key: 'conflict', amount: '50.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT', resolution: { accountId: accountBId, state: 'EXACT' } }));
+    const ambiguousId = Number(await createTransaction(sourceAmbiguous, { key: 'ambiguous', amount: '60.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' }));
+    const isolatedId = Number(await createTransaction(sourceB, { key: 'isolated', amount: '70.00', currency: 'RUB', direction: 'DEBIT', eventType: 'PURCHASE', status: 'READY', evidenceQuality: 'EXACT' }));
     const before = await counts(pool);
     const report = await loadBankCashFlowProjection(pool, { scopeKey: scopeAKey });
     const after = await counts(pool);
@@ -89,7 +91,7 @@ integration('bank cash-flow projection is SELECT-only and scope-safe', { concurr
     const byId = new Map(report.projections.map((row) => [row.bankTransactionId, row]));
     assert.equal(byId.get(purchaseId).movementType, 'PURCHASE');
     assert.equal(byId.get(outgoingId).movementType, 'OUTGOING_TRANSFER');
-    assert.equal(byId.get(outgoingId).financialAccountId, accountA.id);
+    assert.equal(byId.get(outgoingId).financialAccountId, accountAId);
     assert.equal(byId.get(incomingId).accountIdentityStatus, 'UNRESOLVED');
     assert.equal(byId.get(unknownId).reasonCode, 'NORMALIZATION_NOT_READY');
     assert.equal(byId.get(conflictId).reasonCode, 'ACCOUNT_SCOPE_CONFLICT');
