@@ -197,6 +197,51 @@ integration('Sber outgoing v5 evidence resolves only the proven account referenc
   }
 });
 
+integration('T-Bank v2 exact top-up persists CREDIT without identity inference', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const sourceKey = `tbank-v2-${process.pid}-${Date.now()}`;
+  try {
+    await migrate(pool);
+    await createBankSource(pool, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic T-Bank v2' });
+    const created = await ingestBankEvent(pool, {
+      sourceKey,
+      sourceEventId: 'synthetic-tbank-v2',
+      observedAt: '2026-10-01T10:00:00Z',
+      eventTime: '2026-10-01T09:59:00Z',
+      payload: { description: 'Пополнение на 2468 ₽, счет RUB. ТЕСТОВЫЙ ОТПРАВИТЕЛЬ Доступно 9 753,21 ₽' },
+      ingestionMetadata: { provider: 'com.idamob.tinkoff.android', adapter: 'android-notification', deviceType: 'android', schemaVersion: '1' },
+    });
+
+    assert.equal(created.status, 'created');
+    assert.equal(created.normalization.normalizationVersion, 'tbank-bank-normalizer-v2');
+    assert.equal(created.normalization.eventType, 'UNKNOWN');
+    assert.equal(created.normalization.direction, 'CREDIT');
+    assert.equal(created.normalization.normalizationStatus, 'READY');
+    assert.equal(created.normalization.evidenceQuality, 'EXACT');
+    assert.equal(created.normalization.amount, '2468.00');
+    assert.equal(created.normalization.currency, 'RUB');
+    assert.equal(created.normalization.accountReference, null);
+    assert.equal(created.normalization.accountReferenceKind, null);
+    assert.equal(created.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(created.identityResolution.account.financialAccountId, null);
+
+    const persisted = (await pool.query(`SELECT bt.amount,bt.currency,bt.direction,bt.event_type,bt.normalization_status,
+        bt.account_reference,bt.account_reference_kind,r.financial_account_id,r.resolution_state
+      FROM bank_transactions bt
+      JOIN bank_transaction_account_resolution r ON r.bank_transaction_id=bt.id
+      WHERE bt.id=$1`, [created.transactionId])).rows[0];
+    assert.deepEqual(persisted, {
+      amount: '2468.00', currency: 'RUB', direction: 'CREDIT', event_type: 'UNKNOWN', normalization_status: 'READY',
+      account_reference: null, account_reference_kind: null, financial_account_id: null, resolution_state: 'UNKNOWN',
+    });
+  } finally {
+    await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [sourceKey]).catch(() => {});
+    await pool.query('DELETE FROM bank_sources WHERE source_key=$1', [sourceKey]).catch(() => {});
+    await pool.end();
+  }
+});
+
 integration('Alfa exact F5 READY reference does not infer account identity without a proven reference kind', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const sourceKey = `alfa-f5-${process.pid}-${Date.now()}`;

@@ -93,6 +93,30 @@ destination identity is inferred. Other Alfa families, metadata mismatches,
 malformed variants, and ambiguous notifications remain on the generic
 normalizer. Historical v3 rows are not rewritten or backfilled.
 
+## T-Bank Android normalization v2
+
+The active `tbank-bank-normalizer-v2` is scoped to provider
+`com.idamob.tinkoff.android`, adapter `android-notification`, and schema
+version `1`. It reuses the exact proven top-up body grammar:
+
+`Пополнение на <integer> ₽, счет RUB. <dynamic words> Доступно <comma-decimal> ₽`
+
+The first integer-RUB position is the transaction amount. The comma-decimal
+RUB position after `Доступно` is a separate availability/balance value and is
+ignored. Android envelope event time is retained. An exact match returns
+`direction=CREDIT`, `normalizationStatus=READY`, and
+`evidenceQuality=EXACT`; `eventType` remains `UNKNOWN` because the family does
+not prove a unique transfer/top-up business subtype for every notification.
+Merchant, counterparty, account reference, and account-reference kind remain
+null, with no account/card or ownership inference. Title remains optional;
+description has precedence over text, and whitespace-only description falls
+back to text. Provider, adapter, schema, marker, amount, currency, and event
+time mismatches remain fail-closed on the generic path.
+
+The earlier `tbank-bank-normalizer-v1` is a historical revision of the same
+exact envelope. Its historical rows and fixture remain immutable; no replay or
+backfill is performed.
+
 ## Ingestion boundary
 
 The internal handler is `createBankIngestionHandler({ pool })`. It accepts a
