@@ -328,8 +328,50 @@ independently proven two-sided own-account evidence, integrate sufficiently
 proven events into the ledger, and then use bank-to-receipt matching as
 additional independent purchase evidence. The non-mutating bank cash-flow
 projection is implemented by the current development slice and becomes
-available after merge; business-event persistence, internal-transfer matching,
+available on master after PR #77; the next slice is a non-mutating balanced
+journal projection. Business-event persistence, internal-transfer matching,
 ledger integration, and bank-to-receipt matching remain subsequent stages.
+
+The canonical money-accounting rule is that each proven monetary operation
+ultimately maps to one balanced two-sided journal entry: total debit equals
+total credit. The normalized bank transaction is the monetary evidence for
+amount, currency, occurred-at, direction, and explicitly resolved account
+identity. A receipt is additional purchase evidence and detail, not a second
+money movement; matching a receipt must enrich an existing bank-backed
+purchase rather than duplicate its monetary posting. Unknown business/event
+semantics do not discard a proven monetary movement: complete evidence with a
+proven `DEBIT` or `CREDIT` direction may produce a balanced unclassified or
+suspense journal candidate.
+
+When the economic counter-side is not proven, use bounded unclassified or
+suspense semantics such as `UNCLASSIFIED_INCOMING`, `UNCLASSIFIED_OUTGOING`,
+or `UNCLASSIFIED_PURCHASE`. Do not infer income, expense, counterparty, or
+`INTERNAL_TRANSFER`. For `DEBIT`, the bank side is a journal credit and the
+other side is `UNCLASSIFIED_OUTGOING`; for `CREDIT`, the bank side is a journal
+debit and the other side is `UNCLASSIFIED_INCOMING`. If the bank account is not
+explicitly resolved, use `UNRESOLVED_BANK_ACCOUNT` as an unresolved projection
+side, never as account identity proof. These labels do not imply expense,
+income, salary, or purchase. An own-account transfer requires independently
+proven own-account identities on both sides and represents one economic
+transfer, not two expense/income entries.
+
+`PURCHASE + DEBIT` maps to `Dr UNCLASSIFIED_PURCHASE / Cr bank side`;
+`OUTGOING_TRANSFER + DEBIT` maps to `Dr UNCLASSIFIED_OUTGOING / Cr bank
+side`; and `INCOMING_TRANSFER + CREDIT` maps to `Dr bank side / Cr
+UNCLASSIFIED_INCOMING`. Direction alone never determines business-event type.
+If direction is `UNKNOWN`, or amount, currency, occurred-at, scope, or other
+required evidence is missing or conflicting, no balanced monetary candidate is
+created and the transaction remains unresolved.
+
+The later ledger/business-event integration may represent proven money flow
+with these bounded suspense/unclassified semantics before full business
+classification, while persistence and final expense/income/internal-transfer
+meaning still require their own reviewed evidence.
+
+The next implementation slice consumes the merged projection and emits
+balanced debit/credit journal candidates only in memory. It must not write
+ledger, business-event, or reconciliation tables, perform receipt matching,
+or implement internal-transfer matching. No production E2E is implied.
 
 Examples:
 

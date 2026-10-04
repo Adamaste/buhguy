@@ -17,7 +17,7 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `5b5f086f86b2e13db6a851e9f2bd51ee0f348e26` (Person 1 account-identity audit baseline; provider evidence remains fail-closed where reusable grammar is not proven)
+- Current implementation baseline: `70cfe9938d2f7238841455b93f2393853672699f` (PR #77 bank cash-flow projection merged; provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
 - Current blocker: No parser gap blocks Person 1 MVP. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, VTB transport, and fresh post-deployment provider E2E remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: design and implement the first non-mutating bank cash-flow event projection as a separate reviewed code slice. Preserve `PURCHASE + DEBIT` as a purchase/payment candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate rather than a purchase, and `INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. Keep `UNKNOWN` unresolved, use account identity only when explicitly resolved, and never use source ownership as payment proof. Do not create `INTERNAL_TRANSFER` until both sides and their own-account identities are independently proven; do not post to the ledger or mutate production. Bank-to-receipt matching remains future additional evidence, not the immediate blocker for Person 1 MVP. Keep remaining parser validation opportunistic and Person 2/3 out of scope
+- Next action: design and implement `NON_MUTATING_BALANCED_BANK_JOURNAL_PROJECTION` as a separate reviewed code slice over the merged bank cash-flow projection. Produce exactly balanced debit/credit journal candidates while preserving `PURCHASE + DEBIT` as a purchase/payment candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate rather than a purchase, and `INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. Keep `UNKNOWN` unresolved, use account identity only when explicitly resolved, and never use source ownership as payment proof. Do not persist business events or ledger entries, create `INTERNAL_TRANSFER`, perform receipt matching, or mutate production in this slice. Bank-to-receipt matching remains later additional evidence, not the immediate blocker for Person 1 MVP. Keep remaining parser validation opportunistic and Person 2/3 out of scope
 
 ## Person 1 account-identity readiness audit
 
@@ -51,14 +51,62 @@ required before reconciliation development, and no administrative account,
 binding, or card-link mutation is required before development. Alfa, T-Bank,
 Ozon, Yandex, and VTB identity work remains fail-closed and opportunistic.
 
-The first development slice is a non-mutating projection over normalized bank
-transactions. It may project `PURCHASE + DEBIT` as a purchase/payment
-candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate, and
-`INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. `UNKNOWN`
-remains unresolved; direction alone never determines business-event type, and
-source ownership never proves payer or beneficiary. Account identity is used
-only when explicitly resolved. `INTERNAL_TRANSFER` requires independently
-proven evidence on both sides and proven own-account identities.
+The merged `bank-cash-flow-projection-v1` slice is a non-mutating projection
+over normalized bank transactions. The next slice is a balanced journal
+projection over those results. Every proven monetary operation must ultimately
+map to one balanced two-sided journal entry with total debit equal to total
+credit. The bank transaction supplies evidence for amount, currency,
+occurred-at, direction, and an explicitly resolved bank account when present;
+the journal projection must keep unresolved counter-sides bounded and
+unclassified rather than inventing income, expense, counterparty, or
+internal-transfer meaning. `UNKNOWN` business/event semantics do not make a
+proven monetary movement disappear: when scope, amount, currency, occurred-at,
+and `DEBIT`/`CREDIT` direction are all proven, the projection may and should
+emit a balanced monetary pair with an `UNCLASSIFIED_*` counter-side.
+
+The mapping is:
+
+- `PURCHASE + DEBIT` may produce a purchase/payment candidate;
+- `OUTGOING_TRANSFER + DEBIT` produces an outgoing-transfer candidate, not a
+  purchase;
+- `INCOMING_TRANSFER + CREDIT` produces an incoming-transfer candidate;
+- `UNKNOWN` event semantics may still produce a monetary candidate when the
+  movement evidence is complete and direction is proven.
+
+For a proven `DEBIT`, the bank side is the journal credit and the other side
+is `UNCLASSIFIED_OUTGOING` unless a more specific proven event mapping exists.
+For a proven `CREDIT`, the bank side is the journal debit and the other side
+is `UNCLASSIFIED_INCOMING`. These labels do not mean expense, purchase,
+income, or salary. If `financialAccountId` is not explicitly proven, use only
+an explicit unresolved side such as `UNRESOLVED_BANK_ACCOUNT`; this is not
+account identity proof and must not be treated as a concrete financial
+account.
+
+If direction is `UNKNOWN`, or amount, currency, occurred-at, scope, or other
+required evidence is missing or conflicting, no balanced monetary candidate is
+created and the row remains unresolved.
+
+Direction alone never determines business-event type, and source ownership
+never proves payer or beneficiary. Account identity is used only when
+explicitly resolved. `INTERNAL_TRANSFER` requires independently proven
+evidence on both sides and proven own-account identities.
+
+A receipt is additional purchase evidence and detail, not a second money
+movement. A bank-backed purchase may exist without a receipt; a later receipt
+match must enrich the existing purchase/business event rather than post the
+same amount again. Receipt-only and ambiguous matches remain independent
+evidence states.
+
+The proven mappings are `PURCHASE + DEBIT` -> `Dr UNCLASSIFIED_PURCHASE / Cr
+bank side`, `OUTGOING_TRANSFER + DEBIT` -> `Dr UNCLASSIFIED_OUTGOING / Cr
+bank side`, and `INCOMING_TRANSFER + CREDIT` -> `Dr bank side / Cr
+UNCLASSIFIED_INCOMING`. Direction alone never infers purchase, income,
+`INTERNAL_TRANSFER`, counterparty, or any other business meaning.
+
+The balanced journal projection is validation-only: it must not persist
+business events, ledger entries, reconciliation decisions, or internal
+transfers. No production E2E of this projection has been performed; runtime
+wiring remains absent.
 
 Do not post to the ledger or mutate production in this slice. Bank-to-receipt
 candidate matching remains a later reconciliation slice, not the immediate
