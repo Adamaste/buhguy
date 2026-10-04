@@ -328,8 +328,29 @@ independently proven two-sided own-account evidence, integrate sufficiently
 proven events into the ledger, and then use bank-to-receipt matching as
 additional independent purchase evidence. The non-mutating bank cash-flow
 projection is implemented by the current development slice and becomes
-available after merge; business-event persistence, internal-transfer matching,
+available on master after PR #77; the next slice is a non-mutating balanced
+journal projection. Business-event persistence, internal-transfer matching,
 ledger integration, and bank-to-receipt matching remain subsequent stages.
+
+The canonical money-accounting rule is that each proven monetary operation
+ultimately maps to one balanced two-sided journal entry: total debit equals
+total credit. The normalized bank transaction is the monetary evidence for
+amount, currency, occurred-at, direction, and explicitly resolved account
+identity. A receipt is additional purchase evidence and detail, not a second
+money movement; matching a receipt must enrich an existing bank-backed
+purchase rather than duplicate its monetary posting.
+
+When the economic counter-side is not proven, use bounded unclassified or
+suspense semantics such as `UNCLASSIFIED_INCOMING`, `UNCLASSIFIED_OUTGOING`,
+or `UNCLASSIFIED_PURCHASE`. Do not infer income, expense, counterparty, or
+`INTERNAL_TRANSFER`. An own-account transfer requires independently proven
+own-account identities on both sides and represents one economic transfer,
+not two expense/income entries.
+
+The next implementation slice consumes the merged projection and emits
+balanced debit/credit journal candidates only in memory. It must not write
+ledger, business-event, or reconciliation tables, perform receipt matching,
+or implement internal-transfer matching. No production E2E is implied.
 
 Examples:
 
