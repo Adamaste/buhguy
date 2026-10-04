@@ -155,15 +155,15 @@ does not prove event type, direction, amount, currency, or ownership, and the
 backend remains fail-closed. No StrongUnknown event has yet been observed in
 production. No new bank operation was performed for this rollout.
 
-## Alfa F5 partial normalizer
+## Alfa F5 v3 partial normalizer (historical)
 
-The read-only Alfa corpus review now covers 23 observations across four current
+At that historical stage, the read-only Alfa corpus review covered 23 observations across four
 forensic top-level families: integer-title F5, decimal-title F5,
 empty/companion, and other historical envelopes. The earlier exact structural
 classification retained 11 historical subfamilies; this is a separate metric,
 not the current forensic family count. Seven F5 primaries share one real-derived
 four-section body skeleton,
-with integer and comma-decimal(two digits) title variants. The active v3 staged
+with integer and comma-decimal(two digits) title variants. The then-active v3 staged
 path requires title/body amount equality, title-case transfer/recipient anchors,
 both proven masked-reference positions, uppercase `RUB`, and Android envelope
 event time. It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
@@ -171,8 +171,9 @@ reference kind; no ownership or card/account inference is performed. Unmatched
 Alfa families and companions remain on generic normalization. Observation 260
 failed closed under v2 without semantic corruption because the old synthetic
 body grammar used lowercase anchors; v3 corrects only that evidence-backed
-grammar. No additional research transfer or fresh Alfa E2E is required; the
-post-deployment E2E has passed and Alfa is closed.
+grammar. No additional research transfer or fresh Alfa E2E was required at that
+stage; the historical v3 partial-parser stage was closed after its production
+E2E.
 
 ## Alfa F5 v3 production E2E closeout
 
@@ -381,10 +382,10 @@ the observations below were not replayed or backfilled.
   current runtime remains `PARTIAL / UNKNOWN / UNKNOWN`. No fresh outgoing
   primary was correlated, so `OZON_OUTGOING_DEBIT_PROVEN=NO`.
 - **Alfa:** observation `353` / transaction `281` has exact F5 anchors and
-  controlled ground truth supporting outgoing/DEBIT semantics. The current
-  persisted/runtime Alfa v3 result remains `PARTIAL / UNKNOWN / UNKNOWN`;
-  this is evidence for a future separate parser revision, not a v3 runtime
-  change.
+  controlled ground truth supporting outgoing/DEBIT semantics. At that
+  historical stage, the persisted/runtime Alfa v3 result remained
+  `PARTIAL / UNKNOWN / UNKNOWN`; this was evidence for the later v4 revision,
+  not a v3 runtime change.
 - **Yandex Pro:** observation `343` / transaction `275` is
   `READY / INCOMING_TRANSFER / CREDIT`. No fresh Yandex Pro outgoing
   person-transfer notification or Pro-side notification for the controlled
@@ -501,7 +502,7 @@ value. Existing proven Sber incoming observations (`72`, `75`, `79`, and
 evidence did not justify an exact v3 grammar at that time: a broad title
 `contains` heuristic or a guessed balance rule would have risked a false
 positive. This is retained as historical forensic context; the two later
-controlled samples are documented in the current v3 section above.
+controlled samples are documented in the historical v3 section above.
 
 This remains historical forensic context. The later controlled v3 samples and
 the final fresh-ingestion E2E establish the active current-format contract;
@@ -1317,12 +1318,13 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-Sber v5 rollout is complete. Keep fresh Sber v5 E2E and VTB transport
-opportunistic until natural notifications occur; those waits do not block
-development. Continue with one narrow evidence-backed parser slice from the
-reviewed provider evidence, with each provider separately fixture-gated and
-fail-closed. Do not start reconciliation, INTERNAL_TRANSFER, business events,
-or ledger work in the same slice.
+Alfa v4 rollout is complete. Fresh Alfa v4 E2E is opportunistic and remains
+`PENDING_NATURAL_EVENT`; keep fresh Sber v5 E2E and VTB transport opportunistic
+as well. None of these waits blocks development. Continue with one separate
+narrow evidence-backed parser slice from the reviewed provider evidence, with
+each provider separately fixture-gated and fail-closed. Do not start
+reconciliation, INTERNAL_TRANSFER, business events, or ledger work in the same
+slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
