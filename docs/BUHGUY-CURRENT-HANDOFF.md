@@ -17,7 +17,7 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `70cfe9938d2f7238841455b93f2393853672699f` (PR #77 bank cash-flow projection merged; provider evidence remains fail-closed where reusable grammar is not proven)
+- Current implementation baseline: `1d98a6fa3d307ead0cee2466c7725984f7d7d304` (PR #79 balanced bank journal projection merged; provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
 - Current blocker: No parser gap blocks Person 1 MVP. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, VTB transport, and fresh post-deployment provider E2E remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: design and implement `NON_MUTATING_BALANCED_BANK_JOURNAL_PROJECTION` as a separate reviewed code slice over the merged bank cash-flow projection. Produce exactly balanced debit/credit journal candidates while preserving `PURCHASE + DEBIT` as a purchase/payment candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate rather than a purchase, and `INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. Keep `UNKNOWN` unresolved, use account identity only when explicitly resolved, and never use source ownership as payment proof. Do not persist business events or ledger entries, create `INTERNAL_TRANSFER`, perform receipt matching, or mutate production in this slice. Bank-to-receipt matching remains later additional evidence, not the immediate blocker for Person 1 MVP. Keep remaining parser validation opportunistic and Person 2/3 out of scope
+- Next action: prepare a separate reviewed Sber purchase-normalizer slice from the proven reusable purchase family below. Keep parser implementation, deployment, replay/backfill, and production mutation out of this evidence closeout; Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope.
 
 ## Person 1 account-identity readiness audit
 
@@ -478,6 +478,52 @@ No fresh post-deploy Sber v5 production E2E has been claimed; it remains
 Android was not updated because PR #67 changes backend normalization only.
 The existing collector configuration, listener access, allowlist, and
 credentials were not touched.
+
+## Sber card-purchase evidence closeout
+
+PR #79 was subsequently squash-merged into master as
+`1d98a6fa3d307ead0cee2466c7725984f7d7d304`; its balanced bank journal
+projection remains non-mutating and validation-only.
+
+One natural Person 1 Sber purchase transport/backend E2E was captured after
+the prior cutoff. Observations `409`, `411`, `413`, `414`, and `415` with
+transactions `327`, `328`, `329`, `330`, and `331` are five immutable
+notifications from one capture window, not five purchases. The successful
+purchase primary is observation `413` / transaction `329`; observation `415`
+is its reference-only companion. Observation `409` is a separate
+insufficient-funds purchase-shaped notification with reference-only
+observation `411`, while `414` is a separate transfer-shaped notification and
+is not purchase evidence.
+
+The current `sber-bank-normalizer-v5` correctly failed closed for this family:
+all five persisted rows remain `PARTIAL / UNKNOWN`, with no persisted amount,
+currency, direction, or account resolution. Transport provenance was
+persisted for the canonical Sber provider and Android notification channel;
+no payload or sensitive notification values are retained here.
+
+The purchase family is reusable across three independent economic samples,
+including two historical duplicate-looking primary pairs and the fresh
+primary. Its privacy-safe grammar is an exact title envelope
+`Покупка <MERCHANT>` plus a description/text pair with the same structure:
+`<integer> RUB marker — Баланс: <decimal RUB marker> ... masked-reference
+suffix position`. The first monetary position correlates with the controlled
+transaction amount; the second position follows the stable balance marker and
+is a separate balance value. Description and text are equivalent when both
+are present. The insufficient-funds title is a fail-closed near-miss and must
+not become a purchase debit.
+
+The repeated purchase marker proves the purchase family and supports a
+future narrow `PURCHASE / DEBIT` parser contract for this exact envelope;
+there is no separate lexical debit word or sign requirement in the proven
+body. The masked suffix is present, but its reference kind is not proven and
+must remain `UNKNOWN`; no account/card identity inference is authorized.
+The next parser slice may extract only the proven integer transaction amount,
+RUB, Android event time, and the exact purchase marker/merchant slot if its
+privacy and grammar contract remains bounded. It must reject status-prefixed
+titles, reordered or missing body sections, unequal description/text values,
+ambiguous monetary positions, unsupported currency/number forms, and
+unproven reference kinds. No parser implementation was made in this forensic
+step.
 
 ## Controlled multi-bank evidence reviewed on 2026-10-03
 
@@ -1466,19 +1512,19 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 The Person 1 account-identity readiness audit is complete for development and
 the active phase is `RECONCILIATION_DEVELOPMENT`. The immediate next slice is
-a non-mutating bank cash-flow event projection over normalized transactions:
-project proven purchase/payment, outgoing-transfer, and incoming-transfer
-semantics without turning them into accounting truth. `UNKNOWN` remains
-unresolved; account identity is used only when explicitly resolved; source
-ownership is not payer/beneficiary proof; and `INTERNAL_TRANSFER` requires
-independently proven two-sided own-account evidence.
+a separate reviewed Sber purchase-normalizer slice for the exact evidence-
+backed family above. It must preserve fail-closed behavior and must not turn
+the notification into accounting truth by itself. Account identity may be
+used only when explicitly resolved; source ownership is not payer/beneficiary
+proof; and `INTERNAL_TRANSFER` requires independently proven two-sided
+own-account evidence.
 
 Bank-to-receipt candidate matching is deferred to a later reconciliation
 slice. It remains part of the roadmap as additional independent purchase
-evidence and is not abandoned. No production persistence, business-event
-creation, ledger posting, or reconciliation decision is allowed in the first
-slice. Fresh provider E2E waits remain opportunistic and do not block
-development.
+evidence and is not abandoned. No production parser deployment, persistence,
+business-event creation, ledger posting, or reconciliation decision is
+allowed in the next parser slice. Fresh provider E2E waits remain
+opportunistic and do not block development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
