@@ -37,6 +37,11 @@ const loadSberV5Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadSberV6Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'sber', 'evidence-v6.json'),
+  'utf8',
+));
+
 const loadTbankV2Fixture = async () => JSON.parse(await readFile(
   path.join(root, 'fixtures', 'bank-normalization', 'tbank', 'evidence-v2.json'),
   'utf8',
@@ -69,7 +74,7 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json']
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json', 'evidence-v6.json']
       : name === 'tbank' ? ['evidence-v1.json', 'evidence-v2.json']
         : ['evidence-v1.json'];
     const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : versions;
@@ -140,6 +145,33 @@ test('Sber v5 fixture records the same outgoing envelope with proven semantics',
   assert.equal(outgoing.evidence.evidenceQuality, 'EXACT');
   assert.equal(fixture.incomingContract.semanticRevision, 'PRESERVED_FROM_V4');
   assert.equal(companion.readyCapable, false);
+});
+
+test('Sber v6 fixture records the bounded purchase contract', async () => {
+  const fixture = await loadSberV6Fixture();
+  const purchase = fixture.clusters.find((cluster) => cluster.id === 'sber-purchase-exact-v6');
+  const insufficient = fixture.clusters.find((cluster) => cluster.id === 'sber-purchase-insufficient-funds-near-miss-v6');
+  const transfer = fixture.clusters.find((cluster) => cluster.id === 'sber-transfer-shaped-near-miss-v6');
+  assert.equal(fixture.provider, 'ru.sberbankmobile');
+  assert.equal(fixture.normalizationVersion, 'sber-bank-normalizer-v6');
+  assert.equal(fixture.previousStructuralRevision, 'sber-bank-normalizer-v5');
+  assert.equal(fixture.controlledPurchaseIndependentSampleCount, 3);
+  assert.equal(purchase.readyCapable, true);
+  assert.equal(purchase.evidence.eventType, 'PURCHASE');
+  assert.equal(purchase.evidence.direction, 'DEBIT');
+  assert.equal(purchase.evidence.normalizationStatus, 'READY');
+  assert.equal(purchase.evidence.evidenceQuality, 'EXACT');
+  assert.equal(purchase.evidence.transactionAmountPosition, 'first integer RUB position');
+  assert.equal(purchase.evidence.balancePosition, 'second comma-decimal RUB position after Баланс; ignored');
+  assert.equal(purchase.evidence.accountReferenceKind, 'NOT_PROVEN');
+  assert.equal(purchase.evidence.merchantExtraction, 'NOT_PROVEN; intentionally null');
+  assert.equal(purchase.evidence.descriptionTextRequirement, 'nonblank normalized equality required');
+  assert.equal(purchase.evidence.eventTimeSource, 'ANDROID_ENVELOPE_EVENT_TIME');
+  assert.equal(insufficient.readyCapable, false);
+  assert.equal(transfer.readyCapable, false);
+  assert.ok(fixture.acceptance.providerIsolation);
+  assert.equal(fixture.acceptance.dedup, 'EXISTING_CONTRACT_UNCHANGED');
+  assert.equal(fixture.acceptance.sourceEventIdConflict, 'EXISTING_CONTRACT_UNCHANGED');
 });
 
 test('T-Bank fixture records only the proven top-up partial envelope', async () => {

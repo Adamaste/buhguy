@@ -1,0 +1,80 @@
+{
+  "provider": "ru.sberbankmobile",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "sber-bank-normalizer-v6",
+  "previousStructuralRevision": "sber-bank-normalizer-v5",
+  "controlledPurchaseIndependentSampleCount": 3,
+  "clusters": [
+    {
+      "id": "sber-purchase-exact-v6",
+      "observationCount": 3,
+      "titleEnvelope": "Покупка <MERCHANT>",
+      "bodyEnvelope": "<integer> ₽ — Баланс: <comma-decimal> ₽ Счёт карты МИР •• <four digits>",
+      "syntheticPayload": {
+        "title": "Покупка СИНТЕТИЧЕСКИЙ МЕРЧАНТ",
+        "description": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357",
+        "text": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357"
+      },
+      "readyCapable": true,
+      "evidence": {
+        "eventType": "PURCHASE",
+        "direction": "DEBIT",
+        "normalizationStatus": "READY",
+        "evidenceQuality": "EXACT",
+        "transactionAmountPosition": "first integer RUB position",
+        "balancePosition": "second comma-decimal RUB position after Баланс; ignored",
+        "currency": "RUB symbol",
+        "accountReferenceStructure": "masked-reference suffix position present; kind NOT_PROVEN",
+        "accountReferenceKind": "NOT_PROVEN",
+        "merchantExtraction": "NOT_PROVEN; intentionally null",
+        "descriptionTextRequirement": "nonblank normalized equality required",
+        "eventTimeSource": "ANDROID_ENVELOPE_EVENT_TIME",
+        "providerAdapterSchema": "ru.sberbankmobile / android-notification / schemaVersion 1"
+      }
+    },
+    {
+      "id": "sber-purchase-insufficient-funds-near-miss-v6",
+      "observationCount": 1,
+      "titleEnvelope": "status-prefixed purchase-shaped title",
+      "bodyEnvelope": "purchase body shape, not promotable",
+      "syntheticPayload": {
+        "title": "НЕДОСТАТОЧНО СРЕДСТВ. Покупка СИНТЕТИЧЕСКИЙ МЕРЧАНТ",
+        "description": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357",
+        "text": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357"
+      },
+      "readyCapable": false,
+      "evidence": { "eventType": "NOT_PROVEN", "direction": "NOT_PROVEN" }
+    },
+    {
+      "id": "sber-transfer-shaped-near-miss-v6",
+      "observationCount": 1,
+      "titleEnvelope": "Перевод по СБП от <PERSON>.",
+      "bodyEnvelope": "transfer-shaped body, not purchase evidence",
+      "syntheticPayload": {
+        "title": "Перевод по СБП от СИНТЕТИЧЕСКИЙ ОТПРАВИТЕЛЬ.",
+        "description": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357",
+        "text": "2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357"
+      },
+      "readyCapable": false,
+      "evidence": { "eventType": "NOT_PROVEN", "direction": "NOT_PROVEN" }
+    }
+  ],
+  "acceptance": {
+    "activeRuntimeFormat": "V6_EXACT_PURCHASE_FAMILY_WITH_PRESERVED_V5_SEMANTICS",
+    "descriptionTextConflict": "REQUIRED_FAIL_CLOSED",
+    "missingOrBlankDescription": "NO_UNPROVEN_FALLBACK",
+    "missingBodySections": "REQUIRED_FAIL_CLOSED",
+    "unsupportedMoneyFormat": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "providerIsolation": "REQUIRED",
+    "adapterIsolation": "REQUIRED",
+    "schemaVersionIsolation": "REQUIRED",
+    "eventTime": "ANDROID_ENVELOPE_EVENT_TIME_REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED",
+    "accountIdentityInference": "FORBIDDEN",
+    "referenceKind": "NOT_PROVEN",
+    "merchant": "NOT_PROVEN; NULL"
+  }
+}

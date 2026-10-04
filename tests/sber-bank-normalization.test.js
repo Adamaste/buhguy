@@ -31,7 +31,17 @@ const currentOutgoing = (overrides = {}) => ({
   ...overrides,
 });
 
-test('Sber v5 preserves the exact controlled incoming structure', () => {
+const purchasePayload = ({ amount = '2468', balance = '123,45', suffix = '1357', merchant = 'СИНТЕТИЧЕСКИЙ МЕРЧАНТ', ...overrides } = {}) => {
+  const body = `${amount} ₽ — Баланс: ${balance} ₽ Счёт карты МИР •• ${suffix}`;
+  return {
+    title: `Покупка ${merchant}`,
+    description: body,
+    text: body,
+    ...overrides,
+  };
+};
+
+test('Sber v6 preserves the exact controlled incoming structure', () => {
   for (const payload of [
     currentIncoming({ description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' }),
     currentIncoming({ description: '+ 456 ₽ — Баланс: 7 890,12 ₽ Плат. счёт •• 0000' }),
@@ -45,11 +55,11 @@ test('Sber v5 preserves the exact controlled incoming structure', () => {
     assert.equal(result.accountReference, '0000');
     assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
     assert.equal(result.evidenceQuality, 'EXACT');
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
   }
 });
 
-test('Sber v5 accepts whitespace normalization without widening the envelope', () => {
+test('Sber v6 accepts whitespace normalization without widening the envelope', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming({
     title: '  Перевод\nпо СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.  ',
     description: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -58,7 +68,7 @@ test('Sber v5 accepts whitespace normalization without widening the envelope', (
   assert.equal(result.amount, '12.00');
 });
 
-test('Sber v5 prefers description and falls back to text', () => {
+test('Sber v6 preserves description precedence and text fallback for incoming', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentIncoming({
     description: 'not a current Sber envelope',
     text: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -73,7 +83,7 @@ test('Sber v5 prefers description and falls back to text', () => {
   assert.equal(fallback.amount, '12.00');
 });
 
-test('Sber v5 rejects old v1 and v2 runtime envelopes', () => {
+test('Sber v6 rejects old v1 and v2 runtime envelopes', () => {
   for (const payload of [
     oldIncoming(),
     oldIncoming({ title: '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' }),
@@ -85,7 +95,7 @@ test('Sber v5 rejects old v1 and v2 runtime envelopes', () => {
   }
 });
 
-test('Sber v5 rejects title and body near misses fail closed', () => {
+test('Sber v6 rejects incoming title and body near misses fail closed', () => {
   const cases = [
     { title: 'ТЕСТ Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: currentIncoming().description },
     { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ. ТЕСТ', description: currentIncoming().description },
@@ -113,13 +123,13 @@ test('Sber v5 rejects title and body near misses fail closed', () => {
   assert.notEqual(missingEventTime.normalizationStatus, 'READY');
 });
 
-test('Sber v5 keeps the second monetary field out of the transaction amount', () => {
+test('Sber v6 keeps the incoming second monetary field out of the transaction amount', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming() });
   assert.equal(result.amount, '123.00');
   assert.equal(result.currency, 'RUB');
 });
 
-test('Sber v5 is provider, adapter, and schema scoped', () => {
+test('Sber v6 preserves provider, adapter, and schema scope', () => {
   const otherProvider = normalizeBankEvent({ ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'other.bank' }, payload: currentIncoming() });
   assert.notEqual(otherProvider.normalizationStatus, 'READY');
 
@@ -140,7 +150,7 @@ test('Sber v5 is provider, adapter, and schema scoped', () => {
   }
 });
 
-test('Sber v5 uses envelope eventTime and does not mutate raw payload', () => {
+test('Sber v6 uses envelope eventTime and does not mutate raw payload', () => {
   const payload = currentIncoming();
   const before = JSON.stringify(payload);
   const result = normalizeBankEvent({ ...base, payload });
@@ -148,7 +158,7 @@ test('Sber v5 uses envelope eventTime and does not mutate raw payload', () => {
   assert.equal(JSON.stringify(payload), before);
 });
 
-test('Sber v5 outgoing extraction does not cross provider, adapter, or schema scope', () => {
+test('Sber v6 outgoing extraction does not cross provider, adapter, or schema scope', () => {
   const cases = [
     { provider: 'other.bank' },
     { adapter: 'BANK_API' },
@@ -166,7 +176,7 @@ test('Sber v5 outgoing extraction does not cross provider, adapter, or schema sc
   }
 });
 
-test('Sber v5 promotes only the exact proven outgoing evidence', () => {
+test('Sber v6 promotes only the exact proven outgoing evidence', () => {
   const result = normalizeBankEvent({ ...base, payload: currentOutgoing() });
   assert.equal(result.normalizationStatus, 'READY');
   assert.equal(result.evidenceQuality, 'EXACT');
@@ -176,12 +186,12 @@ test('Sber v5 promotes only the exact proven outgoing evidence', () => {
   assert.equal(result.currency, 'RUB');
   assert.equal(result.accountReference, '0271');
   assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
-  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
   assert.equal(result.merchant, null);
   assert.equal(result.counterparty, null);
 });
 
-test('Sber v5 outgoing preserves description precedence and whitespace-only text fallback', () => {
+test('Sber v6 outgoing preserves description precedence and whitespace-only text fallback', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentOutgoing({
     description: 'not an outgoing Sber envelope',
   }) });
@@ -197,7 +207,7 @@ test('Sber v5 outgoing preserves description precedence and whitespace-only text
   assert.equal(fallback.normalizationStatus, 'READY');
 });
 
-test('Sber v5 rejects outgoing near misses without partial extraction', () => {
+test('Sber v6 rejects outgoing near misses without partial extraction', () => {
   const cases = [
     { title: 'Другая форма', description: currentOutgoing().description },
     { title: 'ТЕСТОВЫЙ СЕРВИС-ПЕРЕВОД', description: currentOutgoing().description },
@@ -220,4 +230,77 @@ test('Sber v5 rejects outgoing near misses without partial extraction', () => {
     assert.equal(result.amount, null);
     assert.equal(result.accountReference, null);
   }
+});
+
+test('Sber v6 accepts only the proven purchase family across independent synthetic samples', () => {
+  for (const payload of [
+    purchasePayload({ amount: '2468', balance: '123,45', suffix: '1357' }),
+    purchasePayload({ amount: '3579', balance: '234,56', suffix: '2468' }),
+    purchasePayload({ amount: '4680', balance: '345,67', suffix: '9753' }),
+  ]) {
+    const result = normalizeBankEvent({ ...base, payload });
+    assert.equal(result.normalizationStatus, 'READY');
+    assert.equal(result.evidenceQuality, 'EXACT');
+    assert.equal(result.eventType, 'PURCHASE');
+    assert.equal(result.direction, 'DEBIT');
+    assert.equal(result.amount, `${payload.description.match(/^(\d+)/u)[1]}.00`);
+    assert.equal(result.currency, 'RUB');
+    assert.equal(result.accountReference, payload.description.match(/(\d{4})$/u)[1]);
+    assert.equal(result.accountReferenceKind, null);
+    assert.equal(result.merchant, null);
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
+  }
+});
+
+test('Sber v6 rejects purchase near misses and never falls through to v5 extraction', () => {
+  const valid = purchasePayload();
+  const cases = [
+    { ...valid, title: 'Недостаточно средств. Покупка СИНТЕТИЧЕСКИЙ МЕРЧАНТ' },
+    { ...valid, title: 'Перевод по СБП от СИНТЕТИЧЕСКИЙ ОТПРАВИТЕЛЬ.' },
+    { ...valid, description: '2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357', text: '3579 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357' },
+    { ...valid, description: '2468 ₽ Баланс: 123,45 ₽ Счёт карты МИР •• 1357' },
+    { ...valid, description: '2468 ₽ — Баланс: 123.45 ₽ Счёт карты МИР •• 1357', text: '2468 ₽ — Баланс: 123.45 ₽ Счёт карты МИР •• 1357' },
+    { ...valid, description: '2 468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357', text: '2 468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357' },
+    { ...valid, description: '2468 ₽ — Баланс: 123,45 RUB Счёт карты МИР •• 1357', text: '2468 ₽ — Баланс: 123,45 RUB Счёт карты МИР •• 1357' },
+    { ...valid, description: '2468 ₽ — Счёт карты МИР •• 1357 Баланс: 123,45 ₽', text: '2468 ₽ — Счёт карты МИР •• 1357 Баланс: 123,45 ₽' },
+    { ...valid, description: '2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 135', text: '2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 135' },
+    { ...valid, description: '2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357 ЛИШНИЙ ТЕКСТ', text: '2468 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357 ЛИШНИЙ ТЕКСТ' },
+    { ...valid, description: ' ', text: valid.text },
+  ];
+  for (const payload of cases) {
+    const result = normalizeBankEvent({ ...base, payload });
+    assert.notEqual(result.normalizationStatus, 'READY');
+    assert.equal(result.amount, null);
+    assert.equal(result.accountReference, null);
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+  }
+  const missingEventTime = normalizeBankEvent({ ...base, eventTime: null, payload: valid });
+  assert.notEqual(missingEventTime.normalizationStatus, 'READY');
+});
+
+test('Sber v6 is provider, adapter, and schema scoped for purchase extraction', () => {
+  for (const overrides of [
+    { provider: 'other.bank' },
+    { adapter: 'BANK_API' },
+    { schemaVersion: '2' },
+    { schemaVersion: undefined },
+  ]) {
+    const ingestionMetadata = { ...base.ingestionMetadata, ...overrides };
+    if (overrides.schemaVersion === undefined) delete ingestionMetadata.schemaVersion;
+    const result = normalizeBankEvent({ ...base, ingestionMetadata, payload: purchasePayload() });
+    assert.notEqual(result.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.equal(result.amount, null);
+    assert.equal(result.accountReference, null);
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+  }
+});
+
+test('Sber v6 preserves Android eventTime and raw payload immutability', () => {
+  const payload = purchasePayload();
+  const before = JSON.stringify(payload);
+  const result = normalizeBankEvent({ ...base, payload });
+  assert.equal(result.occurredAt, '2026-09-30T07:59:00.000Z');
+  assert.equal(JSON.stringify(payload), before);
 });

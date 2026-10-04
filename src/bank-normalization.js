@@ -1,5 +1,5 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v5';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
 
@@ -13,6 +13,7 @@ const TBANK_ANDROID_SCHEMA_VERSION = '1';
 const ALFA_ANDROID_SCHEMA_VERSION = '1';
 const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
 const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
+const SBER_PURCHASE_TITLE_PATTERN = /^Покупка [\p{L}\p{M} .'-]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
@@ -20,6 +21,7 @@ const ALFA_F5_ACCOUNT_SECTION = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+сч
 const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB$/u;
 const ALFA_F5_RECIPIENT_SECTION = /^Получатель:\s+\d+\s*\*\s*\d{4}$/u;
 const ALFA_F5_TRAILING_SECTION = /^\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
+const SBER_PURCHASE_BODY_PATTERN = /^(\d+) ₽ — Баланс: (\d+,\d{2}) ₽ Счёт карты МИР •• (\d{4})$/u;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -216,11 +218,45 @@ function normalizeSberOutgoing({ occurred, amount, accountReference }) {
   };
 }
 
+function normalizeSberPurchase({ occurred, amount, accountReference }) {
+  return {
+    eventType: 'PURCHASE',
+    occurredAt: occurred,
+    amount,
+    currency: 'RUB',
+    direction: 'DEBIT',
+    merchant: null,
+    counterparty: null,
+    accountReference,
+    accountReferenceKind: null,
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
+    normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
+  };
+}
+
 export function normalizeSberBankEvent(input) {
   const payload = input.payload ?? {};
   const title = normalizeWhitespace(payload.title);
-  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
+  const description = normalizeWhitespace(payload.description);
+  const text = normalizeWhitespace(payload.text);
+  const body = description || text;
   const occurred = occurredAt(input.eventTime);
+
+  if (SBER_PURCHASE_TITLE_PATTERN.test(title)) {
+    const purchaseMatch = description && text && description === text
+      ? description.match(SBER_PURCHASE_BODY_PATTERN)
+      : null;
+    if (!purchaseMatch || !occurred) {
+      return incompleteSber({ occurred, hasIncomingMarker: true, hasCurrency: body.includes('₽'), amount: null });
+    }
+    return normalizeSberPurchase({
+      occurred,
+      amount: `${purchaseMatch[1]}.00`,
+      accountReference: purchaseMatch[3],
+    });
+  }
+
   const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERN.test(title);
   const amountMatch = body.match(/^\+\s*(\d+)\s*₽\s*/u);
   const afterAmount = amountMatch ? body.slice(amountMatch[0].length).trimStart() : '';
