@@ -11,11 +11,10 @@
   "controlledF5IndependentSampleCount": 5,
   "clusters": [
     {
-      "id": "alfa-f5-outgoing-exact-v4",
-      "observationCount": 8,
-      "controlledObservationCount": 5,
+      "id": "alfa-f5-outgoing-integer-title-exact-v4",
+      "observationCount": 5,
       "fields": {
-        "title": { "present": true, "variants": ["minus integer RUB symbol", "minus comma-decimal(two digits) RUB symbol"] },
+        "title": { "present": true, "shape": "minus integer RUB symbol" },
         "description": { "present": true, "shape": "four exact semicolon-separated sections with title-case transfer/recipient anchors, two masked-reference positions, and one comma-decimal RUB amount" },
         "text": { "present": true, "sameShapeAs": "description" },
         "reference": { "present": false }
@@ -29,6 +28,27 @@
         "eventTime": "ANDROID_ENVELOPE_PROVEN",
         "accountReferenceStructure": "first masked-reference position with four digits; kind NOT_PROVEN",
         "semanticBasis": "additional controlled outgoing sample matched the unchanged exact F5 envelope"
+      },
+      "readyCapable": true
+    },
+    {
+      "id": "alfa-f5-outgoing-decimal-title-exact-v4",
+      "observationCount": 3,
+      "fields": {
+        "title": { "present": true, "shape": "minus comma-decimal(two digits) RUB symbol" },
+        "description": { "present": true, "shape": "same four exact semicolon-separated sections and reference positions as integer-title F5" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "OUTGOING_TRANSFER",
+        "direction": "DEBIT",
+        "amountGrammar": "title amount equals body comma-decimal(two digits) RUB amount",
+        "currencyGrammar": "RUB symbol in title and uppercase RUB code in body",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "first masked-reference position with four digits; kind NOT_PROVEN",
+        "semanticBasis": "same unchanged exact F5 body grammar with independently observed decimal-title variant"
       },
       "readyCapable": true
     },

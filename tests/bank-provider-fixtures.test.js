@@ -202,18 +202,27 @@ test('Alfa v3 fixture records the real-derived staged F5 skeleton', async () => 
 
 test('Alfa v4 fixture promotes only the exact F5 outgoing envelope', async () => {
   const fixture = await loadAlfaV4Fixture();
-  const f5 = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-outgoing-exact-v4');
+  const integer = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-outgoing-integer-title-exact-v4');
+  const decimal = fixture.clusters.find((cluster) => cluster.id === 'alfa-f5-outgoing-decimal-title-exact-v4');
   const companion = fixture.clusters.find((cluster) => cluster.id === 'alfa-companion-empty-v4');
   const historical = fixture.clusters.find((cluster) => cluster.id === 'alfa-other-historical-families-v4');
   assert.equal(fixture.provider, 'ru.alfabank.mobile.android');
   assert.equal(fixture.normalizationVersion, 'alfa-bank-normalizer-v4');
   assert.equal(fixture.previousStructuralRevision, 'alfa-bank-normalizer-v3');
+  assert.equal(fixture.forensicFamilyCount, 4);
+  assert.equal(fixture.clusters.length, 4);
   assert.equal(fixture.f5PrimaryObservationCount, 8);
   assert.equal(fixture.controlledF5IndependentSampleCount, 5);
-  assert.equal(f5.readyCapable, true);
-  assert.equal(f5.evidence.eventType, 'OUTGOING_TRANSFER');
-  assert.equal(f5.evidence.direction, 'DEBIT');
-  assert.equal(f5.evidence.accountReferenceStructure, 'first masked-reference position with four digits; kind NOT_PROVEN');
+  assert.equal(integer.observationCount, 5);
+  assert.equal(decimal.observationCount, 3);
+  for (const f5 of [integer, decimal]) {
+    assert.equal(f5.readyCapable, true);
+    assert.equal(f5.evidence.eventType, 'OUTGOING_TRANSFER');
+    assert.equal(f5.evidence.direction, 'DEBIT');
+    assert.equal(f5.evidence.accountReferenceStructure, 'first masked-reference position with four digits; kind NOT_PROVEN');
+  }
   assert.equal(companion.readyCapable, false);
+  assert.equal(companion.observationCount, 4);
   assert.equal(historical.readyCapable, false);
+  assert.equal(historical.observationCount, 12);
 });

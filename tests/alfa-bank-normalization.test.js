@@ -64,7 +64,7 @@ test('Alfa F5 accepts comma-decimal title and body with exact normalized equalit
   assert.equal(normalized.direction, 'DEBIT');
 });
 
-test('Alfa v3 rejects the old synthetic lowercase-anchor body assumption', () => {
+test('Alfa v4 rejects the legacy synthetic lowercase-anchor body assumption', () => {
   const normalized = result({ title, description: oldV2SyntheticBody });
   assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
   assert.equal(normalized.amount, null);
@@ -165,7 +165,7 @@ test('Alfa F5 rejects extra prefix or suffix content', () => {
   assert.equal(result({ title, description: `ПРЕФИКС ${body}` }).amount, null);
 });
 
-test('Alfa v3 rejects reordered proven body sections', () => {
+test('Alfa v4 rejects reordered proven body sections', () => {
   const sections = body.split(';');
   const reorderedBody = [sections[1], sections[0], sections[2], sections[3]].join(';');
   const normalized = result({ title, description: reorderedBody });
@@ -180,7 +180,7 @@ test('non-empty invalid description cannot be bypassed by valid text', () => {
   assert.equal(normalized.amount, null);
 });
 
-test('missing event time prevents Alfa partial extraction', () => {
+test('missing event time prevents exact F5 promotion', () => {
   const normalized = result(undefined, { eventTime: null });
   assert.equal(normalized.normalizationVersion, 'bank-normalizer-v1');
   assert.equal(normalized.amount, null);
@@ -213,7 +213,7 @@ test('Alfa F5 rejects malformed, ambiguous, and unsupported variants', () => {
   }
 });
 
-test('Alfa v3 requires every proven body section and reference position', () => {
+test('Alfa v4 requires every proven body section and reference position', () => {
   for (const description of [
     body.replace('0000*1111', '00001111'),
     body.replace('2222*3333', '22223333'),

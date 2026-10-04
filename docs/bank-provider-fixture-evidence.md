@@ -25,9 +25,11 @@ combined with a primary event.
 
 The fixtures under `tests/fixtures/bank-normalization/` preserve only field
 presence, whitespace/punctuation shape, and safe marker categories. Values are
-synthetic and cannot be correlated with a user's operation. Only the proven Sber
-incoming cluster is marked `readyCapable: true`; all other clusters remain
-fail-closed with `eventType`/`direction` `NOT_PROVEN`.
+synthetic and cannot be correlated with a user's operation. The exact proven
+Sber incoming/outgoing clusters and the exact Alfa F5 v4 clusters are marked
+`readyCapable: true`; T-Bank remains partial and Ozon remains generic/fail-closed.
+All unsupported clusters remain fail-closed with `eventType`/`direction`
+`NOT_PROVEN`.
 
 ### T-Bank
 
@@ -57,8 +59,8 @@ recorded as `historicalExactStructuralFamilyCount`, not as the current forensic
 family count. The corpus includes eight F5 primary observations and four
 empty/companion observations after the fresh controlled Alfa outgoing sample.
 The eight F5 primaries share one deterministic four-section body skeleton.
-The first five use the proven minus-integer title and the newest two use the
-proven minus-comma-decimal(two digits) title. The body has title-case transfer
+Five use the proven minus-integer title and three use the proven
+minus-comma-decimal(two digits) title. The body has title-case transfer
 and recipient anchors, two masked-reference positions, one comma-decimal(two
 digits) uppercase `RUB` amount, and a trailing dynamic/time section. The prior
 v1/v2 synthetic body grammar used lowercase anchors and was too restrictive;
@@ -126,12 +128,15 @@ replay, and source-event conflicts must be tested. Cases requiring an
 unobserved wording are `NOT_PROVEN`, not invented fixtures.
 
 Generic normalization, Yandex normalization, deduplication, and conflict
-semantics remain unchanged. Only the scoped Sber Android parser is registered.
+semantics remain unchanged. The registered provider-specific runtime paths are
+Yandex, Sber v5, T-Bank v1 partial, and Alfa v4; Ozon remains generic/fail-closed.
 
 ## Gate
 
-`PARSER_V3_POSSIBLE=YES` for the exact current controlled Sber
-incoming-transfer envelope recorded in `evidence-v3.json` only. Existing v1/v2
-fixtures and rows remain immutable historical evidence; no historical backfill
-or parser inference for those formats is allowed. T-Bank and Ozon remain
-fail-closed.
+The historical `PARSER_V3_POSSIBLE=YES` gate applied only to the then-current
+Sber incoming-transfer envelope recorded in `evidence-v3.json`; it is not the
+current project gate. Current fixture authorization is provider-specific:
+exact Sber incoming/outgoing v5 clusters and exact Alfa F5 v4 clusters are
+ready-capable, T-Bank v1 remains `PARTIAL` with unknown event semantics, and
+Ozon remains generic/fail-closed. Existing historical fixtures and rows remain
+immutable; no historical backfill or parser inference for them is allowed.
