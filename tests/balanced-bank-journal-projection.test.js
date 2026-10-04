@@ -49,6 +49,41 @@ test('PURCHASE + DEBIT uses symbolic unresolved bank account without inventing i
   assert.deepEqual(result.postings[1].account, { type: JOURNAL_ACCOUNT_TYPES.SYMBOLIC, code: UNRESOLVED_BANK_ACCOUNT });
 });
 
+test('account refinement changes the content-sensitive journal key', () => {
+  const unresolved = projectBalancedBankJournal(source());
+  const concrete = projectBalancedBankJournal(source({
+    financialAccountId: 42,
+    accountResolutionState: 'EXACT',
+    accountResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE',
+    financialAccountScopeKey: 'scope-a',
+  }));
+  assertBalanced(unresolved);
+  assertBalanced(concrete);
+  assert.notEqual(unresolved.journalKey, concrete.journalKey);
+  assert.notDeepEqual(unresolved.postings, concrete.postings);
+});
+
+test('journal output preserves source and account-resolution provenance', () => {
+  const src = source({
+    financialAccountId: 42,
+    accountResolutionState: 'MANUAL',
+    accountResolutionProvenance: 'USER_CONFIRMED',
+    financialAccountScopeKey: 'scope-a',
+  });
+  const result = projectBalancedBankJournal(src);
+  assert.deepEqual(result.sourceProvenance, {
+    projectionVersion: 'bank-cash-flow-projection-v1',
+    projectionKey: src.projectionKey,
+    sourceReasonCode: 'PROVEN_PURCHASE_DEBIT',
+    bankTransactionId: 10,
+    sourceProjectionStatus: 'PROJECTED',
+    sourceMovementType: 'PURCHASE',
+    accountIdentityStatus: 'CONCRETE',
+    accountResolutionState: 'MANUAL',
+    accountResolutionProvenance: 'USER_CONFIRMED',
+  });
+});
+
 test('OUTGOING_TRANSFER + DEBIT maps to unclassified outgoing and bank credit', () => {
   const result = projectBalancedBankJournal(source({ sourceEventType: 'OUTGOING_TRANSFER' }));
   assertBalanced(result);
@@ -132,6 +167,10 @@ test('journal keys and results are deterministic and collection invariant holds'
   const first = projectBalancedBankJournals(rows);
   const second = projectBalancedBankJournals(rows);
   assert.deepEqual(first, second);
+  assert.deepEqual(
+    first.projections.map((row) => row.journalKey),
+    second.projections.map((row) => row.journalKey),
+  );
   assert.equal(first.summary.totalTransactions, first.summary.projectedTransactions + first.summary.unresolvedTransactions);
   assert.equal(first.summary.projectedTransactions, 2);
   assert.equal(first.summary.unresolvedTransactions, 1);

@@ -8,8 +8,10 @@ import { loadBalancedBankJournalProjection } from '../src/balanced-bank-journal-
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 const TABLES = [
   'bank_event_observations', 'bank_transactions', 'bank_transaction_account_resolution',
+  'bank_transaction_payment_instrument_resolution',
   'business_events', 'business_event_evidence', 'business_event_edges', 'ledger_entries',
-  'ledger_postings', 'reconciliation_runs', 'reconciliation_results',
+  'business_event_allocations', 'ledger_postings', 'ledger_source_links',
+  'reconciliation_runs', 'reconciliation_results', 'certification_facts',
 ];
 
 async function counts(pool) {

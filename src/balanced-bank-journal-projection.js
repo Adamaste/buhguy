@@ -52,9 +52,40 @@ function bankAccountSide(source) {
   return symbolicAccount(UNRESOLVED_BANK_ACCOUNT);
 }
 
-function journalKey(source) {
+function canonicalAccount(account) {
+  if (account.type === JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT) {
+    return {
+      type: JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT,
+      financialAccountId: account.financialAccountId,
+    };
+  }
+  return {
+    type: JOURNAL_ACCOUNT_TYPES.SYMBOLIC,
+    code: account.code,
+  };
+}
+
+function journalKey(source, postings, { occurredAt, amount, currency }) {
+  const debit = postings.find((posting) => posting.side === 'DEBIT');
+  const credit = postings.find((posting) => posting.side === 'CREDIT');
+  const fingerprint = {
+    modelVersion: BALANCED_BANK_JOURNAL_PROJECTION_VERSION,
+    sourceProjection: {
+      modelVersion: source.modelVersion,
+      projectionKey: source.projectionKey,
+    },
+    scopeKey: source.scopeKey,
+    bankTransactionId: source.bankTransactionId,
+    occurredAt,
+    amount,
+    currency,
+    sourceEventType: source.sourceEventType,
+    direction: source.direction,
+    debitAccount: canonicalAccount(debit.account),
+    creditAccount: canonicalAccount(credit.account),
+  };
   return crypto.createHash('sha256')
-    .update(`${BALANCED_BANK_JOURNAL_PROJECTION_VERSION}\0${source.scopeKey}\0${source.projectionKey}`)
+    .update(JSON.stringify(fingerprint))
     .digest('hex');
 }
 
@@ -64,6 +95,11 @@ function sourceProvenance(source) {
     projectionKey: source.projectionKey,
     sourceReasonCode: source.reasonCode,
     bankTransactionId: source.bankTransactionId,
+    sourceProjectionStatus: source.projectionStatus,
+    sourceMovementType: source.movementType,
+    accountIdentityStatus: source.accountIdentityStatus,
+    accountResolutionState: source.accountResolutionState,
+    accountResolutionProvenance: source.accountResolutionProvenance ?? null,
   };
 }
 
@@ -147,7 +183,7 @@ export function projectBalancedBankJournal(source) {
   return {
     modelVersion: BALANCED_BANK_JOURNAL_PROJECTION_VERSION,
     projectionStatus: JOURNAL_PROJECTION_STATUSES.PROJECTED,
-    journalKey: journalKey(source),
+    journalKey: journalKey(source, postings, { occurredAt, amount, currency }),
     bankTransactionId: source.bankTransactionId,
     scopeKey: source.scopeKey,
     occurredAt,
