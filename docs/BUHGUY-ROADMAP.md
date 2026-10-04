@@ -233,14 +233,14 @@ Build regression fixtures for every known notification format and edge case.
 
 ## 6. Account and money model
 
-**Status: Implemented foundation / Next**
+**Status: Implemented foundation / Validation**
 
 A bank source is not necessarily a financial account. The account-resolution
 foundation, explicit source/provider binding model, financial-account and
 payment-instrument identity structures, and fail-closed resolution states are
-implemented. Person 1 account identity readiness is the active next milestone;
-account coverage is not complete and no ownership should be inferred from
-provider identity or source context alone.
+implemented. The Person 1 account-identity readiness audit is complete for
+development; production account coverage remains partial and no ownership
+should be inferred from provider identity or source context alone.
 
 The model covers:
 
@@ -265,12 +265,14 @@ Provider-reported balance snapshots and balance-difference reconciliation are no
 
 ## 7. Reconciliation layer
 
-**Status: Planned; central future milestone**
+**Status: Next; active development milestone**
 
 Reconciliation connects independent evidence without pretending they are the same fact.
-It is the next milestone after Person 1 account identity readiness, preserving
-the strategic order `bank evidence -> account identity -> reconciliation ->
-business events -> ledger integration`.
+It is the active milestone after Person 1 account identity readiness,
+preserving the strategic order
+`bank evidence -> account identity -> reconciliation -> business events ->
+ledger integration`. Reconciliation is not yet implemented or proven in
+production.
 
 Example candidate relationship:
 
@@ -304,6 +306,11 @@ Every proposed relationship should preserve:
 - absence of a receipt is not automatically an error
 - one receipt may not always map one-to-one to one bank operation
 - cash purchases and internal transfers require distinct treatment
+- the first implementation slice should project non-mutating candidates only
+- `OUTGOING_TRANSFER` plus `DEBIT` is not by itself purchase evidence
+- prefer READY/RECONCILED fiscal electronic-payment evidence such as
+  `ecash_total_sum` for receipt-side purchase funding
+- candidate generation must preserve evidence, provenance, and uncertainty
 
 ---
 

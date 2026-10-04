@@ -17,15 +17,46 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `a85239515be46c9d7ced85a3803af814a648c438` (PR #73 merge; provider evidence remains fail-closed where reusable grammar is not proven)
-- Current phase: `ACCOUNT_IDENTITY_READINESS` for Person 1; the account-resolution foundation is implemented and bank evidence is sufficient to proceed without waiting for opportunistic parser validation
+- Current implementation baseline: `5b5f086f86b2e13db6a851e9f2bd51ee0f348e26` (Person 1 account-identity audit baseline; provider evidence remains fail-closed where reusable grammar is not proven)
+- Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
 - Current blocker: No parser gap blocks Person 1 MVP. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, VTB transport, and fresh post-deployment provider E2E remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: perform a READ-ONLY Person 1 production account-identity readiness audit. Do not create an account, source/provider binding, manual transaction resolution, historical replay, reconciliation mutation, INTERNAL_TRANSFER, business event, or ledger posting. After account identity readiness, proceed to `RECONCILIATION`; keep remaining parser validation opportunistic and Person 2/3 out of scope
+- Next action: design and implement the first non-mutating bank-to-receipt reconciliation candidate projection as a separate reviewed code slice. Do not persist reconciliation decisions, create `INTERNAL_TRANSFER` or business events, change ledger postings, silently classify `UNKNOWN` bank operations as purchases, or use source ownership as payment proof. Keep remaining parser validation opportunistic and Person 2/3 out of scope
+
+## Person 1 account-identity readiness audit
+
+The read-only production audit completed against the exact master above. The
+primary Android source has one unique accounting scope, and the account
+identity foundation is healthy. The canonical coverage snapshot was internally
+consistent: `311` bank transactions, `16` account-resolved, and `295`
+unresolved. The `76` transactions without an account-resolution row are all
+intentional pre-foundation legacy rows; there are zero post-foundation
+resolution-row gaps. This is row-completeness history, not a runtime coverage
+invariant failure.
+
+Production currently has no `MASKED_CARD` bank transactions, so the zero
+payment-instrument-resolution rows do not indicate a pipeline defect. Sber
+account-reference resolution is production-proven, including the exact
+`MASKED_ACCOUNT` path to financial account `1`. Sber v5 outgoing
+`DEBIT`/account resolution is structurally ready, but its fresh production E2E
+remains `PENDING_NATURAL_EVENT`.
+
+`RECONCILIATION_DEVELOPMENT_READY=YES` and
+`PRODUCTION_RECONCILIATION_E2E_READY=NO`. Full account coverage is not
+required before reconciliation development, and no administrative account,
+binding, or card-link mutation is required before development. Alfa, T-Bank,
+Ozon, Yandex, and VTB identity work remains fail-closed and opportunistic.
+
+The first reconciliation slice must generate candidates only. It must keep
+bank and receipt evidence independent, require suitable purchase-funding
+evidence, and never treat an `OUTGOING_TRANSFER` as a purchase merely because
+it is `DEBIT`. Prefer READY/RECONCILED fiscal electronic-payment evidence such
+as `ecash_total_sum` rather than blindly matching a full receipt total or cash
+components. Candidate generation must not become accounting truth.
 
 ## Alfa normalizer v4 production deployment
 
@@ -1376,17 +1407,22 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-The primary Person 1 development path is now `ACCOUNT_IDENTITY_READINESS`,
-followed by `RECONCILIATION`. T-Bank v2 rollout is complete. Fresh T-Bank v2 E2E remains
-`PENDING_NATURAL_EVENT`; fresh Alfa v4 E2E, Sber v5 E2E, and VTB transport
-remain opportunistic as well. Ozon observation `339` provides controlled
-incoming/CREDIT evidence, but its reusable grammar remains pending natural
-corroboration and does not block development. Do not manufacture another bank
-operation solely for Ozon evidence. Continue with one separate narrow
-evidence-backed parser slice only as opportunistic backlog work; it must not
-precede the read-only Person 1 account-identity readiness audit. Do not start
-reconciliation until account identity is ready, and do not start
-INTERNAL_TRANSFER, business events, or ledger work in the same slice.
+The Person 1 account-identity readiness audit is complete for development and
+the active phase is `RECONCILIATION_DEVELOPMENT`. Design and implement one
+separate, non-mutating bank-to-receipt reconciliation candidate projection.
+The first slice must preserve independent evidence and provenance, generate
+candidates rather than accounting truth, and require suitable purchase-funding
+evidence. Do not treat `OUTGOING_TRANSFER` as a purchase merely because it is
+`DEBIT`; Sber v5 outgoing evidence proves debit/account identity but does not
+by itself prove a receipt-backed purchase. Prefer READY/RECONCILED fiscal
+electronic-payment evidence such as `ecash_total_sum` over blindly matching a
+full receipt total or cash components.
+
+The first slice must not persist reconciliation decisions in production,
+create `INTERNAL_TRANSFER` or business events, change ledger postings,
+silently classify `UNKNOWN` bank operations as purchases, or use source
+ownership as payment proof. Fresh Sber v5, Alfa v4, T-Bank v2, and other
+provider E2E waits remain opportunistic and do not block development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
