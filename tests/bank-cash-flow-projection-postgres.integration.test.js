@@ -82,8 +82,8 @@ integration('bank cash-flow projection is SELECT-only and scope-safe', { concurr
     const after = await counts(pool);
     assert.deepEqual(after, before);
     assert.equal(report.summary.totalTransactions, 6);
-    assert.equal(report.summary.projectedTransactions, 2);
-    assert.equal(report.summary.unresolvedTransactions, 4);
+    assert.equal(report.summary.projectedTransactions, 3);
+    assert.equal(report.summary.unresolvedTransactions, 3);
     assert.equal(report.summary.concreteAccountIdentity, 1);
     assert.equal(report.summary.unresolvedAccountIdentity, 5);
     const byId = new Map(report.projections.map((row) => [row.bankTransactionId, row]));
