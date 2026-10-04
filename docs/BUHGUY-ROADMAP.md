@@ -272,7 +272,9 @@ It is the active milestone after Person 1 account identity readiness,
 preserving the strategic order
 `bank evidence -> account identity -> reconciliation -> business events ->
 ledger integration`. Reconciliation is not yet implemented or proven in
-production.
+production. The near-term path begins with proven bank cash-flow and movement
+semantics, then extends business-event semantics, before using bank-to-receipt
+matching as additional independent purchase evidence.
 
 Example candidate relationship:
 
@@ -306,11 +308,9 @@ Every proposed relationship should preserve:
 - absence of a receipt is not automatically an error
 - one receipt may not always map one-to-one to one bank operation
 - cash purchases and internal transfers require distinct treatment
-- the first implementation slice should project non-mutating candidates only
-- `OUTGOING_TRANSFER` plus `DEBIT` is not by itself purchase evidence
-- prefer READY/RECONCILED fiscal electronic-payment evidence such as
-  `ecash_total_sum` for receipt-side purchase funding
-- candidate generation must preserve evidence, provenance, and uncertainty
+- bank-to-receipt matching is deferred until bank movement and business-event
+  semantics are established, but remains part of reconciliation
+- all candidate projections must preserve evidence, provenance, and uncertainty
 
 ---
 
@@ -319,6 +319,11 @@ Every proposed relationship should preserve:
 **Status: Partial foundation / Planned expansion**
 
 Build normalized business events only when supported by evidence.
+
+The near-term sequence is to project proven bank cash-flow semantics first,
+extend business-event semantics second, recognize internal transfers only with
+independently proven two-sided own-account evidence, and integrate sufficiently
+proven events into the ledger. None of these stages is complete yet.
 
 Examples:
 
@@ -583,11 +588,14 @@ Unless the current handoff says otherwise, the intended order is:
 3. implement bank-specific parsers and parser regression fixtures
 4. normalize direction/amount/currency/event semantics
 5. model bank accounts/card references where evidence permits
-6. implement reconciliation candidates between bank and receipt evidence
-7. connect sufficiently certified business events to ledger flows
-8. expand analytics and gap/quality monitoring
-9. add manual/mobile evidence capture
-10. add higher-level automation only after evidence/reconciliation quality is measurable
+6. project proven bank cash-flow and movement semantics
+7. build or extend business-event semantics
+8. recognize internal transfers only with proven two-sided own-account evidence
+9. connect sufficiently certified business events to ledger flows
+10. use bank-to-receipt matching as additional independent purchase evidence
+11. expand analytics and gap/quality monitoring
+12. add manual/mobile evidence capture
+13. add higher-level automation only after evidence/reconciliation quality is measurable
 
 ## Roadmap maintenance
 

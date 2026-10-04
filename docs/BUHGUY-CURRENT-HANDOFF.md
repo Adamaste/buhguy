@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: design and implement the first non-mutating bank-to-receipt reconciliation candidate projection as a separate reviewed code slice. Do not persist reconciliation decisions, create `INTERNAL_TRANSFER` or business events, change ledger postings, silently classify `UNKNOWN` bank operations as purchases, or use source ownership as payment proof. Keep remaining parser validation opportunistic and Person 2/3 out of scope
+- Next action: design and implement the first non-mutating bank cash-flow event projection as a separate reviewed code slice. Preserve `PURCHASE + DEBIT` as a purchase/payment candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate rather than a purchase, and `INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. Keep `UNKNOWN` unresolved, use account identity only when explicitly resolved, and never use source ownership as payment proof. Do not create `INTERNAL_TRANSFER` until both sides and their own-account identities are independently proven; do not post to the ledger or mutate production. Bank-to-receipt matching remains future additional evidence, not the immediate blocker for Person 1 MVP. Keep remaining parser validation opportunistic and Person 2/3 out of scope
 
 ## Person 1 account-identity readiness audit
 
@@ -51,12 +51,21 @@ required before reconciliation development, and no administrative account,
 binding, or card-link mutation is required before development. Alfa, T-Bank,
 Ozon, Yandex, and VTB identity work remains fail-closed and opportunistic.
 
-The first reconciliation slice must generate candidates only. It must keep
-bank and receipt evidence independent, require suitable purchase-funding
-evidence, and never treat an `OUTGOING_TRANSFER` as a purchase merely because
-it is `DEBIT`. Prefer READY/RECONCILED fiscal electronic-payment evidence such
-as `ecash_total_sum` rather than blindly matching a full receipt total or cash
-components. Candidate generation must not become accounting truth.
+The first development slice is a non-mutating projection over normalized bank
+transactions. It may project `PURCHASE + DEBIT` as a purchase/payment
+candidate, `OUTGOING_TRANSFER + DEBIT` as an outgoing-transfer candidate, and
+`INCOMING_TRANSFER + CREDIT` as an incoming-transfer candidate. `UNKNOWN`
+remains unresolved; direction alone never determines business-event type, and
+source ownership never proves payer or beneficiary. Account identity is used
+only when explicitly resolved. `INTERNAL_TRANSFER` requires independently
+proven evidence on both sides and proven own-account identities.
+
+Do not post to the ledger or mutate production in this slice. Bank-to-receipt
+candidate matching remains a later reconciliation slice, not the immediate
+blocker for Person 1 MVP. When that later slice begins, it must keep bank and
+receipt evidence independent, prefer READY/RECONCILED fiscal electronic-
+payment evidence such as `ecash_total_sum`, and generate candidates rather
+than accounting truth.
 
 ## Alfa normalizer v4 production deployment
 
@@ -1408,21 +1417,20 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 ## Immediate next action
 
 The Person 1 account-identity readiness audit is complete for development and
-the active phase is `RECONCILIATION_DEVELOPMENT`. Design and implement one
-separate, non-mutating bank-to-receipt reconciliation candidate projection.
-The first slice must preserve independent evidence and provenance, generate
-candidates rather than accounting truth, and require suitable purchase-funding
-evidence. Do not treat `OUTGOING_TRANSFER` as a purchase merely because it is
-`DEBIT`; Sber v5 outgoing evidence proves debit/account identity but does not
-by itself prove a receipt-backed purchase. Prefer READY/RECONCILED fiscal
-electronic-payment evidence such as `ecash_total_sum` over blindly matching a
-full receipt total or cash components.
+the active phase is `RECONCILIATION_DEVELOPMENT`. The immediate next slice is
+a non-mutating bank cash-flow event projection over normalized transactions:
+project proven purchase/payment, outgoing-transfer, and incoming-transfer
+semantics without turning them into accounting truth. `UNKNOWN` remains
+unresolved; account identity is used only when explicitly resolved; source
+ownership is not payer/beneficiary proof; and `INTERNAL_TRANSFER` requires
+independently proven two-sided own-account evidence.
 
-The first slice must not persist reconciliation decisions in production,
-create `INTERNAL_TRANSFER` or business events, change ledger postings,
-silently classify `UNKNOWN` bank operations as purchases, or use source
-ownership as payment proof. Fresh Sber v5, Alfa v4, T-Bank v2, and other
-provider E2E waits remain opportunistic and do not block development.
+Bank-to-receipt candidate matching is deferred to a later reconciliation
+slice. It remains part of the roadmap as additional independent purchase
+evidence and is not abandoned. No production persistence, business-event
+creation, ledger posting, or reconciliation decision is allowed in the first
+slice. Fresh provider E2E waits remain opportunistic and do not block
+development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
