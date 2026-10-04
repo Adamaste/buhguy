@@ -16,16 +16,46 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-03
-- Current implementation baseline: `12f9800bf56866591a2d81958137d0830c6725eb` (PR #67 merge; Sber normalizer v5 is deployed in production)
-- Current phase: Sber v5 production rollout is complete. The exact outgoing family is evidence-backed and deployed; no Android update was required or performed. Reviewed controlled evidence is now available for future narrow Alfa, T-Bank, Ozon, and Yandex Pay parser slices
-- Current blocker: No rollout blocker. Sber v5 fresh E2E and VTB transport remain opportunistic only; do not manufacture a bank operation solely for validation. Historical v4 rows remain immutable
-- Production artifact: exact master `12f9800bf56866591a2d81958137d0830c6725eb`, 315 files, archive SHA-256 `a84b5a070124c676d3cfa7708c457d15bb52afabeb92b1a06ba9ac215dccbceb`; installed manifest and hashes match
+- Last updated: 2026-10-04
+- Current implementation baseline: `c27f1d56ddba55b22c797ffcfc8b0e7e6741883e` (PR #69 merge; Alfa normalizer v4 is deployed in production)
+- Current phase: Alfa v4 production rollout is complete. The exact F5 outgoing family is deployed as `OUTGOING_TRANSFER / DEBIT / READY / EXACT`; Android was not updated and no fresh Alfa v4 notification has been claimed after deployment
+- Current blocker: No rollout blocker. Alfa v4 fresh E2E remains `PENDING_NATURAL_EVENT`; Sber v5 fresh E2E and VTB transport remain opportunistic only. Do not manufacture a bank operation solely for validation. Historical v3 Alfa rows remain immutable
+- Production artifact: exact master `c27f1d56ddba55b22c797ffcfc8b0e7e6741883e`, 316 files, archive SHA-256 `a6a06f5a5f2fa19275ab5254b52e03ff19cf2f2bde6d8bba605e412f3662fa46`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: keep Sber v5 fresh E2E and VTB transport opportunistic until natural notifications occur; development is not blocked by either wait. Take the next narrow fixture-backed parser slice from reviewed Alfa outgoing/DEBIT F5, T-Bank incoming/CREDIT top-up, Ozon incoming/CREDIT, or Yandex Pay source/outgoing evidence, with no automatic provider choice implied here. Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
+- Next action: wait for a natural Alfa F5 notification if production E2E evidence is needed; do not create a transfer solely for validation. Keep Sber v5 fresh E2E and VTB transport opportunistic. Take the next narrow fixture-backed parser slice only as a separate reviewed change; do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
+
+## Alfa normalizer v4 production deployment
+
+PR #69 was squash-merged into exact master
+`c27f1d56ddba55b22c797ffcfc8b0e7e6741883e`. Master CI run
+`37195827483` passed `test` with the PostgreSQL integration gate, `android`,
+and `android-signed`.
+
+The backend was promoted from a 316-file immutable artifact with archive
+SHA-256
+`a6a06f5a5f2fa19275ab5254b52e03ff19cf2f2bde6d8bba605e412f3662fa46`.
+The pre-deploy rollback backup, remote artifact integrity check, atomic
+promotion, installed manifest/hash verification, and service health all
+passed. Schema migration 017 was already current; no migration, grant,
+credential, Android, replay, or backfill operation was performed.
+
+The deployed runtime imports `alfa-bank-normalizer-v4`. A non-mutating smoke
+test against a sanitized F5 fixture returned
+`OUTGOING_TRANSFER / DEBIT / READY / EXACT`; a representative near-miss
+remained fail-closed. The historical controlled Alfa observation `353` /
+transaction `281` remains its original `alfa-bank-normalizer-v3`
+`PARTIAL / UNKNOWN` projection and was not replayed or backfilled. Production
+bank counts and max ids were unchanged across deployment (`307/307`, max
+observation `384`, max transaction `308`).
+
+The exact F5 v4 semantics preserve `accountReferenceKind=NULL`; no account,
+card, or ownership inference was added. A fresh post-deployment Alfa v4 E2E
+remains `PENDING_NATURAL_EVENT`. Sber v5 fresh E2E and VTB transport remain
+opportunistic and do not block development. The next parser candidate remains
+a separate narrow reviewed slice.
 
 ## Source/provider account binding production rollout
 
@@ -125,15 +155,15 @@ does not prove event type, direction, amount, currency, or ownership, and the
 backend remains fail-closed. No StrongUnknown event has yet been observed in
 production. No new bank operation was performed for this rollout.
 
-## Alfa F5 partial normalizer
+## Alfa F5 v3 partial normalizer (historical)
 
-The read-only Alfa corpus review now covers 23 observations across four current
+At that historical stage, the read-only Alfa corpus review covered 23 observations across four
 forensic top-level families: integer-title F5, decimal-title F5,
 empty/companion, and other historical envelopes. The earlier exact structural
 classification retained 11 historical subfamilies; this is a separate metric,
 not the current forensic family count. Seven F5 primaries share one real-derived
 four-section body skeleton,
-with integer and comma-decimal(two digits) title variants. The active v3 staged
+with integer and comma-decimal(two digits) title variants. The then-active v3 staged
 path requires title/body amount equality, title-case transfer/recipient anchors,
 both proven masked-reference positions, uppercase `RUB`, and Android envelope
 event time. It preserves `eventType=UNKNOWN`, `direction=UNKNOWN`, and unknown
@@ -141,8 +171,9 @@ reference kind; no ownership or card/account inference is performed. Unmatched
 Alfa families and companions remain on generic normalization. Observation 260
 failed closed under v2 without semantic corruption because the old synthetic
 body grammar used lowercase anchors; v3 corrects only that evidence-backed
-grammar. No additional research transfer or fresh Alfa E2E is required; the
-post-deployment E2E has passed and Alfa is closed.
+grammar. No additional research transfer or fresh Alfa E2E was required at that
+stage; the historical v3 partial-parser stage was closed after its production
+E2E.
 
 ## Alfa F5 v3 production E2E closeout
 
@@ -351,10 +382,10 @@ the observations below were not replayed or backfilled.
   current runtime remains `PARTIAL / UNKNOWN / UNKNOWN`. No fresh outgoing
   primary was correlated, so `OZON_OUTGOING_DEBIT_PROVEN=NO`.
 - **Alfa:** observation `353` / transaction `281` has exact F5 anchors and
-  controlled ground truth supporting outgoing/DEBIT semantics. The current
-  persisted/runtime Alfa v3 result remains `PARTIAL / UNKNOWN / UNKNOWN`;
-  this is evidence for a future separate parser revision, not a v3 runtime
-  change.
+  controlled ground truth supporting outgoing/DEBIT semantics. At that
+  historical stage, the persisted/runtime Alfa v3 result remained
+  `PARTIAL / UNKNOWN / UNKNOWN`; this was evidence for the later v4 revision,
+  not a v3 runtime change.
 - **Yandex Pro:** observation `343` / transaction `275` is
   `READY / INCOMING_TRANSFER / CREDIT`. No fresh Yandex Pro outgoing
   person-transfer notification or Pro-side notification for the controlled
@@ -471,7 +502,7 @@ value. Existing proven Sber incoming observations (`72`, `75`, `79`, and
 evidence did not justify an exact v3 grammar at that time: a broad title
 `contains` heuristic or a guessed balance rule would have risked a false
 positive. This is retained as historical forensic context; the two later
-controlled samples are documented in the current v3 section above.
+controlled samples are documented in the historical v3 section above.
 
 This remains historical forensic context. The later controlled v3 samples and
 the final fresh-ingestion E2E establish the active current-format contract;
@@ -1287,12 +1318,13 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-Sber v5 rollout is complete. Keep fresh Sber v5 E2E and VTB transport
-opportunistic until natural notifications occur; those waits do not block
-development. Continue with one narrow evidence-backed parser slice from the
-reviewed provider evidence, with each provider separately fixture-gated and
-fail-closed. Do not start reconciliation, INTERNAL_TRANSFER, business events,
-or ledger work in the same slice.
+Alfa v4 rollout is complete. Fresh Alfa v4 E2E is opportunistic and remains
+`PENDING_NATURAL_EVENT`; keep fresh Sber v5 E2E and VTB transport opportunistic
+as well. None of these waits blocks development. Continue with one separate
+narrow evidence-backed parser slice from the reviewed provider evidence, with
+each provider separately fixture-gated and fail-closed. Do not start
+reconciliation, INTERNAL_TRANSFER, business events, or ledger work in the same
+slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
