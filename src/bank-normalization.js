@@ -1,6 +1,5 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v5';
-export const SBER_PURCHASE_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
 
@@ -232,7 +231,7 @@ function normalizeSberPurchase({ occurred, amount, accountReference }) {
     accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: SBER_PURCHASE_NORMALIZATION_VERSION,
+    normalizationVersion: SBER_BANK_NORMALIZATION_VERSION,
   };
 }
 

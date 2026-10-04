@@ -41,7 +41,7 @@ const purchasePayload = ({ amount = '2468', balance = '123,45', suffix = '1357',
   };
 };
 
-test('Sber v5 preserves the exact controlled incoming structure', () => {
+test('Sber v6 preserves the exact controlled incoming structure', () => {
   for (const payload of [
     currentIncoming({ description: '+ 123 ₽ — Баланс: 6 789,01 ₽ Плат. счёт •• 0000' }),
     currentIncoming({ description: '+ 456 ₽ — Баланс: 7 890,12 ₽ Плат. счёт •• 0000' }),
@@ -55,11 +55,11 @@ test('Sber v5 preserves the exact controlled incoming structure', () => {
     assert.equal(result.accountReference, '0000');
     assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
     assert.equal(result.evidenceQuality, 'EXACT');
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
   }
 });
 
-test('Sber v5 accepts whitespace normalization without widening the envelope', () => {
+test('Sber v6 accepts whitespace normalization without widening the envelope', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming({
     title: '  Перевод\nпо СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.  ',
     description: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -68,7 +68,7 @@ test('Sber v5 accepts whitespace normalization without widening the envelope', (
   assert.equal(result.amount, '12.00');
 });
 
-test('Sber v5 prefers description and falls back to text', () => {
+test('Sber v6 preserves description precedence and text fallback for incoming', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentIncoming({
     description: 'not a current Sber envelope',
     text: '+ 12 ₽ — Баланс: 56,78 ₽ Плат. счёт •• 0000',
@@ -83,7 +83,7 @@ test('Sber v5 prefers description and falls back to text', () => {
   assert.equal(fallback.amount, '12.00');
 });
 
-test('Sber v5 rejects old v1 and v2 runtime envelopes', () => {
+test('Sber v6 rejects old v1 and v2 runtime envelopes', () => {
   for (const payload of [
     oldIncoming(),
     oldIncoming({ title: '💳 Он пришёл! Перевод от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ' }),
@@ -95,7 +95,7 @@ test('Sber v5 rejects old v1 and v2 runtime envelopes', () => {
   }
 });
 
-test('Sber v5 rejects title and body near misses fail closed', () => {
+test('Sber v6 rejects incoming title and body near misses fail closed', () => {
   const cases = [
     { title: 'ТЕСТ Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ.', description: currentIncoming().description },
     { title: 'Перевод по СБП от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ. ТЕСТ', description: currentIncoming().description },
@@ -123,13 +123,13 @@ test('Sber v5 rejects title and body near misses fail closed', () => {
   assert.notEqual(missingEventTime.normalizationStatus, 'READY');
 });
 
-test('Sber v5 keeps the second monetary field out of the transaction amount', () => {
+test('Sber v6 keeps the incoming second monetary field out of the transaction amount', () => {
   const result = normalizeBankEvent({ ...base, payload: currentIncoming() });
   assert.equal(result.amount, '123.00');
   assert.equal(result.currency, 'RUB');
 });
 
-test('Sber v5 is provider, adapter, and schema scoped', () => {
+test('Sber v6 preserves provider, adapter, and schema scope', () => {
   const otherProvider = normalizeBankEvent({ ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'other.bank' }, payload: currentIncoming() });
   assert.notEqual(otherProvider.normalizationStatus, 'READY');
 
@@ -150,7 +150,7 @@ test('Sber v5 is provider, adapter, and schema scoped', () => {
   }
 });
 
-test('Sber v5 uses envelope eventTime and does not mutate raw payload', () => {
+test('Sber v6 uses envelope eventTime and does not mutate raw payload', () => {
   const payload = currentIncoming();
   const before = JSON.stringify(payload);
   const result = normalizeBankEvent({ ...base, payload });
@@ -158,7 +158,7 @@ test('Sber v5 uses envelope eventTime and does not mutate raw payload', () => {
   assert.equal(JSON.stringify(payload), before);
 });
 
-test('Sber v5 outgoing extraction does not cross provider, adapter, or schema scope', () => {
+test('Sber v6 outgoing extraction does not cross provider, adapter, or schema scope', () => {
   const cases = [
     { provider: 'other.bank' },
     { adapter: 'BANK_API' },
@@ -176,7 +176,7 @@ test('Sber v5 outgoing extraction does not cross provider, adapter, or schema sc
   }
 });
 
-test('Sber v5 promotes only the exact proven outgoing evidence', () => {
+test('Sber v6 promotes only the exact proven outgoing evidence', () => {
   const result = normalizeBankEvent({ ...base, payload: currentOutgoing() });
   assert.equal(result.normalizationStatus, 'READY');
   assert.equal(result.evidenceQuality, 'EXACT');
@@ -186,12 +186,12 @@ test('Sber v5 promotes only the exact proven outgoing evidence', () => {
   assert.equal(result.currency, 'RUB');
   assert.equal(result.accountReference, '0271');
   assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
-  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v5');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
   assert.equal(result.merchant, null);
   assert.equal(result.counterparty, null);
 });
 
-test('Sber v5 outgoing preserves description precedence and whitespace-only text fallback', () => {
+test('Sber v6 outgoing preserves description precedence and whitespace-only text fallback', () => {
   const descriptionPreferred = normalizeBankEvent({ ...base, payload: currentOutgoing({
     description: 'not an outgoing Sber envelope',
   }) });
@@ -207,7 +207,7 @@ test('Sber v5 outgoing preserves description precedence and whitespace-only text
   assert.equal(fallback.normalizationStatus, 'READY');
 });
 
-test('Sber v5 rejects outgoing near misses without partial extraction', () => {
+test('Sber v6 rejects outgoing near misses without partial extraction', () => {
   const cases = [
     { title: 'Другая форма', description: currentOutgoing().description },
     { title: 'ТЕСТОВЫЙ СЕРВИС-ПЕРЕВОД', description: currentOutgoing().description },
