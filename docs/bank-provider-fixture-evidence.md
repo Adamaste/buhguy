@@ -17,7 +17,8 @@ Reviewed providers:
 The campaign proved transport through callback, Room, delivery, and backend for
 these providers. Sber evidence preserves the older v1/v2 envelopes as
 historical evidence and separately records the two newest controlled primary
-samples, observations 147 and 154, for the current v3 envelope. Their
+samples, observations 147 and 154, which established the exact incoming
+envelope that remains active under the current sber-bank-normalizer-v5. Their
 reference-only companions 149 and 152 remain unsupported and are never
 combined with a primary event.
 
@@ -82,7 +83,8 @@ on generic normalization. The sanitized v4 evidence is recorded in
 ### Sber
 
 The three historical/proven v1 incoming observations and observation 128 remain
-immutable historical evidence. They are not active runtime formats under v3.
+immutable historical evidence. They were not active runtime formats under v3
+and remain historical/non-active under current v5.
 The two newest controlled primary samples (observations 147 and 154) establish
 the current exact envelope:
 
