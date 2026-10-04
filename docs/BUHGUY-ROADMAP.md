@@ -45,10 +45,12 @@ Current sequence:
 
 1. stabilize Android bank notification capture/delivery
 2. implement bank-specific parsers and normalization
-3. build reconciliation between independent evidence sources
-4. expand account/balance and business-event semantics
-5. integrate sufficiently proven events into accounting/ledger workflows
-6. expand analytics, monitoring, and automation
+3. project proven bank cash-flow and movement semantics
+4. build/extend business-event semantics
+5. recognize internal transfers only with independently proven two-sided own-account evidence
+6. integrate sufficiently proven events into accounting/ledger workflows
+7. use bank-to-receipt matching as additional independent purchase evidence
+8. expand analytics, monitoring, and automation
 
 The exact live blocker and next command-level action are maintained in `docs/BUHGUY-CURRENT-HANDOFF.md`.
 
@@ -268,13 +270,13 @@ Provider-reported balance snapshots and balance-difference reconciliation are no
 **Status: Next; active development milestone**
 
 Reconciliation connects independent evidence without pretending they are the same fact.
-It is the active milestone after Person 1 account identity readiness,
-preserving the strategic order
-`bank evidence -> account identity -> reconciliation -> business events ->
-ledger integration`. Reconciliation is not yet implemented or proven in
-production. The near-term path begins with proven bank cash-flow and movement
-semantics, then extends business-event semantics, before using bank-to-receipt
-matching as additional independent purchase evidence.
+It remains a broad milestone after Person 1 account identity readiness, but
+its implementation order is explicit: project proven bank cash-flow and
+movement semantics first, extend business-event semantics second, recognize
+internal transfers only with independently proven two-sided own-account
+evidence, integrate sufficiently proven events into the ledger, and use
+bank-to-receipt matching as additional independent purchase evidence. The
+candidate-matching portion is not yet implemented or proven in production.
 
 Example candidate relationship:
 
@@ -322,8 +324,10 @@ Build normalized business events only when supported by evidence.
 
 The near-term sequence is to project proven bank cash-flow semantics first,
 extend business-event semantics second, recognize internal transfers only with
-independently proven two-sided own-account evidence, and integrate sufficiently
-proven events into the ledger. None of these stages is complete yet.
+independently proven two-sided own-account evidence, integrate sufficiently
+proven events into the ledger, and then use bank-to-receipt matching as
+additional independent purchase evidence. None of these stages is complete
+yet.
 
 Examples:
 
