@@ -17,15 +17,56 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `1d98a6fa3d307ead0cee2466c7725984f7d7d304` (PR #79 balanced bank journal projection merged; provider evidence remains fail-closed where reusable grammar is not proven)
+- Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, VTB transport, and fresh post-deployment provider E2E remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
-- Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 fresh purchase E2E is pending one natural event; Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: prepare a separate reviewed Sber purchase-normalizer slice from the proven reusable purchase family below. Keep parser implementation, deployment, replay/backfill, and production mutation out of this evidence closeout; Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope.
+- Next action: perform one fresh read-only Sber v6 purchase E2E after a natural event; do not manufacture a bank operation. Verify the Android callback -> Room/outbox -> backend observation -> bank transaction -> v6 normalization chain, then run only in-memory cash-flow and balanced-journal projections. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope.
+
+## Sber purchase normalizer v6 production rollout
+
+PR #81 was squash-merged into exact master
+`8e18a9d65c933045820b0771afbcdd1c28546956`; master CI run
+`37227747635` passed `test` with the PostgreSQL integration gate and full
+suite, `android`, and `android-signed`.
+
+The backend was promoted from the immutable `326`-file manifest artifact with
+archive SHA-256
+`abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`.
+Remote extraction, manifest hashes, atomic promotion, active release path,
+and service health all passed. The deployed runtime imports
+`sber-bank-normalizer-v6`. Schema migration `017` remained current; no
+migration, grant, credential, configuration, replay, backfill, or bank-row
+rewrite was performed.
+
+The sanitized v6 in-memory smoke returned
+`PURCHASE / DEBIT / READY / EXACT`; insufficient-funds and transfer-shaped
+near-misses remained fail-closed. Production bank counts were unchanged by
+the deploy: `330` observations with max id `415` and `330` transactions with
+max id `331`. The latest Sber observation/transaction at baseline was
+`415/331`.
+
+The exact signed collector artifact from master CI run `37227747635` was
+installed in place on `R5GL30GK60F`. Artifact id `11313270332` produced APK
+SHA-256
+`95de6007e136d5cb52a005c8588c2701d774e5036256244d74648ec938a945ac`;
+the CI signing verification reported certificate SHA-256
+`cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a`.
+Application data, source/server settings, allowlist, credential state, and
+notification-listener access were preserved. The package started without a
+crash; the outbox baseline is `0` pending events and capture diagnostics are
+available.
+
+`PROVENANCE_CAPTURE_READY=YES`. The fresh correlation baseline was recorded
+at `2026-10-04T22:43:36+03:00`: total/max observations `330/415`,
+total/max transactions `330/331`, latest Sber `415/331`. No new bank
+operation has been performed for this rollout. The next action is to wait
+for one ordinary natural Sber purchase, then inspect only the new evidence
+read-only and stop before any accounting persistence or receipt matching.
 
 ## Person 1 account-identity readiness audit
 
