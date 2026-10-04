@@ -409,10 +409,15 @@ the observations below were not replayed or backfilled.
   `UNKNOWN / CREDIT / READY / EXACT`. Observation `350` / transaction `280`
   is fresh outgoing-looking evidence with inconsistent controlled-amount
   correlation; therefore `TBANK_OUTGOING_DEBIT_PROVEN=NO`.
-- **Ozon:** observation `339` / transaction `274` has controlled evidence
-  supporting incoming/CREDIT semantics for its observed family, while the
-  current runtime remains `PARTIAL / UNKNOWN / UNKNOWN`. No fresh outgoing
-  primary was correlated, so `OZON_OUTGOING_DEBIT_PROVEN=NO`.
+- **Ozon:** observation `339` / transaction `273` is the controlled primary;
+  observation `341` / transaction `274` is its separate empty companion, and
+  both share the controlled capture time. The persisted primary remains
+  `PARTIAL / UNKNOWN / UNKNOWN`. Controlled evidence proves `CREDIT` for
+  observation `339`, and its explicit lexical markers support
+  `INCOMING_TRANSFER` for that observation, but the reusable exact grammar is
+  not proven and the primary does not match the historical Ozon v1 fixture
+  family. No v2 sanitized fixture or runtime parser was authorized, and no
+  fresh outgoing primary was correlated, so `OZON_OUTGOING_DEBIT_PROVEN=NO`.
 - **Alfa:** observation `353` / transaction `281` has exact F5 anchors and
   controlled ground truth supporting outgoing/DEBIT semantics. At that
   historical stage, the persisted/runtime Alfa v3 result remained
@@ -1352,11 +1357,14 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 T-Bank v2 rollout is complete. Fresh T-Bank v2 E2E remains
 `PENDING_NATURAL_EVENT`; fresh Alfa v4 E2E, Sber v5 E2E, and VTB transport
-remain opportunistic as well. None of these waits blocks development. Continue
-with one separate narrow evidence-backed parser slice from the reviewed
-provider evidence, with each provider separately fixture-gated and fail-closed.
-Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work
-in the same slice.
+remain opportunistic as well. Ozon observation `339` provides controlled
+incoming/CREDIT evidence, but its reusable grammar remains pending natural
+corroboration and does not block development. Do not manufacture another bank
+operation solely for Ozon evidence. Continue with one separate narrow
+evidence-backed parser slice from the reviewed provider evidence, with each
+provider separately fixture-gated and fail-closed. Do not start
+reconciliation, INTERNAL_TRANSFER, business events, or ledger work in the same
+slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
