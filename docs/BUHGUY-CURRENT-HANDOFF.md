@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-04
 - Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 fresh purchase E2E is pending one natural event; Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: perform one fresh read-only Sber v6 purchase E2E after a natural event; do not manufacture a bank operation. Verify the Android callback -> Room/outbox -> backend observation -> bank transaction -> v6 normalization chain, then run only in-memory cash-flow and balanced-journal projections. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope.
+- Next action: prepare one-at-a-time real purchase validation for Alfa, starting with a clean Android/backend baseline before the purchase. Keep the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching; Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -59,14 +59,45 @@ the CI signing verification reported certificate SHA-256
 Application data, source/server settings, allowlist, credential state, and
 notification-listener access were preserved. The package started without a
 crash; the outbox baseline is `0` pending events and capture diagnostics are
-available.
+available. The APK was installed in place with `adb install -r`; the earlier
+`ANDROID_CHANGED=NO` rollout summary field was erroneous and does not describe
+this verified in-place update.
 
 `PROVENANCE_CAPTURE_READY=YES`. The fresh correlation baseline was recorded
 at `2026-10-04T22:43:36+03:00`: total/max observations `330/415`,
-total/max transactions `330/331`, latest Sber `415/331`. No new bank
-operation has been performed for this rollout. The next action is to wait
-for one ordinary natural Sber purchase, then inspect only the new evidence
-read-only and stop before any accounting persistence or receipt matching.
+total/max transactions `330/331`, latest Sber `415/331`.
+
+## Sber purchase normalizer v6 production E2E closeout
+
+One ordinary user purchase produced one primary financial observation,
+`420`, linked to transaction `334`, plus companion/non-ready observations
+`416`, `418`, and `422`. These four rows represent one economic purchase, not
+four purchases. Android collector/backend transport passed, and the primary
+persisted as `sber-bank-normalizer-v6`, `PURCHASE`, `DEBIT`, `READY`,
+`EXACT`, with currency `RUB`. The controlled amount correlation passed, but
+the real amount is intentionally not retained in repository artifacts.
+
+The purchase reference kind remains `NULL`/unknown. Account resolution remains
+`UNKNOWN` with `financial_account_id=NULL`; no card/account identity
+inference was performed. Historical observations through `415` were not
+rewritten. Production totals after natural ingestion were `334` observations
+and `334` transactions; these are totals, not maximum ids.
+
+The persisted transaction was also checked only in memory through the merged
+projection path:
+
+- bank transaction -> `PROJECTED` cash-flow projection with
+  `movementType=PURCHASE`;
+- balanced journal projection -> `Dr UNCLASSIFIED_PURCHASE` and
+  `Cr UNRESOLVED_BANK_ACCOUNT`.
+
+The journal projection was read-only and in-memory. No ledger, business-event,
+or reconciliation persistence occurred; no manual account resolution,
+replay, or backfill occurred.
+
+`SBER_V6_PURCHASE_E2E=PASS` and no additional Sber purchase is required
+specifically for validation. The next operational validation is Alfa, using
+one natural purchase only after a clean Android/backend baseline.
 
 ## Person 1 account-identity readiness audit
 
