@@ -37,6 +37,11 @@ const loadSberV5Fixture = async () => JSON.parse(await readFile(
   'utf8',
 ));
 
+const loadTbankV2Fixture = async () => JSON.parse(await readFile(
+  path.join(root, 'fixtures', 'bank-normalization', 'tbank', 'evidence-v2.json'),
+  'utf8',
+));
+
 const loadAlfaV2Fixture = async () => JSON.parse(await readFile(
   path.join(root, 'fixtures', 'bank-normalization', 'alfa', 'evidence-v2.json'),
   'utf8',
@@ -64,7 +69,9 @@ test('real-derived bank fixtures are sanitized, provider-scoped, and fail closed
 
 test('sanitized fixtures contain no production provider payload identifiers', async () => {
   for (const [name] of providers) {
-    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json'] : ['evidence-v1.json'];
+    const versions = name === 'sber' ? ['evidence-v1.json', 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json', 'evidence-v5.json']
+      : name === 'tbank' ? ['evidence-v1.json', 'evidence-v2.json']
+        : ['evidence-v1.json'];
     const fixtureVersions = name === 'alfa' ? [...versions, 'evidence-v2.json', 'evidence-v3.json', 'evidence-v4.json'] : versions;
     for (const version of fixtureVersions) {
       const text = await readFile(path.join(root, 'fixtures', 'bank-normalization', name, version), 'utf8');
@@ -147,6 +154,24 @@ test('T-Bank fixture records only the proven top-up partial envelope', async () 
   assert.equal(topUp.evidence.eventType, 'NOT_PROVEN');
   assert.equal(topUp.evidence.direction, 'NOT_PROVEN');
   assert.equal(topUp.evidence.accountReferenceStructure, 'NOT_PROVEN');
+});
+
+test('T-Bank v2 fixture records proven CREDIT without an event subtype or identity reference', async () => {
+  const fixture = await loadTbankV2Fixture();
+  const topUp = fixture.clusters.find((cluster) => cluster.id === 'tbank-top-up-exact-v2');
+  assert.equal(fixture.provider, 'com.idamob.tinkoff.android');
+  assert.equal(fixture.normalizationVersion, 'tbank-bank-normalizer-v2');
+  assert.equal(fixture.controlledTopUpIndependentSampleCount, 3);
+  assert.equal(fixture.productionE2eTopUpSampleCount, 1);
+  assert.equal(fixture.topUpPrimaryObservationCount, 4);
+  assert.equal(topUp.observationCount, 4);
+  assert.equal(topUp.readyCapable, true);
+  assert.equal(topUp.evidence.eventType, 'NOT_PROVEN');
+  assert.equal(topUp.evidence.direction, 'CREDIT');
+  assert.equal(topUp.evidence.amountGrammar, 'integer RUB position before Доступно');
+  assert.equal(topUp.evidence.balanceGrammar, 'decimal-comma RUB after Доступно, ignored');
+  assert.equal(topUp.evidence.accountReferenceStructure, 'NOT_PROVEN');
+  assert.ok(fixture.clusters.filter((cluster) => cluster.id !== topUp.id).every((cluster) => cluster.readyCapable === false));
 });
 
 test('Alfa fixture records only the proven F5 partial envelope', async () => {

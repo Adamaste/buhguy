@@ -1,6 +1,6 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v5';
-export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v1';
+export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
@@ -122,13 +122,13 @@ export function normalizeTbankBankEvent(input) {
     occurredAt: occurred,
     amount: `${match[1]}.00`,
     currency: 'RUB',
-    direction: 'UNKNOWN',
+    direction: 'CREDIT',
     merchant: null,
     counterparty: null,
     accountReference: null,
     accountReferenceKind: null,
-    normalizationStatus: 'PARTIAL',
-    evidenceQuality: 'PARTIAL',
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
     normalizationVersion: TBANK_BANK_NORMALIZATION_VERSION,
   };
 }

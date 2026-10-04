@@ -28,7 +28,8 @@ The fixtures under `tests/fixtures/bank-normalization/` preserve only field
 presence, whitespace/punctuation shape, and safe marker categories. Values are
 synthetic and cannot be correlated with a user's operation. The exact proven
 Sber incoming/outgoing clusters and the exact Alfa F5 v4 clusters are marked
-`readyCapable: true`; T-Bank remains partial and Ozon remains generic/fail-closed.
+`readyCapable: true`; the exact T-Bank top-up v2 cluster is also ready-capable,
+while Ozon remains generic/fail-closed.
 All unsupported clusters remain fail-closed with `eventType`/`direction`
 `NOT_PROVEN`.
 
@@ -36,7 +37,7 @@ All unsupported clusters remain fail-closed with `eventType`/`direction`
 
 The historical corpus contains 51 observations across 22 exact structural
 families. Most money, informational, and empty families remain fail-closed.
-Two independent controlled top-up samples establish one narrow partial family:
+Three independent controlled top-up samples establish one narrow exact family:
 
 - body: `Пополнение на <integer> ₽, счет RUB. <dynamic words> Доступно <comma-decimal> ₽`;
 - title is optional and is not part of the dispatch grammar;
@@ -45,10 +46,17 @@ Two independent controlled top-up samples establish one narrow partial family:
   value and is ignored;
 - event time comes from the Android envelope `eventTime`.
 
-The provider-specific result is always `PARTIAL` with `eventType=UNKNOWN` and
-`direction=UNKNOWN`. No merchant, counterparty, account, card, or ownership
-inference is performed. Malformed, near-miss, historical, informational, and
-empty families remain fail-closed; no READY T-Bank parser is authorized.
+The historical `tbank-bank-normalizer-v1` result was always `PARTIAL` with
+`eventType=UNKNOWN` and `direction=UNKNOWN`. The active
+`tbank-bank-normalizer-v2` reuses the exact same body boundary and promotes
+only the proven incoming cash-flow direction: exact top-up matches are
+`READY`/`EXACT` with `direction=CREDIT`, while `eventType=UNKNOWN` because the
+evidence does not establish a unique business subtype for every notification
+in the family. The corpus contains three controlled independent top-up samples
+and one production E2E top-up sample, represented by four primary observations.
+No merchant, counterparty, account, card, or ownership inference is performed.
+Malformed, near-miss, historical, informational, and empty families remain
+fail-closed.
 
 ### Alfa Bank
 
@@ -131,14 +139,17 @@ unobserved wording are `NOT_PROVEN`, not invented fixtures.
 
 Generic normalization, Yandex normalization, deduplication, and conflict
 semantics remain unchanged. The registered provider-specific runtime paths are
-Yandex, Sber v5, T-Bank v1 partial, and Alfa v4; Ozon remains generic/fail-closed.
+Yandex, Sber v5, T-Bank v2 exact top-up CREDIT, and Alfa v4; Ozon remains
+generic/fail-closed.
 
 ## Gate
 
 The historical `PARSER_V3_POSSIBLE=YES` gate applied only to the then-current
 Sber incoming-transfer envelope recorded in `evidence-v3.json`; it is not the
 current project gate. Current fixture authorization is provider-specific:
-exact Sber incoming/outgoing v5 clusters and exact Alfa F5 v4 clusters are
-ready-capable, T-Bank v1 remains `PARTIAL` with unknown event semantics, and
-Ozon remains generic/fail-closed. Existing historical fixtures and rows remain
-immutable; no historical backfill or parser inference for them is allowed.
+exact Sber incoming/outgoing v5 clusters, exact Alfa F5 v4 clusters, and the
+exact T-Bank v2 top-up cluster are ready-capable. T-Bank v1 remains a
+historical `PARTIAL` revision; T-Bank v2 keeps event semantics fail-closed at
+`eventType=UNKNOWN` while proving `direction=CREDIT`. Ozon remains
+generic/fail-closed. Existing historical fixtures and rows remain immutable;
+no historical backfill or parser inference for them is allowed.

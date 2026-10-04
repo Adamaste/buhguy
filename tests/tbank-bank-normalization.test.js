@@ -20,21 +20,24 @@ function normalize(payload, overrides = {}) {
   return normalizeBankEvent({ ...base, ...overrides, payload });
 }
 
-test('T-Bank top-up accepts title absent and title present variants', () => {
+test('T-Bank v2 top-up promotes the exact proven envelope with CREDIT only', () => {
   for (const payload of [
     { description: topUpBody() },
     { title: 'ТЕСТОВЫЙ-БАНК', description: topUpBody() },
   ]) {
     const result = normalize(payload);
-    assert.equal(result.normalizationVersion, 'tbank-bank-normalizer-v1');
+    assert.equal(result.normalizationVersion, 'tbank-bank-normalizer-v2');
     assert.equal(result.amount, '2468.00');
     assert.equal(result.currency, 'RUB');
     assert.equal(result.eventType, 'UNKNOWN');
-    assert.equal(result.direction, 'UNKNOWN');
-    assert.equal(result.normalizationStatus, 'PARTIAL');
-    assert.equal(result.evidenceQuality, 'PARTIAL');
+    assert.equal(result.direction, 'CREDIT');
+    assert.equal(result.normalizationStatus, 'READY');
+    assert.equal(result.evidenceQuality, 'EXACT');
     assert.equal(result.occurredAt, '2026-10-01T11:59:00.000Z');
     assert.equal(result.accountReference, null);
+    assert.equal(result.accountReferenceKind, null);
+    assert.equal(result.merchant, null);
+    assert.equal(result.counterparty, null);
   }
 });
 
@@ -42,12 +45,17 @@ test('T-Bank top-up extracts only the integer transaction amount, never the bala
   const result = normalize({ description: topUpBody('1357', '8 642,10') });
   assert.equal(result.amount, '1357.00');
   assert.equal(result.currency, 'RUB');
+  assert.equal(result.eventType, 'UNKNOWN');
+  assert.equal(result.direction, 'CREDIT');
+  assert.equal(result.normalizationStatus, 'READY');
+  assert.equal(result.evidenceQuality, 'EXACT');
 });
 
 test('T-Bank top-up prefers description and falls back from whitespace-only description to text', () => {
   const preferred = normalize({ description: 'not a proven T-Bank top-up', text: topUpBody() });
   assert.equal(preferred.amount, null);
   assert.equal(preferred.normalizationStatus, 'PARTIAL');
+  assert.equal(preferred.direction, 'UNKNOWN');
 
   const fallback = normalize({ description: ' \n\t ', text: topUpBody() });
   assert.equal(fallback.amount, '2468.00');
@@ -70,20 +78,25 @@ test('T-Bank top-up rejects malformed or unproven near-miss bodies', () => {
     assert.equal(result.currency, null);
     assert.equal(result.eventType, 'UNKNOWN');
     assert.equal(result.direction, 'UNKNOWN');
+    assert.notEqual(result.normalizationStatus, 'READY');
+    assert.notEqual(result.evidenceQuality, 'EXACT');
   }
 });
 
 test('T-Bank top-up rejects missing amount, unsupported currency, and missing event time', () => {
   const missingAmount = normalize({ description: topUpBody().replace('2468 ₽', ' ₽') });
   assert.equal(missingAmount.amount, null);
+  assert.equal(missingAmount.direction, 'UNKNOWN');
 
   const unsupportedCurrency = normalize({ description: topUpBody().replaceAll('RUB', 'USD') });
   assert.equal(unsupportedCurrency.amount, null);
   assert.equal(unsupportedCurrency.currency, null);
+  assert.equal(unsupportedCurrency.direction, 'UNKNOWN');
 
   const missingEventTime = normalize({ description: topUpBody() }, { eventTime: null });
   assert.equal(missingEventTime.amount, null);
   assert.equal(missingEventTime.normalizationStatus, 'PARTIAL');
+  assert.equal(missingEventTime.direction, 'UNKNOWN');
 });
 
 test('T-Bank top-up dispatch is isolated by provider, adapter, and schema version', () => {
@@ -112,6 +125,7 @@ test('T-Bank empty companion and informational families remain fail-closed', () 
   assert.equal(informational.currency, null);
   assert.equal(informational.eventType, 'UNKNOWN');
   assert.equal(informational.direction, 'UNKNOWN');
+  assert.notEqual(informational.normalizationStatus, 'READY');
 });
 
 test('T-Bank top-up normalization does not mutate raw payload', () => {

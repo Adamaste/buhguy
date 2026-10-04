@@ -1,0 +1,126 @@
+{
+  "provider": "com.idamob.tinkoff.android",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "tbank-bank-normalizer-v2",
+  "previousStructuralRevision": "tbank-bank-normalizer-v1",
+  "semanticRevision": "PROVEN_INCOMING_CREDIT_ONLY",
+  "controlledTopUpIndependentSampleCount": 3,
+  "productionE2eTopUpSampleCount": 1,
+  "topUpPrimaryObservationCount": 4,
+  "clusters": [
+    {
+      "id": "tbank-standard-money-balance-v2",
+      "observationCount": 22,
+      "fields": {
+        "title": { "present": true, "shape": "word[-word] or word" },
+        "description": { "present": true, "shape": "words, integer-RUB, balance-like marker, decimal-comma-RUB" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "RUB symbol present",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-legacy-money-variants-v2",
+      "observationCount": 5,
+      "fields": {
+        "title": { "present": "varies", "shape": "unproven historical variants" },
+        "description": { "present": true, "shape": "unproven monetary variants" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": "varies" }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "RUB marker observed",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-top-up-exact-v2",
+      "observationCount": 4,
+      "fields": {
+        "title": { "present": "optional", "shape": "absent or provider title" },
+        "description": { "present": true, "shape": "Пополнение на integer-RUB, счет RUB, dynamic words, Доступно decimal-comma-RUB" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "CREDIT",
+        "amountGrammar": "integer RUB position before Доступно",
+        "currencyGrammar": "RUB marker present",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "balanceGrammar": "decimal-comma RUB after Доступно, ignored",
+        "accountReferenceStructure": "NOT_PROVEN",
+        "semanticBoundary": "incoming cash-flow direction only; business subtype remains UNKNOWN"
+      },
+      "readyCapable": true
+    },
+    {
+      "id": "tbank-informational-or-non-money-v2",
+      "observationCount": 13,
+      "fields": {
+        "title": { "present": "varies", "shape": "informational or non-money" },
+        "description": { "present": true, "shape": "informational/non-money text" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "tbank-empty-payload-v2",
+      "observationCount": 12,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "none",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    }
+  ],
+  "acceptance": {
+    "positiveFormats": "exact top-up envelope only",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
