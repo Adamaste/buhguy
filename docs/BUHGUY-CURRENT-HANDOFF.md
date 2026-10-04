@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `c27f1d56ddba55b22c797ffcfc8b0e7e6741883e` (PR #69 merge; Alfa normalizer v4 is deployed in production)
-- Current phase: Alfa v4 production rollout is complete. The exact F5 outgoing family is deployed as `OUTGOING_TRANSFER / DEBIT / READY / EXACT`; Android was not updated and no fresh Alfa v4 notification has been claimed after deployment
-- Current blocker: No rollout blocker. Alfa v4 fresh E2E remains `PENDING_NATURAL_EVENT`; Sber v5 fresh E2E and VTB transport remain opportunistic only. Do not manufacture a bank operation solely for validation. Historical v3 Alfa rows remain immutable
-- Production artifact: exact master `c27f1d56ddba55b22c797ffcfc8b0e7e6741883e`, 316 files, archive SHA-256 `a6a06f5a5f2fa19275ab5254b52e03ff19cf2f2bde6d8bba605e412f3662fa46`; installed manifest and hashes match, service health passed
+- Current implementation baseline: `80b5c6aa405700e890d85dbbd363ee13badfc3c1` (PR #71 merge; T-Bank normalizer v2 is deployed in production)
+- Current phase: T-Bank v2 exact top-up promotion is deployed as `UNKNOWN / CREDIT / READY / EXACT`; no fresh post-deployment T-Bank v2 notification has been claimed
+- Current blocker: No rollout blocker. T-Bank v2 fresh E2E remains `PENDING_NATURAL_EVENT`; Alfa v4 fresh E2E, Sber v5 fresh E2E, and VTB transport remain opportunistic only. Do not manufacture a bank operation solely for validation. Historical T-Bank v1 rows remain immutable
+- Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: wait for a natural Alfa F5 notification if production E2E evidence is needed; do not create a transfer solely for validation. Keep Sber v5 fresh E2E and VTB transport opportunistic. Take the next narrow fixture-backed parser slice only as a separate reviewed change; do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
+- Next action: wait for a natural T-Bank v2 exact top-up notification if production E2E evidence is needed; do not create a transfer solely for validation. Keep Alfa v4 and Sber v5 fresh E2E plus VTB transport opportunistic. Take the next narrow fixture-backed parser slice only as a separate reviewed change; do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
 
 ## Alfa normalizer v4 production deployment
 
@@ -246,6 +246,37 @@ provider evidence, beginning with read-only corpus forensic. Ozon remains on
 the current deferred list and its runtime path remains generic/fail-closed.
 A separate real T-Bank card-purchase sample can be investigated later when it
 naturally occurs.
+
+## T-Bank normalizer v2 production deployment
+
+PR #71 was squash-merged into exact master
+`80b5c6aa405700e890d85dbbd363ee13badfc3c1`. Master CI run
+`37198710190` passed `test` with the PostgreSQL integration gate, `android`,
+and `android-signed`.
+
+The backend was promoted from a 317-file immutable artifact with archive
+SHA-256
+`f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`.
+The pre-deploy rollback backup, staged artifact integrity, atomic promotion,
+installed manifest/hash verification, and service health all passed. The
+runtime unit now executes the exact `80b5...` release. Schema migration 017
+remains current; no migration, grant, credential, Android, replay, or
+backfill operation was performed.
+
+The deployed non-mutating runtime smoke returned
+`UNKNOWN / CREDIT / READY / EXACT` with `RUB`, no account reference, and no
+account-reference kind for the exact sanitized top-up envelope. A
+representative near-miss remained `UNKNOWN / PARTIAL` with no extracted amount.
+Production bank counts and max ids were unchanged across deployment
+(`307/307`, max observation `384`, max transaction `308`).
+
+Historical T-Bank observation `335` / transaction `269` and production E2E
+observation `221` / transaction `175` retain their original
+`tbank-bank-normalizer-v1`, `PARTIAL`, `UNKNOWN` event type, and `UNKNOWN`
+direction projections. They were not replayed or backfilled. No account/card
+identity inference was added. A fresh post-deployment T-Bank v2 E2E remains
+`PENDING_NATURAL_EVENT`; no new bank operation should be created solely for
+validation.
 
 ## Bank Assistant semantic layer activated
 
