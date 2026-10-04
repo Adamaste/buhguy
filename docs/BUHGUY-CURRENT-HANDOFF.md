@@ -199,7 +199,7 @@ side effects were created. Alfa F5 is closed. At that historical stage, the
 next provider stage was Yandex transfer/top-up forensic; card-purchase evidence
 was deferred until a real purchase occurred naturally.
 
-## T-Bank top-up partial parser evidence
+## T-Bank v1 top-up partial parser evidence (historical)
 
 The T-Bank forensic corpus covered 51 historical observations across 22 exact
 structural families. Two independent controlled top-up observations, `214` and
@@ -212,12 +212,12 @@ parser. The exact proven body boundary is:
 The first integer-RUB position is proven transaction amount, the second
 comma-decimal position after `Доступно` is a separate balance/availability
 value and is ignored, and Android envelope `eventTime` is used for occurredAt.
-The narrow `tbank-bank-normalizer-v1` is authorized only as `PARTIAL`; it must
-preserve `eventType=UNKNOWN`, `direction=UNKNOWN`, and null account/card
-references. No READY parser or ownership inference is authorized. No further
-controlled top-up sample is required.
+The narrow `tbank-bank-normalizer-v1` was authorized only as `PARTIAL`; it
+preserved `eventType=UNKNOWN`, `direction=UNKNOWN`, and null account/card
+references. At that stage, no READY parser or ownership inference was
+authorized. No further controlled top-up sample was required.
 
-## T-Bank top-up partial normalizer production E2E
+## T-Bank v1 top-up partial normalizer production E2E (historical)
 
 The exact master `8e56566717e346fb56371ddcb9216de68777bade` was promoted
 through the immutable runtime procedure after a dependency-closure install.
@@ -402,12 +402,13 @@ the observations below were not replayed or backfilled.
   rows. The exact outgoing envelope is now classified by v5 as
   `OUTGOING_TRANSFER / DEBIT / READY / EXACT`; fresh post-deploy E2E remains
   `PENDING_NATURAL_EVENT`.
-- **T-Bank:** observation `335` / transaction `269` has controlled evidence
-  for incoming money/CREDIT semantics for its exact top-up family, while the
-  current persisted/runtime result remains `PARTIAL / UNKNOWN / UNKNOWN`.
-  Observation `350` / transaction `280` is fresh outgoing-looking evidence
-  with inconsistent controlled-amount correlation; therefore
-  `TBANK_OUTGOING_DEBIT_PROVEN=NO`.
+- **T-Bank:** observation `335` / transaction `269` remains historical
+  persisted v1 data with `PARTIAL / UNKNOWN / UNKNOWN` semantics. Its
+  controlled evidence authorized the later current v2 semantic promotion;
+  current exact top-up runtime semantics are
+  `UNKNOWN / CREDIT / READY / EXACT`. Observation `350` / transaction `280`
+  is fresh outgoing-looking evidence with inconsistent controlled-amount
+  correlation; therefore `TBANK_OUTGOING_DEBIT_PROVEN=NO`.
 - **Ozon:** observation `339` / transaction `274` has controlled evidence
   supporting incoming/CREDIT semantics for its observed family, while the
   current runtime remains `PARTIAL / UNKNOWN / UNKNOWN`. No fresh outgoing
@@ -1349,13 +1350,13 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-Alfa v4 rollout is complete. Fresh Alfa v4 E2E is opportunistic and remains
-`PENDING_NATURAL_EVENT`; keep fresh Sber v5 E2E and VTB transport opportunistic
-as well. None of these waits blocks development. Continue with one separate
-narrow evidence-backed parser slice from the reviewed provider evidence, with
-each provider separately fixture-gated and fail-closed. Do not start
-reconciliation, INTERNAL_TRANSFER, business events, or ledger work in the same
-slice.
+T-Bank v2 rollout is complete. Fresh T-Bank v2 E2E remains
+`PENDING_NATURAL_EVENT`; fresh Alfa v4 E2E, Sber v5 E2E, and VTB transport
+remain opportunistic as well. None of these waits blocks development. Continue
+with one separate narrow evidence-backed parser slice from the reviewed
+provider evidence, with each provider separately fixture-gated and fail-closed.
+Do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work
+in the same slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
