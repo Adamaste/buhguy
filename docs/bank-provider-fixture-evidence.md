@@ -124,9 +124,25 @@ near-miss envelopes remain fail-closed.
 
 ### Ozon Finance
 
-One family contains a RUB-symbol/decimal form with title and body fields; another
-has an empty payload. Event type, direction, merchant, and counterparty are not
-proven.
+The historical `evidence-v1.json` records a distinct decimal-dot RUB monetary
+family with title and body fields, plus an empty-payload family; those fixture
+clusters remain immutable. Controlled observation `339` / transaction `273`
+belongs to a different integer-RUB/balance family. Observation `341` /
+transaction `274` is the separate empty companion from the same controlled
+capture time.
+
+For observation `339`, the description and text are structurally equivalent,
+contain an integer-RUB monetary position followed by a separate
+balance/availability monetary position, and carry explicit top-up/SBP/incoming
+markers. The controlled operation proves `CREDIT` for that observation, and
+the lexical markers support `INCOMING_TRANSFER` at the observation level. No
+account, card, reference, merchant, counterparty, or ownership evidence is
+proven. The exact reusable grammar is not proven, the independent matching
+sample count is unknown, and observation `339` does not match the historical
+v1 family. Therefore no `evidence-v2.json`, `readyCapable` cluster, or runtime
+parser is authorized yet; Ozon remains generic/fail-closed. No additional bank
+operation should be manufactured solely to obtain another Ozon sample. A
+naturally occurring matching notification may later close the grammar gate.
 
 ## Future parser acceptance matrix
 
