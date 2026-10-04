@@ -197,7 +197,7 @@ integration('Sber outgoing v5 evidence resolves only the proven account referenc
   }
 });
 
-integration('Alfa partial reference does not infer account identity without a proven reference kind', { concurrency: false }, async () => {
+integration('Alfa exact F5 READY reference does not infer account identity without a proven reference kind', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const sourceKey = `alfa-f5-${process.pid}-${Date.now()}`;
   let accountId;
@@ -219,7 +219,11 @@ integration('Alfa partial reference does not infer account identity without a pr
     });
     assert.equal(created.normalization.accountReference, '1111');
     assert.equal(created.normalization.accountReferenceKind, null);
-    assert.equal(created.normalization.normalizationVersion, 'alfa-bank-normalizer-v3');
+    assert.equal(created.normalization.normalizationVersion, 'alfa-bank-normalizer-v4');
+    assert.equal(created.normalization.normalizationStatus, 'READY');
+    assert.equal(created.normalization.evidenceQuality, 'EXACT');
+    assert.equal(created.normalization.eventType, 'OUTGOING_TRANSFER');
+    assert.equal(created.normalization.direction, 'DEBIT');
     assert.equal(created.identityResolution.account.resolutionState, 'UNKNOWN');
     assert.equal(created.identityResolution.account.financialAccountId, null);
   } finally {

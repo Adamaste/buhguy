@@ -76,15 +76,22 @@ run a production backfill.
 The `ru.alfabank.mobile.android` parser is intentionally narrow. The historical
 `alfa-bank-normalizer-v1` and v2 revisions used an inaccurate synthetic
 reconstruction of the production body grammar and remain historical revisions.
-The active `alfa-bank-normalizer-v3` uses the real-derived four-section body
-skeleton: title-case transfer and recipient anchors, two proven masked-reference
-positions, one comma-decimal(two digits) uppercase-RUB body amount, and the
-observed trailing time section. It requires normalized title/body monetary
-equality, both reference sections, and Android envelope event time. It returns
-`PARTIAL` with `eventType=UNKNOWN`, `direction=UNKNOWN`, and
-`accountReferenceKind=NULL`; no card/account kind or ownership is inferred.
-Other Alfa families, metadata mismatches, malformed variants, and ambiguous
-notifications remain on the generic normalizer.
+The historical `alfa-bank-normalizer-v3` used the real-derived four-section
+body skeleton: title-case transfer and recipient anchors, two proven
+masked-reference positions, one comma-decimal(two digits) uppercase-RUB body
+amount, and the observed trailing time section. It required normalized
+title/body monetary equality, both reference sections, and Android envelope
+event time, but returned `PARTIAL` with `eventType=UNKNOWN` and
+`direction=UNKNOWN`.
+
+The active `alfa-bank-normalizer-v4` keeps that exact v3 grammar unchanged and
+promotes only the complete F5 envelope to `OUTGOING_TRANSFER` / `DEBIT` with
+`READY` / `EXACT`, based on additional controlled outgoing evidence. It
+preserves amount, `RUB`, event time, and the first proven reference value while
+keeping `accountReferenceKind=NULL`; no card/account kind, ownership, or
+destination identity is inferred. Other Alfa families, metadata mismatches,
+malformed variants, and ambiguous notifications remain on the generic
+normalizer. Historical v3 rows are not rewritten or backfilled.
 
 ## Ingestion boundary
 

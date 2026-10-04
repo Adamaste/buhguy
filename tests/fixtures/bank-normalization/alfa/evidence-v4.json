@@ -1,0 +1,110 @@
+{
+  "provider": "ru.alfabank.mobile.android",
+  "source": "real-derived-sanitized",
+  "normalizationVersion": "alfa-bank-normalizer-v4",
+  "previousStructuralRevision": "alfa-bank-normalizer-v3",
+  "semanticRevision": "EXACT_F5_OUTGOING_PROMOTION",
+  "corpusObservationCount": 24,
+  "forensicFamilyCount": 4,
+  "historicalExactStructuralFamilyCount": 11,
+  "f5PrimaryObservationCount": 8,
+  "controlledF5IndependentSampleCount": 5,
+  "clusters": [
+    {
+      "id": "alfa-f5-outgoing-integer-title-exact-v4",
+      "observationCount": 5,
+      "fields": {
+        "title": { "present": true, "shape": "minus integer RUB symbol" },
+        "description": { "present": true, "shape": "four exact semicolon-separated sections with title-case transfer/recipient anchors, two masked-reference positions, and one comma-decimal RUB amount" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "OUTGOING_TRANSFER",
+        "direction": "DEBIT",
+        "amountGrammar": "title amount equals body comma-decimal(two digits) RUB amount",
+        "currencyGrammar": "RUB symbol in title and uppercase RUB code in body",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "first masked-reference position with four digits; kind NOT_PROVEN",
+        "semanticBasis": "additional controlled outgoing sample matched the unchanged exact F5 envelope"
+      },
+      "readyCapable": true
+    },
+    {
+      "id": "alfa-f5-outgoing-decimal-title-exact-v4",
+      "observationCount": 3,
+      "fields": {
+        "title": { "present": true, "shape": "minus comma-decimal(two digits) RUB symbol" },
+        "description": { "present": true, "shape": "same four exact semicolon-separated sections and reference positions as integer-title F5" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "OUTGOING_TRANSFER",
+        "direction": "DEBIT",
+        "amountGrammar": "title amount equals body comma-decimal(two digits) RUB amount",
+        "currencyGrammar": "RUB symbol in title and uppercase RUB code in body",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "first masked-reference position with four digits; kind NOT_PROVEN",
+        "semanticBasis": "same unchanged exact F5 body grammar with independently observed decimal-title variant"
+      },
+      "readyCapable": true
+    },
+    {
+      "id": "alfa-companion-empty-v4",
+      "observationCount": 4,
+      "fields": {
+        "title": { "present": false },
+        "description": { "present": false },
+        "text": { "present": false },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "none",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    },
+    {
+      "id": "alfa-other-historical-families-v4",
+      "observationCount": 12,
+      "fields": {
+        "title": { "present": true, "shape": "other historical envelopes" },
+        "description": { "present": true, "shape": "not the exact F5 four-section skeleton" },
+        "text": { "present": true, "sameShapeAs": "description" },
+        "reference": { "present": false }
+      },
+      "effectiveBodySource": "description",
+      "evidence": {
+        "eventType": "NOT_PROVEN",
+        "direction": "NOT_PROVEN",
+        "amountGrammar": "NOT_PROVEN",
+        "currencyGrammar": "NOT_PROVEN",
+        "eventTime": "ANDROID_ENVELOPE_PROVEN",
+        "accountReferenceStructure": "NOT_PROVEN"
+      },
+      "readyCapable": false
+    }
+  ],
+  "provenFacts": ["unchanged F5 section ordering", "title/body amount equality", "RUB", "Android postTime eventTime", "two masked-reference positions", "OUTGOING_TRANSFER", "DEBIT"],
+  "unprovenFacts": ["reference kind", "ownership", "recipient identity", "destination account"],
+  "acceptance": {
+    "positiveFormats": "unchanged exact F5 v3 skeleton with v4 outgoing semantics",
+    "missingMarkers": "REQUIRED_FAIL_CLOSED",
+    "missingAmount": "REQUIRED_FAIL_CLOSED",
+    "malformedAmount": "REQUIRED_FAIL_CLOSED",
+    "unsupportedCurrency": "REQUIRED_FAIL_CLOSED",
+    "partialNotification": "REQUIRED_PARTIAL_OR_UNKNOWN",
+    "providerIsolation": "REQUIRED",
+    "rawImmutability": "REQUIRED",
+    "dedup": "EXISTING_CONTRACT_UNCHANGED",
+    "sourceEventIdConflict": "EXISTING_CONTRACT_UNCHANGED"
+  }
+}
