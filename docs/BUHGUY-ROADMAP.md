@@ -200,9 +200,12 @@ The active real-device blocker is maintained in the current handoff.
 
 ## 5. Bank-specific parsing and normalization
 
-**Status: Next**
+**Status: Implemented / Validation**
 
-Once notification capture is reliable, replace RAW_ONLY behavior with versioned bank-specific parsers.
+The notification capture path is implemented, and multiple provider-specific
+production parsers are deployed. Remaining unsupported notification families
+and fresh post-deployment E2E checks close opportunistically from natural
+evidence; they do not block the Person 1 development path.
 
 Extract only facts actually supported by the notification evidence:
 
@@ -230,11 +233,16 @@ Build regression fixtures for every known notification format and edge case.
 
 ## 6. Account and money model
 
-**Status: Planned**
+**Status: Implemented foundation / Next**
 
-A bank source is not necessarily a financial account.
+A bank source is not necessarily a financial account. The account-resolution
+foundation, explicit source/provider binding model, financial-account and
+payment-instrument identity structures, and fail-closed resolution states are
+implemented. Person 1 account identity readiness is the active next milestone;
+account coverage is not complete and no ownership should be inferred from
+provider identity or source context alone.
 
-Introduce/complete a model for:
+The model covers:
 
 - bank accounts
 - cards linked to accounts
@@ -260,6 +268,9 @@ Provider-reported balance snapshots and balance-difference reconciliation are no
 **Status: Planned; central future milestone**
 
 Reconciliation connects independent evidence without pretending they are the same fact.
+It is the next milestone after Person 1 account identity readiness, preserving
+the strategic order `bank evidence -> account identity -> reconciliation ->
+business events -> ledger integration`.
 
 Example candidate relationship:
 

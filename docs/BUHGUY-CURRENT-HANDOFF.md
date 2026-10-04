@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `80b5c6aa405700e890d85dbbd363ee13badfc3c1` (PR #71 merge; T-Bank normalizer v2 is deployed in production)
-- Current phase: T-Bank v2 exact top-up promotion is deployed as `UNKNOWN / CREDIT / READY / EXACT`; no fresh post-deployment T-Bank v2 notification has been claimed
-- Current blocker: No rollout blocker. T-Bank v2 fresh E2E remains `PENDING_NATURAL_EVENT`; Alfa v4 fresh E2E, Sber v5 fresh E2E, and VTB transport remain opportunistic only. Do not manufacture a bank operation solely for validation. Historical T-Bank v1 rows remain immutable
+- Current implementation baseline: `a85239515be46c9d7ced85a3803af814a648c438` (PR #73 merge; provider evidence remains fail-closed where reusable grammar is not proven)
+- Current phase: `ACCOUNT_IDENTITY_READINESS` for Person 1; the account-resolution foundation is implemented and bank evidence is sufficient to proceed without waiting for opportunistic parser validation
+- Current blocker: No parser gap blocks Person 1 MVP. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, VTB transport, and fresh post-deployment provider E2E remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `80b5c6aa405700e890d85dbbd363ee13badfc3c1`, 317 files, archive SHA-256 `f20dc43c59343d0d3e2e43194d11a43af49754da397912dd914b36fbd6bf693c`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: wait for a natural T-Bank v2 exact top-up notification if production E2E evidence is needed; do not create a transfer solely for validation. Keep Alfa v4 and Sber v5 fresh E2E plus VTB transport opportunistic. Take the next narrow fixture-backed parser slice only as a separate reviewed change; do not start reconciliation, INTERNAL_TRANSFER, business events, or ledger work in that slice; Person 2/3 remains out of scope
+- Next action: perform a READ-ONLY Person 1 production account-identity readiness audit. Do not create an account, source/provider binding, manual transaction resolution, historical replay, reconciliation mutation, INTERNAL_TRANSFER, business event, or ledger posting. After account identity readiness, proceed to `RECONCILIATION`; keep remaining parser validation opportunistic and Person 2/3 out of scope
 
 ## Alfa normalizer v4 production deployment
 
@@ -54,8 +54,9 @@ observation `384`, max transaction `308`).
 The exact F5 v4 semantics preserve `accountReferenceKind=NULL`; no account,
 card, or ownership inference was added. A fresh post-deployment Alfa v4 E2E
 remains `PENDING_NATURAL_EVENT`. Sber v5 fresh E2E and VTB transport remain
-opportunistic and do not block development. The next parser candidate remains
-a separate narrow reviewed slice.
+opportunistic and do not block development. At that deployment stage, the next
+parser candidate was a separate narrow reviewed slice; the current primary path
+is now Person 1 account identity readiness.
 
 ## Source/provider account binding production rollout
 
@@ -441,6 +442,26 @@ the observations below were not replayed or backfilled.
 Each future parser slice remains independently review-gated. These evidence
 summaries do not authorize automatic promotion of Alfa, T-Bank, Ozon, or
 Yandex Pay runtime semantics.
+
+## Yandex Pay outgoing forensic evidence
+
+The controlled Yandex Pay outgoing primary is observation `355` /
+transaction `283`; observation `356` is its empty companion. Both use the
+canonical provider `com.yandex.bank`, physical source package
+`com.yandex.bank`, and `notification_channel_1`. The notification supports
+observation-level `OUTGOING_TRANSFER / DEBIT` through its explicit transfer
+markers and controlled direction evidence. It has one transaction-amount
+candidate and a separate secondary amount after an availability marker, but
+the reusable exact grammar is not proven: the corpus contains only one exact
+matching primary sample. `sourcePackage` is required for any future
+Pay-specific dispatch because the canonical provider is shared with Yandex
+Pro. Observation `354` is structurally distinct and does not establish an
+internal-transfer pair.
+
+No Yandex Pay parser or sanitized fixture is authorized. `YANDEX_INTERNAL_TRANSFER_EVIDENCE=NOT_PROVEN`.
+Wait only for a naturally occurring matching sample; do not manufacture a
+bank operation for this evidence. This validation is opportunistic and does
+not block Person 1 account identity or reconciliation work.
 
 ## Sber normalizer v3 current-format evidence (historical)
 
@@ -1355,16 +1376,17 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 ## Immediate next action
 
-T-Bank v2 rollout is complete. Fresh T-Bank v2 E2E remains
+The primary Person 1 development path is now `ACCOUNT_IDENTITY_READINESS`,
+followed by `RECONCILIATION`. T-Bank v2 rollout is complete. Fresh T-Bank v2 E2E remains
 `PENDING_NATURAL_EVENT`; fresh Alfa v4 E2E, Sber v5 E2E, and VTB transport
 remain opportunistic as well. Ozon observation `339` provides controlled
 incoming/CREDIT evidence, but its reusable grammar remains pending natural
 corroboration and does not block development. Do not manufacture another bank
 operation solely for Ozon evidence. Continue with one separate narrow
-evidence-backed parser slice from the reviewed provider evidence, with each
-provider separately fixture-gated and fail-closed. Do not start
-reconciliation, INTERNAL_TRANSFER, business events, or ledger work in the same
-slice.
+evidence-backed parser slice only as opportunistic backlog work; it must not
+precede the read-only Person 1 account-identity readiness audit. Do not start
+reconciliation until account identity is ready, and do not start
+INTERNAL_TRANSFER, business events, or ledger work in the same slice.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
