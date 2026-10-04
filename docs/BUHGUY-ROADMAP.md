@@ -326,8 +326,10 @@ The near-term sequence is to project proven bank cash-flow semantics first,
 extend business-event semantics second, recognize internal transfers only with
 independently proven two-sided own-account evidence, integrate sufficiently
 proven events into the ledger, and then use bank-to-receipt matching as
-additional independent purchase evidence. None of these stages is complete
-yet.
+additional independent purchase evidence. The non-mutating bank cash-flow
+projection is implemented by the current development slice and becomes
+available after merge; business-event persistence, internal-transfer matching,
+ledger integration, and bank-to-receipt matching remain subsequent stages.
 
 Examples:
 

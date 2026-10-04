@@ -34,7 +34,11 @@ function normalizeOccurredAt(value) {
 function normalizeAmount(value) {
   if (value == null || value === '') return null;
   const text = String(value);
-  return /^\d+(?:\.\d{1,2})?$/.test(text) ? Number(text).toFixed(2) : null;
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+  if (!match) return null;
+  const integerPart = match[1].replace(/^0+(?=\d)/, '');
+  const fractionPart = (match[2] ?? '').padEnd(2, '0');
+  return `${integerPart}.${fractionPart}`;
 }
 
 function asScopeKeys(value) {

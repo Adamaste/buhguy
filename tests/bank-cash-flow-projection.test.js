@@ -30,13 +30,15 @@ test('projects proven PURCHASE/DEBIT without inventing business-event persistenc
   assert.equal(result.reasonCode, 'PROVEN_PURCHASE_DEBIT');
 });
 
-test('projects proven outgoing and incoming pairs independently', () => {
+test('projects proven outgoing and incoming pairs independently without internal transfer matching', () => {
   const result = projectBankCashFlowTransactions([
-    base({ bankTransactionId: 11, sourceEventType: 'OUTGOING_TRANSFER' }),
-    base({ bankTransactionId: 12, sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT' }),
+    base({ bankTransactionId: 11, sourceEventType: 'OUTGOING_TRANSFER', financialAccountId: 77, accountResolutionState: 'EXACT', financialAccountScopeKey: 'scope-a' }),
+    base({ bankTransactionId: 12, sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT', financialAccountId: 88, accountResolutionState: 'EXACT', financialAccountScopeKey: 'scope-a' }),
   ]);
   assert.deepEqual(result.projections.map((row) => row.movementType), ['OUTGOING_TRANSFER', 'INCOMING_TRANSFER']);
   assert.deepEqual(result.projections.map((row) => row.reasonCode), ['PROVEN_OUTGOING_TRANSFER_DEBIT', 'PROVEN_INCOMING_TRANSFER_CREDIT']);
+  assert.deepEqual(result.projections.map((row) => row.financialAccountId), [77, 88]);
+  assert.equal(result.projections.length, 2);
   assert.equal(result.summary.outgoingTransfers, 1);
   assert.equal(result.summary.incomingTransfers, 1);
   assert.equal(result.projections.some((row) => row.movementType === 'INTERNAL_TRANSFER'), false);
@@ -65,12 +67,23 @@ test('not-ready, non-exact and incomplete facts fail closed', () => {
 });
 
 test('account identity is concrete only from explicit resolved account evidence', () => {
-  const exact = projectBankCashFlowTransaction(base({ financialAccountId: 77, accountResolutionState: 'EXACT', accountResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE', financialAccountScopeKey: 'scope-a' }));
-  assert.equal(exact.accountIdentityStatus, 'CONCRETE');
-  assert.equal(exact.financialAccountId, 77);
+  for (const state of ['EXACT', 'MANUAL', 'RECONCILED']) {
+    const resolved = projectBankCashFlowTransaction(base({ financialAccountId: 77, accountResolutionState: state, accountResolutionProvenance: 'EXPLICIT_TEST_EVIDENCE', financialAccountScopeKey: 'scope-a' }));
+    assert.equal(resolved.accountIdentityStatus, 'CONCRETE');
+    assert.equal(resolved.financialAccountId, 77);
+  }
   const unknown = projectBankCashFlowTransaction(base({ financialAccountId: 77, accountResolutionState: 'UNKNOWN' }));
   assert.equal(unknown.accountIdentityStatus, 'UNRESOLVED');
   assert.equal(unknown.financialAccountId, null);
+});
+
+test('canonicalizes NUMERIC(18,2) money as a string without IEEE-754 rounding', () => {
+  const result = projectBankCashFlowTransaction(base({ amount: '99999999999999.99' }));
+  assert.equal(result.amount, '99999999999999.99');
+  assert.equal(projectBankCashFlowTransaction(base({ amount: '1' })).amount, '1.00');
+  assert.equal(projectBankCashFlowTransaction(base({ amount: '1.2' })).amount, '1.20');
+  assert.equal(projectBankCashFlowTransaction(base({ amount: '0001.20' })).amount, '1.20');
+  assert.equal(projectBankCashFlowTransaction(base({ amount: '0' })).amount, '0.00');
 });
 
 test('source context is not account ownership proof and account scope conflicts fail closed', () => {
