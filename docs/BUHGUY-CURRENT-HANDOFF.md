@@ -59,7 +59,10 @@ credit. The bank transaction supplies evidence for amount, currency,
 occurred-at, direction, and an explicitly resolved bank account when present;
 the journal projection must keep unresolved counter-sides bounded and
 unclassified rather than inventing income, expense, counterparty, or
-internal-transfer meaning.
+internal-transfer meaning. `UNKNOWN` business/event semantics do not make a
+proven monetary movement disappear: when scope, amount, currency, occurred-at,
+and `DEBIT`/`CREDIT` direction are all proven, the projection may and should
+emit a balanced monetary pair with an `UNCLASSIFIED_*` counter-side.
 
 The mapping is:
 
@@ -67,7 +70,21 @@ The mapping is:
 - `OUTGOING_TRANSFER + DEBIT` produces an outgoing-transfer candidate, not a
   purchase;
 - `INCOMING_TRANSFER + CREDIT` produces an incoming-transfer candidate;
-- `UNKNOWN` remains unresolved.
+- `UNKNOWN` event semantics may still produce a monetary candidate when the
+  movement evidence is complete and direction is proven.
+
+For a proven `DEBIT`, the bank side is the journal credit and the other side
+is `UNCLASSIFIED_OUTGOING` unless a more specific proven event mapping exists.
+For a proven `CREDIT`, the bank side is the journal debit and the other side
+is `UNCLASSIFIED_INCOMING`. These labels do not mean expense, purchase,
+income, or salary. If `financialAccountId` is not explicitly proven, use only
+an explicit unresolved side such as `UNRESOLVED_BANK_ACCOUNT`; this is not
+account identity proof and must not be treated as a concrete financial
+account.
+
+If direction is `UNKNOWN`, or amount, currency, occurred-at, scope, or other
+required evidence is missing or conflicting, no balanced monetary candidate is
+created and the row remains unresolved.
 
 Direction alone never determines business-event type, and source ownership
 never proves payer or beneficiary. Account identity is used only when
@@ -79,6 +96,12 @@ movement. A bank-backed purchase may exist without a receipt; a later receipt
 match must enrich the existing purchase/business event rather than post the
 same amount again. Receipt-only and ambiguous matches remain independent
 evidence states.
+
+The proven mappings are `PURCHASE + DEBIT` -> `Dr UNCLASSIFIED_PURCHASE / Cr
+bank side`, `OUTGOING_TRANSFER + DEBIT` -> `Dr UNCLASSIFIED_OUTGOING / Cr
+bank side`, and `INCOMING_TRANSFER + CREDIT` -> `Dr bank side / Cr
+UNCLASSIFIED_INCOMING`. Direction alone never infers purchase, income,
+`INTERNAL_TRANSFER`, counterparty, or any other business meaning.
 
 The balanced journal projection is validation-only: it must not persist
 business events, ledger entries, reconciliation decisions, or internal
