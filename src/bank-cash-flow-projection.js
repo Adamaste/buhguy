@@ -105,9 +105,14 @@ export function projectBankCashFlowTransaction(row, { scopeKey = null } = {}) {
   const reasonCode = unresolvedReason(row, sourceScopeKeys, scopeKey, account);
   const projected = reasonCode == null;
   const movement = projected ? movementType(row) : MOVEMENT_TYPES.UNRESOLVED;
+  const provenScopeKey = sourceScopeKeys.length === 1
+    && (scopeKey == null || sourceScopeKeys[0] === scopeKey)
+    ? sourceScopeKeys[0]
+    : null;
   return {
     modelVersion: BANK_CASH_FLOW_PROJECTION_VERSION,
     projectionKey: projectionKey(Number(row.bankTransactionId)),
+    scopeKey: provenScopeKey,
     bankTransactionId: Number(row.bankTransactionId),
     occurredAt: normalizeOccurredAt(row.occurredAt),
     amount: normalizeAmount(row.amount),

@@ -4,6 +4,7 @@ export { normalizeItems, normalizeOperationType, normalizeReceiptDetail, normali
 export { syncReceipts } from './sync.js';
 export { assertSchemaCurrent, createPool, migrate, ReceiptRepository } from './database.js';
 export { BANK_CASH_FLOW_PROJECTION_VERSION, MOVEMENT_TYPES, PROJECTION_STATUSES, loadBankCashFlowProjection, projectBankCashFlowTransaction, projectBankCashFlowTransactions } from './bank-cash-flow-projection.js';
+export { BALANCED_BANK_JOURNAL_PROJECTION_VERSION, JOURNAL_ACCOUNT_TYPES, JOURNAL_PROJECTION_STATUSES, UNRESOLVED_BANK_ACCOUNT, loadBalancedBankJournalProjection, projectBalancedBankJournal, projectBalancedBankJournals } from './balanced-bank-journal-projection.js';
 export { canonicalizeFiscalContent, fiscalContentFingerprint, fiscalIdentityFromRaw, fiscalIdentityKey } from './fiscal-evidence.js';
 export { FiscalContentConflictError, FiscalIdentityConflictError, FiscalIdentityUnavailableError } from './fiscal-errors.js';
 export { FnsSourceObservationConflictError } from './multi-user-errors.js';

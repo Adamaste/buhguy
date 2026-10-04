@@ -16,6 +16,7 @@ const integrationFiles = [
   'tests/bank-device-auth-postgres.integration.test.js',
   'tests/bank-account-resolution-postgres.integration.test.js',
   'tests/bank-cash-flow-projection-postgres.integration.test.js',
+  'tests/balanced-bank-journal-projection-postgres.integration.test.js',
   'tests/payment-instrument-identity-postgres.integration.test.js',
   'tests/runtime-schema-postgres.integration.test.js',
   'tests/return-refund-postgres.integration.test.js',
