@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-05
-- Current implementation baseline: `628a57d8d4a6b2beff002e7bfa69a5c00860d292` (PR #97 merged; bank-internal-transfer-matching-v1 is merged as a non-mutating in-memory projection)
+- Current implementation baseline: `6d218ad67ab1fb49a4b2cfc3e49b5d683c0682b0` (PR #99 merged; bank-ledger-projection-v1 is merged as a non-mutating in-memory projection)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank-business-event-candidate-projection-v1 and bank-internal-transfer-matching-v1 are merged and preserve fail-closed semantics. Internal transfer recognition requires two independently proven opposite-direction TRANSFER candidates with concrete distinct accounts, exact amount/currency, same scope, bounded event time, and one explicit common OWNER; one-sided or ambiguous transfers remain unchanged. Bank ledger projection is the next separate non-mutating stage; no ledger persistence is implied. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 remains a separate bounded projection. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. T-Bank outgoing and ordinary purchase validation remain insufficient for runtime promotion. Direct Yandex Pay and Yandex Pro purchase E2Es are closed and proven. VTB and Ozon paid-notification purchase validation are skipped by the user's current decision; do not request paid activation unless that decision changes.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank-business-event-candidate-projection-v1, bank-internal-transfer-matching-v1, and bank-ledger-projection-v1 are merged and preserve fail-closed semantics. Internal transfer recognition requires two independently proven opposite-direction TRANSFER candidates with concrete distinct accounts, exact amount/currency, same scope, bounded event time, and one explicit common OWNER; one-sided or ambiguous transfers remain unchanged. Bank ledger projection is closed without ledger persistence. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 remains a separate bounded projection. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. T-Bank outgoing and ordinary purchase validation remain insufficient for runtime promotion. Direct Yandex Pay and Yandex Pro purchase E2Es are closed and proven. VTB and Ozon paid-notification purchase validation are skipped by the user's current decision; do not request paid activation unless that decision changes.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `bank ledger projection`. The next slice must remain a separate deterministic non-mutating projection over validated balanced journals, business-event candidates, and the internal-transfer overlay. It must collapse each proven matched pair into one balanced internal-transfer posting pair, while leaving unmatched movements standalone and preserving exact strings, provenance, and fail-closed validation. No ledger persistence, receipt matching, or production E2E is implied.
+- Next action: `bank-to-receipt matching audit/design`. The next slice must remain a separate deterministic non-mutating audit/design over validated bank-ledger projections and receipt-side evidence. It must preserve one bank movement as the sole cash flow, avoid duplicate ledger entries, and leave ambiguous or ineligible relationships unresolved. No receipt matching persistence, production E2E, or schema change is implied.
 
 ## Bank business-event candidate projection v1
 
@@ -69,9 +69,30 @@ relevant common-owner evidence assertions in matched provenance. Matching is
 one-to-one and deterministic; no candidate is reused or fanned out.
 
 No persistence, ledger writes, receipt matching, replay, backfill, deployment,
-or production mutation was added. The next separate stage is
-`bank-ledger-projection-v1`; ledger integration and persistence are not yet
-implemented.
+or production mutation was added. The next separate stage after this matcher
+is `bank-ledger-projection-v1`; ledger persistence remains unimplemented.
+
+## Bank ledger projection v1
+
+PR #99 was squash-merged into master `6d218ad67ab1fb49a4b2cfc3e49b5d683c0682b0`.
+`bank-ledger-projection-v1` is a deterministic, content-addressed,
+non-mutating in-memory projection over validated balanced journals, business
+event candidates, and the internal-transfer overlay. Standalone purchase,
+outgoing-transfer, incoming-transfer, and unclassified monetary movements
+retain their validated balanced-journal semantics. A proven internal transfer
+consumes exactly two bank sources and emits one economic balanced posting pair;
+the symbolic unclassified counterpart postings of the matched pair are not
+propagated. Unmatched or ambiguous transfers remain standalone.
+
+Ledger-invalid sources are excluded before matching. Money is handled as exact
+canonical strings without Number/float arithmetic, and results remain
+deterministic under input reordering. The projection preserves source
+provenance, exact source consumption, and the outgoing candidate time while
+retaining the incoming time in provenance.
+
+No business-event persistence, ledger persistence, receipt matching, database
+mutation, production wiring, migration, replay, backfill, or deployment was
+added. The next separate stage is `bank-to-receipt matching audit/design`.
 
 ## T-Bank ordinary purchase validation baseline
 
@@ -2075,10 +2096,11 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 The Person 1 account-identity readiness audit is complete for development and
 the active phase is `RECONCILIATION_DEVELOPMENT`. The Alfa lifecycle
-canonicalization slice and the `bank-business-event-candidate-projection-v1`
-and `bank-internal-transfer-matching-v1` slices are complete and remain
-non-mutating. The immediate next action is the separate
-`bank-ledger-projection-v1` development slice, returning to
+canonicalization slice, the `bank-business-event-candidate-projection-v1`
+and `bank-internal-transfer-matching-v1` slices, and the
+`bank-ledger-projection-v1` slice are complete and remain non-mutating.
+The immediate next action is the separate
+`bank-to-receipt matching audit/design` slice, returning to
 the main `bank cash flow -> business events -> two-sided internal transfers ->
 ledger -> receipt matching` sequence.
 
