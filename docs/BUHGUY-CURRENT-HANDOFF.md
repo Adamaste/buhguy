@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-04
 - Current implementation baseline: `f4909f46e587f4f0ff5ee624ce853ab6abf2c020` (PR #88 merged; Sber purchase normalizer v6 is deployed, and Alfa lifecycle canonicalization v1 is available as a standalone non-mutating projection)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. The controlled T-Bank outgoing window is now forensically closed as insufficient: observation `471` has a transfer-like, non-monetary shape but no reusable transaction amount or explicit outgoing marker, while Sber observation `473` independently proves the opposite-side incoming event. No second T-Bank operation is justified solely to repeat this unresolved shape. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: run a controlled validation campaign for remaining provider gaps, one operation at a time, beginning with T-Bank outgoing, before returning to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence. User-chosen real operations are allowed; take a clean Android/backend baseline first, use a small distinctive amount, wait for the full notification lifecycle, correlate it, and close the gap or identify the exact remaining blocker. Do not manufacture unnecessary repeated operations when one sample proves the required fact. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: retain the T-Bank outgoing gap as fail-closed and continue with the next separately reviewed provider-evidence or bank cash-flow development slice; do not perform a second T-Bank transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -703,6 +703,39 @@ direction projections. They were not replayed or backfilled. No account/card
 identity inference was added. A fresh post-deployment T-Bank v2 E2E remains
 `PENDING_NATURAL_EVENT`; no new bank operation should be created solely for
 validation.
+
+## T-Bank outgoing controlled-window forensic closeout
+
+After a clean read-only baseline, one user-controlled T-Bank-to-own-Sber
+operation produced T-Bank observation `471` / transaction `366`. Its
+privacy-safe structural shape has title, description, and text; description
+and text are equal; the body contains transfer-like and availability/balance-
+like markers plus account/card-like context; and an Android `eventTime`,
+source-package, channel, adapter, and schema envelope are present. No
+transaction monetary position was present in the reusable shape, no
+reference kind was proven, and no explicit outgoing/debit marker was present.
+The persisted result therefore remained `PARTIAL / UNKNOWN / UNKNOWN` with
+unknown account resolution.
+
+The same operation produced Sber observation `473` / transaction `367` as
+the opposite-side incoming event, with empty/non-ready companion observation
+`477` / transaction `368`. Sber persisted `READY / INCOMING_TRANSFER / CREDIT
+/ EXACT` against the already proven financial account; this establishes
+two-sided controlled-window amount/direction correlation, but does not turn
+the T-Bank structural shape into reusable outgoing grammar or prove an
+`INTERNAL_TRANSFER`. T-Bank observation `469` / transaction `365` is a
+separate earlier top-up-like event: its event-time ordering and incompatible
+shape do not prove lifecycle membership.
+
+Applying the privacy-safe `471` structural predicate to the complete current
+T-Bank corpus found `23` exact non-monetary structural matches, including
+`471`; none was a proven top-up or purchase collision, and `16` additional
+near matches remained structurally non-identical. The corpus therefore does
+not authorize a T-Bank outgoing parser. A second same-family controlled
+transfer would not add the missing transaction amount or explicit direction
+marker, so no additional T-Bank operation is required solely for this gap.
+No parser, schema, account-resolution, accounting, replay, backfill, or
+production configuration change was made.
 
 ## Bank Assistant semantic layer activated
 
