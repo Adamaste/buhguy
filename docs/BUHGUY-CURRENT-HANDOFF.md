@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-04
 - Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows prove a reusable transaction-amount position and a narrow DEBIT signal, but the signal is carried by a repeated update member and is unsafe to promote without lifecycle deduplication, so no Alfa v5 parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows prove a reusable primary amount position, but the exact primary shape also occurs in one natural window without purchase ground truth. The primary is disjoint from the exact F5 transfer grammar, yet PURCHASE/DEBIT promotion remains fail-closed until the lifecycle/evidence boundary is explicit; no Alfa v5 parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: retain the pairwise Alfa evidence as fail-closed forensic input and continue the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The second independent ordinary purchase has been correlated; no third purchase is required solely for validation. Alfa v5 remains blocked on transaction-lifecycle deduplication for the repeated minus-bearing update; `PURCHASE` remains unproven. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: retain the Alfa primary-grammar and lifecycle evidence as fail-closed input, keep the primary-only/no-double-count boundary, and continue the development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The exact primary shape is separated from F5 but has one natural same-shaped unknown window; no Alfa v5 parser promotion is authorized. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -284,6 +284,55 @@ or journal projection was run. A naive per-notification projection would
 retain a duplicate-count risk; no production accounting output was created.
 The result authorizes only further reviewed lifecycle-design work, not parser
 promotion, persistence, replay, backfill, or accounting mutation.
+
+## Alfa primary purchase-grammar discrimination forensic
+
+Read-only inspection of the immutable primary observations `437` and `456`
+found the same privacy-safe structure. The title has two dynamic word slots
+joined by an ASCII hyphen-minus and contains no title amount. Description and
+text are present and equal. Each is one non-semicolon-delimited body with the
+same ordered skeleton: four dynamic word slots, a colon, an integer-shaped
+position followed by a period, one dynamic word slot, a decimal-dot numeric
+position, and three trailing dynamic word slots. The second numeric position
+is the controlled transaction-amount position; the body carries a RUB marker.
+No masked reference position was proven in the primary. Android provider,
+`android-notification` adapter, schema version `1`, and non-null envelope
+event time are required. The body has no `Перевод на` transfer anchor and no
+`Получатель` field.
+
+This primary grammar is structurally disjoint from the exact F5 transfer
+grammar: it has one unsplit body rather than four ordered semicolon sections,
+no F5 transfer/recipient anchors, no two F5 masked-reference positions, and
+no F5 title amount form. The distinction is based on the complete grammar,
+not merely on the absence of a recipient word.
+
+The whole Alfa corpus contains three economic windows matching the exact
+primary structural predicate: controlled windows `437/341` and `456/357`,
+plus the natural same-shaped window `461/360`. The latter has no user-provided
+purchase ground truth and is retained as an unknown-family collision rather
+than silently classified as purchase. No exact primary transfer or incoming
+collision was found, and no exact non-monetary collision was found. There are
+no additional body-shape near matches under the exact predicate; other
+historical, F5, informational, and companion families remain outside this
+grammar and fail closed. Counts are economic windows, not notification rows.
+
+The two controlled primaries prove the reusable amount position and RUB
+currency position. They do not by themselves authorize PURCHASE for the
+natural same-shaped unknown window. The narrow DEBIT signal remains carried
+by the correlated minus-bearing update; because lifecycle identity is only a
+bounded heuristic and not a deterministic key, it cannot safely promote an
+arbitrary primary to DEBIT. Therefore the authorization decision is
+`ALFA_PRIMARY_GRAMMAR_AUTHORIZATION=INSUFFICIENT`: primary-only promotion
+would be single-row-safe for the two controlled windows, but a reusable
+runtime semantic parser is not authorized. The update remains corroborating
+direction evidence only, and the empty member remains non-monetary.
+
+No lifecycle projection was implemented, no parser was changed, and no
+prospective cash-flow or balanced-journal projection was run. A future
+implementation must remain a separate post-ingestion, fail-closed
+primary-only projection with explicit ambiguity handling; it must never
+promote the update as a second monetary record. Future cash-withdrawal, fee,
+or other non-proven families remain unsupported.
 
 ## Person 1 account-identity readiness audit
 
