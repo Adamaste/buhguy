@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import {
   projectBankCashFlowTransaction,
 } from './bank-cash-flow-projection.js';
+import {
+  isAlfaBankAndroidNotification,
+  normalizeAlfaBankEvent,
+} from './bank-normalization.js';
 
 export const ALFA_LIFECYCLE_CANONICALIZATION_VERSION = 'alfa-lifecycle-canonicalization-v1';
 export const ALFA_LIFECYCLE_RULE_VERSION = 'alfa-primary-update-empty-v1';
@@ -36,6 +40,8 @@ function sameSource(a, b) {
     && right.adapter === ADAPTER
     && left.schemaVersion === SCHEMA_VERSION
     && right.schemaVersion === SCHEMA_VERSION
+    && typeof left.sourcePackage === 'string'
+    && left.sourcePackage.trim() !== ''
     && left.sourcePackage === right.sourcePackage
     && (left.notificationChannel ?? null) === (right.notificationChannel ?? null);
 }
@@ -67,7 +73,7 @@ function primaryFacts(row) {
   if (body.includes(';') || !body.includes('RUB')) return null;
   const match = /^(?:[\p{L}\p{M}]+\s+){3}[\p{L}\p{M}]+:\s+(\d+)\.\s+[\p{L}\p{M}]+\s+(\d+\.\d{1,2})\s+RUB\s+[\p{L}\p{M}]+\s+[\p{L}\p{M}]+$/u.exec(body);
   if (!match) return null;
-  const occurredAt = iso(row.eventTime ?? row.occurredAt);
+  const occurredAt = iso(row.eventTime);
   if (!occurredAt) return null;
   return { amount: canonicalDecimal(match[2]), occurredAt };
 }
@@ -77,7 +83,7 @@ function updateFacts(row) {
   const titleMatch = /^-\s*(\d+)\s+₽\.\s+[\p{L}\p{M}]+$/u.exec(text(payload.title).trim());
   if (!titleMatch || !description.trim() || description !== text(payload.text)) return null;
   if (!/^[\p{L}\p{M}]+:\s+\d+,\d{2}\s+₽;\s+(?:••|··|•|\*)\s*\d{4}$/u.test(body)) return null;
-  const occurredAt = iso(row.eventTime ?? row.occurredAt);
+  const occurredAt = iso(row.eventTime);
   if (!occurredAt) return null;
   return { amount: canonicalDecimal(titleMatch[1]), occurredAt };
 }
@@ -86,7 +92,7 @@ function emptyFacts(row) {
   const { payload } = payloadFields(row);
   const hasContent = ['title', 'description', 'text', 'reference']
     .some((key) => text(payload[key]).trim() !== '');
-  return hasContent ? null : { occurredAt: iso(row.eventTime ?? row.occurredAt) };
+  return hasContent ? null : { occurredAt: iso(row.eventTime) };
 }
 
 function classify(row) {
@@ -99,7 +105,13 @@ function classify(row) {
   if (update) return { kind: 'UPDATE', facts: update };
   const empty = emptyFacts(row);
   if (empty) return { kind: 'EMPTY', facts: empty };
-  if (/^[-+]\s*\d+(?:[.,]\d{1,2})?\s+₽$/u.test(text(row.payload?.title).trim())) return { kind: 'F5_TRANSFER_OWNED_BY_PROVIDER_NORMALIZER' };
+  if (isAlfaBankAndroidNotification(row)) {
+    const normalized = normalizeAlfaBankEvent(row);
+    if (normalized?.eventType === 'OUTGOING_TRANSFER'
+      && normalized.normalizationVersion === 'alfa-bank-normalizer-v4') {
+      return { kind: 'F5_TRANSFER_OWNED_BY_PROVIDER_NORMALIZER' };
+    }
+  }
   return { kind: 'OTHER' };
 }
 
@@ -132,9 +144,9 @@ function unresolvedResult(primaryObservationId, reasonCode, related = {}) {
 
 function validCompanion(primary, update, empty) {
   if (!sameSource(primary, update) || !sameSource(update, empty)) return false;
-  const primaryTime = iso(primary.eventTime ?? primary.occurredAt);
-  const updateTime = iso(update.eventTime ?? update.occurredAt);
-  const emptyTime = iso(empty.eventTime ?? empty.occurredAt);
+  const primaryTime = iso(primary.eventTime);
+  const updateTime = iso(update.eventTime);
+  const emptyTime = iso(empty.eventTime);
   if (!primaryTime || !updateTime || !emptyTime) return false;
   const primaryUpdate = deltaMs(updateTime, primaryTime);
   const updateEmpty = deltaMs(emptyTime, updateTime);
@@ -190,9 +202,9 @@ export function projectAlfaLifecycle(rows) {
 
   for (const primaryItem of primaries) {
     const primary = primaryItem.row;
-    const primaryTime = iso(primary.eventTime ?? primary.occurredAt);
+    const primaryTime = iso(primary.eventTime);
     const topologicalUpdates = updates.filter((updateItem) => {
-      const updateTime = iso(updateItem.row.eventTime ?? updateItem.row.occurredAt);
+      const updateTime = iso(updateItem.row.eventTime);
       if (!primaryTime || !updateTime || !sameSource(primary, updateItem.row)) return false;
       const delta = deltaMs(updateTime, primaryTime);
       return delta >= PRIMARY_UPDATE_MIN_MS && delta <= PRIMARY_UPDATE_MAX_MS;
@@ -247,7 +259,7 @@ export function projectAlfaLifecycle(rows) {
   };
 }
 
-export function toBankCashFlowProjectionInput(candidate, { sourceScopeKeys = ['UNRESOLVED_SCOPE'] } = {}) {
+export function toBankCashFlowProjectionInput(candidate, { sourceScopeKeys = [] } = {}) {
   if (!candidate || candidate.projectionStatus !== PROJECTED) throw new Error('A projected candidate is required');
   return {
     bankTransactionId: candidate.sourceProvenance.primaryTransactionId,

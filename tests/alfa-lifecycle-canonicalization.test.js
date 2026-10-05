@@ -5,6 +5,7 @@ import {
   projectAlfaLifecycle,
   projectAlfaLifecycleCashFlow,
 } from '../src/alfa-lifecycle-canonicalization.js';
+import { normalizeAlfaBankEvent } from '../src/bank-normalization.js';
 import { projectBalancedBankJournal } from '../src/balanced-bank-journal-projection.js';
 
 const metadata = {
@@ -117,12 +118,49 @@ test('competing primaries and competing updates fail closed', () => {
 test('F5 transfer remains owned by the provider normalizer and update never emits money alone', () => {
   const f5 = row(500, 600, '2026-10-04T20:00:00.000Z', {
     title: '- 2468 ₽',
-    description: 'СЧЕТ 0000*1111; Перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; Получатель: 2222*3333; 12 карта 34:56',
-    text: 'СЧЕТ 0000*1111; Перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; Получатель: 2222*3333; 12 карта 34:56',
+    description: 'СИНТЕТИЧЕСКИЙ ВАЛЮТНОГО счета 0000*1111; Перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; Получатель: 2222*3333; 12 карта 34:56',
+    text: 'СИНТЕТИЧЕСКИЙ ВАЛЮТНОГО счета 0000*1111; Перевод на СИНТЕТИЧЕСКИЙ 2468,00 RUB; Получатель: 2222*3333; 12 карта 34:56',
   });
+  assert.equal(normalizeAlfaBankEvent(f5).eventType, 'OUTGOING_TRANSFER');
   const result = projectAlfaLifecycle([f5]);
   assert.equal(result.candidates.length, 0);
   assert.equal(result.memberClassifications[0].kind, 'F5_TRANSFER_OWNED_BY_PROVIDER_NORMALIZER');
+});
+
+test('signed title without the exact F5 envelope remains unsupported', () => {
+  const signedNonF5 = row(501, 601, '2026-10-04T20:00:00.000Z', {
+    title: '- 2468 ₽',
+    description: 'СИНТЕТИЧЕСКОЕ ОПИСАНИЕ БЕЗ F5 СЕКЦИЙ',
+    text: 'СИНТЕТИЧЕСКОЕ ОПИСАНИЕ БЕЗ F5 СЕКЦИЙ',
+  });
+  assert.equal(normalizeAlfaBankEvent(signedNonF5), null);
+  const result = projectAlfaLifecycle([signedNonF5]);
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.memberClassifications[0].kind, 'OTHER');
+});
+
+test('Android event time and source package are required lifecycle evidence', () => {
+  const rows = lifecycle();
+  const missingPrimaryEventTime = [
+    { ...rows[0], eventTime: undefined, occurredAt: rows[0].observedAt },
+    rows[1],
+    rows[2],
+  ];
+  assert.equal(projectAlfaLifecycle(missingPrimaryEventTime).candidates.length, 0);
+
+  const missingUpdateEventTime = [rows[0], { ...rows[1], eventTime: undefined, occurredAt: rows[1].observedAt }, rows[2]];
+  assert.equal(projectAlfaLifecycle(missingUpdateEventTime).candidates.length, 0);
+
+  const missingCompanionEventTime = [rows[0], rows[1], { ...rows[2], eventTime: undefined, occurredAt: rows[2].observedAt }];
+  assert.equal(projectAlfaLifecycle(missingCompanionEventTime).candidates.length, 0);
+
+  const missingSourcePackage = lifecycle();
+  missingSourcePackage[0].ingestionMetadata = { ...missingSourcePackage[0].ingestionMetadata, sourcePackage: '' };
+  assert.equal(projectAlfaLifecycle(missingSourcePackage).candidates.length, 0);
+
+  const differentSourcePackage = lifecycle();
+  differentSourcePackage[1].ingestionMetadata = { ...differentSourcePackage[1].ingestionMetadata, sourcePackage: 'ru.other.app' };
+  assert.equal(projectAlfaLifecycle(differentSourcePackage).candidates.length, 0);
 });
 
 test('projection preserves exact decimal strings and deterministic provenance key', () => {
@@ -135,11 +173,42 @@ test('projection preserves exact decimal strings and deterministic provenance ke
   assert.equal(first.candidates[0].sourceProvenance.primaryObservationId, 437);
   assert.equal(first.candidates[0].sourceProvenance.updateObservationId, 438);
   assert.equal(first.candidates[0].sourceProvenance.companionObservationId, 439);
+
+  const changedAmount = projectAlfaLifecycle(lifecycle({ amount: '99999999999998.00' }));
+  assert.notEqual(first.candidates[0].projectionKey, changedAmount.candidates[0].projectionKey);
+  const changedMember = projectAlfaLifecycle([
+    row(447, 451, rows[0].eventTime, primaryPayload('99999999999999.00')),
+    rows[1],
+    rows[2],
+  ]);
+  assert.notEqual(first.candidates[0].projectionKey, changedMember.candidates[0].projectionKey);
+  const changedUpdate = projectAlfaLifecycle([
+    rows[0],
+    row(448, 452, rows[1].eventTime, updatePayload('99999999999999')),
+    rows[2],
+  ]);
+  assert.notEqual(first.candidates[0].projectionKey, changedUpdate.candidates[0].projectionKey);
+  const changedCompanion = projectAlfaLifecycle([
+    rows[0],
+    rows[1],
+    row(449, 453, rows[2].eventTime, emptyPayload),
+  ]);
+  assert.notEqual(first.candidates[0].projectionKey, changedCompanion.candidates[0].projectionKey);
 });
 
-test('canonical candidate produces one UNKNOWN/DEBIT cash-flow and balanced journal in memory', () => {
+test('missing source scope fails closed before balanced journal projection', () => {
   const candidate = projectAlfaLifecycle(lifecycle()).candidates[0];
   const cashFlow = projectAlfaLifecycleCashFlow(candidate);
+  assert.equal(cashFlow.projectionStatus, 'UNRESOLVED');
+  assert.equal(cashFlow.reasonCode, 'SOURCE_SCOPE_AMBIGUOUS');
+  const journal = projectBalancedBankJournal(cashFlow);
+  assert.equal(journal.projectionStatus, 'UNRESOLVED');
+  assert.equal(journal.reasonCode, 'SOURCE_SCOPE_AMBIGUOUS');
+});
+
+test('explicit test scope preserves UNKNOWN/DEBIT cash-flow and journal semantics', () => {
+  const candidate = projectAlfaLifecycle(lifecycle()).candidates[0];
+  const cashFlow = projectAlfaLifecycleCashFlow(candidate, { sourceScopeKeys: ['SYNTHETIC_TEST_SCOPE'] });
   assert.equal(cashFlow.projectionStatus, 'UNRESOLVED');
   assert.equal(cashFlow.reasonCode, 'EVENT_TYPE_UNKNOWN');
   assert.equal(cashFlow.direction, 'DEBIT');

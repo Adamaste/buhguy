@@ -35,9 +35,13 @@ without purchase ground truth. This v1 projection therefore does not infer
 
 ## Correlation Rule
 
-Matching requires the same provider, source package, available notification
-channel, exact primary/update/empty structural members, primary-before-update
-ordering, exact primary/update amount equality, and a unique companion.
+Matching requires the same provider, non-empty source package, available
+notification channel, exact primary/update/empty structural members,
+primary-before-update ordering, exact primary/update amount equality, and a
+unique companion. Every lifecycle member must carry a valid Android envelope
+`eventTime`; the canonical `occurredAt` is taken from the primary event time,
+not from a fallback capture timestamp. If the channel is present, it must
+agree across members; an absent channel is not invented.
 
 The update member is matched only in the reviewed shape: title `- <integer> ₽. <word>`, body `<word>: <comma-decimal> ₽; <masked-suffix>`, with equal description and text. Its body monetary token is structural update evidence and is not promoted as an independent transaction amount; only exact equality with the primary amount is accepted.
 
@@ -57,14 +61,20 @@ model, rule, member identities, amount, time, and semantic fields.
 ## Boundaries
 
 The existing `alfa-bank-normalizer-v4` exclusively owns the exact F5 outgoing
-transfer grammar. This projection must not reinterpret F5 notifications or
-promote an update/empty companion as another monetary movement.
+transfer grammar, including its complete title, four-section body, account,
+transfer, recipient, trailing, amount-equality, and event-time checks. This
+projection must not reinterpret F5 notifications or promote an update/empty
+companion as another monetary movement. A title amount alone is not F5
+evidence.
 
 The projection is suitable for in-memory adaptation to the existing cash-flow
 and balanced-journal projections. It may produce an unclassified outgoing
-money movement with `UNRESOLVED_BANK_ACCOUNT`, but it does not persist cash
-flow, journals, business events, ledger entries, reconciliation results, or
-internal transfers. No account ownership is inferred.
+money movement with `UNRESOLVED_BANK_ACCOUNT` only when an explicit,
+evidence-backed source scope is supplied; it does not fabricate a default
+scope. Without that scope, downstream projection remains unresolved. It does
+not persist cash flow, journals, business events, ledger entries,
+reconciliation results, or internal transfers. No account ownership is
+inferred.
 
 Future cash-withdrawal, fee, purchase, or other Alfa families require their
 own evidence-backed rules. They must fail closed until separately proven.
