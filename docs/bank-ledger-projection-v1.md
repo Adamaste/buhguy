@@ -25,7 +25,9 @@ projectBankLedger(entries, ownershipSnapshot, { maxTimeDeltaMs })
 
 Each entry is `{ journal, candidate }`. Journals and candidates are
 revalidated, source identities must be unique, and invalid or incoherent
-inputs are returned as `UNRESOLVED` without a ledger entry. The output is
+inputs are returned as `UNRESOLVED` without a ledger entry. Ledger-invalid
+sources are filtered out before internal-transfer matching, so they cannot be
+consumed by a matcher result. The output is
 content-addressed and independent of input order. Money is a canonical string
 with exactly two decimal places and is never converted to a JavaScript number.
 

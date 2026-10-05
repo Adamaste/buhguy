@@ -108,6 +108,32 @@ test('a proven own-account pair collapses into exactly one internal transfer ent
   assert.equal(result.entries[0].sourceProvenance.incoming.occurredAt, input.entries[1].candidate.occurredAt);
 });
 
+test('ledger-invalid zero-value transfer sides are excluded before matching', () => {
+  const outgoing = entry({ bankTransactionId: 12, amount: '0.00', sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', financialAccountId: 1 });
+  const incoming = entry({ bankTransactionId: 13, amount: '0.00', sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT', financialAccountId: 2, occurredAt: '2026-10-05T10:00:05.000Z' });
+  const result = projectBankLedger([outgoing, incoming], snapshot([owner(1), owner(2)]), { maxTimeDeltaMs: 10_000 });
+  assert.equal(result.entries.length, 0);
+  assert.equal(result.summary.internalTransferLedgerEntries, 0);
+  assert.equal(result.summary.consumedInternalTransferSources, 0);
+  assert.deepEqual(result.sourceStatuses.map((row) => row.status), ['UNRESOLVED', 'UNRESOLVED']);
+  assert.equal(result.sourceStatuses.every((row) => row.ledgerKey === null), true);
+  assert.deepEqual(result.sourceStatuses.map((row) => row.bankTransactionId), [12, 13]);
+  assert.equal(result.sourceStatuses.every((row) => /^[0-9a-f]{64}$/.test(row.journalKey)), true);
+  assert.equal(result.sourceStatuses.every((row) => /^[0-9a-f]{64}$/.test(row.candidateKey)), true);
+});
+
+test('ledger validation precedes matching for an upstream-valid noncanonical time', () => {
+  const outgoing = entry({ bankTransactionId: 14, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', financialAccountId: 1 });
+  const incoming = entry({ bankTransactionId: 15, sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT', financialAccountId: 2, occurredAt: '2026-10-05T10:00:05.000Z' });
+  incoming.journal.occurredAt = '2026-10-05T13:00:05+03:00';
+  const result = projectBankLedger([outgoing, incoming], snapshot([owner(1), owner(2)]), { maxTimeDeltaMs: 10_000 });
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].economicKind, 'OUTGOING_TRANSFER');
+  assert.equal(result.summary.consumedInternalTransferSources, 0);
+  assert.equal(result.sourceStatuses.filter((row) => row.status === BANK_LEDGER_SOURCE_STATUSES.UNRESOLVED).length, 1);
+  assert.equal(result.sourceStatuses.find((row) => row.bankTransactionId === 15).journalKey, incoming.journal.journalKey);
+});
+
 test('ambiguous transfers remain standalone and an unmatched transfer remains independent', () => {
   const a = entry({ bankTransactionId: 30, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', financialAccountId: 1 });
   const b = entry({ bankTransactionId: 31, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', financialAccountId: 2 });
@@ -166,6 +192,20 @@ test('account refinement changes the bank ledger content key', () => {
   const concreteResult = projectBankLedger([concrete], snapshot(), { maxTimeDeltaMs: 10_000 });
   assert.notEqual(unresolvedResult.entries[0].ledgerKey, concreteResult.entries[0].ledgerKey);
   assert.notDeepEqual(unresolvedResult.entries[0].postings, concreteResult.entries[0].postings);
+});
+
+test('complete semantic result is independent of input order', () => {
+  const pair = transferPair();
+  const purchase = entry({ bankTransactionId: 46, sourceEventType: 'PURCHASE', direction: 'DEBIT' });
+  const unmatched = entry({ bankTransactionId: 47, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', occurredAt: '2026-10-05T12:00:00.000Z' });
+  const entries = [...pair.entries, purchase, unmatched];
+  const first = projectBankLedger(entries, pair.ownership, { maxTimeDeltaMs: 10_000 });
+  const reversed = projectBankLedger([...entries].reverse(), pair.ownership, { maxTimeDeltaMs: 10_000 });
+  assert.deepEqual(reversed.entries, first.entries);
+  assert.deepEqual(reversed.sourceStatuses, first.sourceStatuses);
+  assert.deepEqual(reversed.summary, first.summary);
+  assert.deepEqual(reversed.matchingSummary, first.matchingSummary);
+  assert.equal(JSON.stringify(first).includes('inputIndex'), false);
 });
 
 test('zero and noncanonical money fail closed, while multi-currency survives', () => {

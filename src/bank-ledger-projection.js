@@ -136,16 +136,18 @@ function candidateMatches(supplied, regenerated) {
 function normalizeEntries(entries) {
   sourceIdentity(entries);
   return entries.map((entry) => {
+    const rawJournal = entry?.journal;
+    const rawCandidate = entry?.candidate;
     const journal = validateJournal(entry?.journal);
-    if (!journal) return { entry, candidate: entry?.candidate ?? null, journal: null, reasonCode: 'JOURNAL_CONTRACT_INVALID' };
+    if (!journal) return { entry, rawJournal, rawCandidate, candidate: rawCandidate ?? null, journal: null, reasonCode: 'JOURNAL_CONTRACT_INVALID' };
     const regenerated = projectBankBusinessEventCandidate(entry.journal);
     if (regenerated.projectionStatus !== BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.PROJECTED) {
-      return { entry, candidate: entry?.candidate ?? null, journal, reasonCode: regenerated.reasonCode ?? 'CANDIDATE_UNRESOLVED' };
+      return { entry, rawJournal, rawCandidate, candidate: rawCandidate ?? null, journal, reasonCode: regenerated.reasonCode ?? 'CANDIDATE_UNRESOLVED' };
     }
     if (!candidateMatches(entry?.candidate, regenerated)) {
-      return { entry, candidate: entry?.candidate ?? null, journal, reasonCode: 'CANDIDATE_JOURNAL_MISMATCH' };
+      return { entry, rawJournal, rawCandidate, candidate: rawCandidate ?? null, journal, reasonCode: 'CANDIDATE_JOURNAL_MISMATCH' };
     }
-    return { entry, candidate: regenerated, journal, reasonCode: null };
+    return { entry, rawJournal, rawCandidate, candidate: regenerated, journal, reasonCode: null };
   });
 }
 
@@ -273,7 +275,7 @@ function internalEntry(match, outgoing, incoming) {
     sourceProvenance: {
       matchKey: match.matchKey,
       ownerPersonId: match.ownerPersonId,
-      outgoing: { ...match.outgoing, incomingOccurredAt: match.incoming.occurredAt },
+      outgoing: match.outgoing,
       incoming: match.incoming,
       ownershipProvenance: match.ownershipProvenance,
     },
@@ -281,10 +283,12 @@ function internalEntry(match, outgoing, incoming) {
 }
 
 function unresolvedSource(row, reasonCode) {
+  const rawJournal = row?.rawJournal;
+  const rawCandidate = row?.rawCandidate;
   return {
-    bankTransactionId: positiveInteger(row?.journal?.bankTransactionId) ? row.journal.bankTransactionId : null,
-    candidateKey: row?.candidate?.candidateKey ?? null,
-    journalKey: row?.journal?.journalKey ?? null,
+    bankTransactionId: positiveInteger(rawJournal?.bankTransactionId) ? rawJournal.bankTransactionId : null,
+    candidateKey: HEX_SHA256.test(rawCandidate?.candidateKey ?? '') ? rawCandidate.candidateKey.toLowerCase() : null,
+    journalKey: HEX_SHA256.test(rawJournal?.journalKey ?? '') ? rawJournal.journalKey.toLowerCase() : null,
     status: BANK_LEDGER_SOURCE_STATUSES.UNRESOLVED,
     ledgerKey: null,
     reasonCode,
@@ -298,7 +302,10 @@ function statusFor(candidate, matcher) {
 export function projectBankLedger(entries, ownershipSnapshot, { maxTimeDeltaMs } = {}) {
   if (!Array.isArray(entries)) throw new Error('entries must be an array');
   const normalized = normalizeEntries(entries);
-  const matcher = matchBankInternalTransfers(entries, ownershipSnapshot, { maxTimeDeltaMs });
+  const matcherEntries = normalized
+    .filter((row) => row.reasonCode === null)
+    .map((row) => ({ journal: row.journal, candidate: row.candidate }));
+  const matcher = matchBankInternalTransfers(matcherEntries, ownershipSnapshot, { maxTimeDeltaMs });
   const byCandidate = new Map(normalized.filter((row) => row.candidate?.candidateKey).map((row) => [row.candidate.candidateKey, row]));
   const matchByCandidate = new Map();
   for (const match of matcher.matches) {
