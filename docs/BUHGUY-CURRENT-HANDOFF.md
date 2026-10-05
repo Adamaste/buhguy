@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-04
 - Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; the fresh Alfa purchase transport path is proven, but its notification family remains single-sample evidence and is not authorized for a reusable parser. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows now prove a reusable transaction-amount position, but do not prove bounded purchase or DEBIT runtime semantics, so no Alfa purchase parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: prepare a clean Android/backend baseline for a second independent ordinary Alfa purchase, preferably with a different amount from the first, because the user independently intends to make it for normal transit/payment use. After the notification arrives, correlate its lifecycle and compare it structurally with observations `437/438/439` to test whether transaction amount position, secondary balance-like position, purchase/debit semantics, and merchant/reference fields become reusable evidence. This is evidence validation, not an MVP requirement; two samples do not automatically authorize a parser. Keep the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching; Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: retain the pairwise Alfa evidence as fail-closed forensic input and continue the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The second independent ordinary purchase has been correlated; no third purchase is required solely for validation. The reusable amount position is documented, but purchase/debit semantics remain unauthorized without a bounded runtime marker. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -119,11 +119,12 @@ ingestion created immutable rows.
 
 Privacy-safe forensic comparison found no exact historical match for this
 purchase family among the production Alfa corpus. The user-confirmed amount
-correlates with a body integer-RUB-like position in the primary candidate and
-with the title position of the structured companion, but the relationship is
-not a stable single-envelope grammar. The companion body also contains a
-decimal/integer monetary structure and a balance-like marker; its role is not
-independently proven as a balance or an additional transaction amount.
+correlates with a body monetary position in the primary candidate and with the
+title position of the structured companion, but this single window does not
+establish a reusable grammar. The companion body also contains a
+decimal/integer monetary structure and a balance-like marker; its role was not
+independently proven as a balance or an additional transaction amount at this
+stage.
 
 No explicit purchase/payment lexical marker or directly proven `DEBIT` marker
 was present in the reusable runtime structure. Merchant position and a masked
@@ -149,6 +150,50 @@ Historical rows were not rewritten; no account resolution, replay, backfill,
 ledger, business-event, or reconciliation persistence occurred. The primary
 development sequence remains bank cash flow -> business events -> proven
 two-sided internal transfers -> ledger -> receipt matching.
+
+## Alfa pairwise purchase forensic follow-up
+
+The second independent ordinary Alfa purchase produced observations `456`,
+`458`, and `460`, linked to transactions `357`, `358`, and `359`. It was a
+second economic operation, not a replay or a new synthetic test operation.
+The lifecycle topology matched the first window: `456/357` is the primary
+structured notification, `458/358` is the structured update/companion, and
+`460/359` is the empty companion. Each observation has a distinct immutable
+source identity. Both windows used the same Alfa provider, Android adapter,
+schema version, source package/channel shape, and description/text equality.
+
+Across the two primary notifications, the same body/text structural family
+contains two monetary positions: an integer-shaped position followed by a
+decimal RUB position. The decimal position is the same ordinal position in
+both samples and matches the respective operator-confirmed purchase amount;
+therefore `TRANSACTION_AMOUNT_POSITION_PROVEN=YES` for this structural family.
+The other primary monetary position changed independently, but has no explicit
+balance or availability marker and remains `SECONDARY_MONETARY_FIELD`, not a
+proven balance. In the two structured updates, the title integer position
+matches the corresponding purchase amount, while a separate body decimal
+position follows the explicit `остаток` marker. That update-side position is
+balance-like, but it is not evidence that the primary secondary field has the
+same role.
+
+The primary family has no stable explicit purchase/payment lexical marker and
+does not contain a directly proven DEBIT marker. Controlled ground truth is
+`PURCHASE` and `DEBIT`, but runtime semantics remain fail-closed:
+
+- `REUSABLE_PURCHASE_MARKER_PROVEN=NO`;
+- `REUSABLE_DEBIT_SEMANTICS_PROVEN=NO`;
+- `MERCHANT_POSITION_PROVEN=NO`;
+- `REFERENCE_PRESENT=YES`, with `REFERENCE_KIND=UNKNOWN` and no ownership
+  inference;
+- `INDEPENDENT_MATCHING_PURCHASE_OPERATIONS=2` at the controlled-evidence
+  level, but `ALFA_PURCHASE_GRAMMAR=INSUFFICIENT_EVIDENCE`.
+
+The primary family is not an exact historical match; the update/companion
+shape has a near historical envelope with a different sign form. The current
+persisted projection remains fail-closed for transactions `357`, `358`, and
+`359`: no cash-flow candidate and no balanced-journal candidate were
+persisted. No Alfa parser change is authorized, no third purchase is required
+solely for validation, and any future evidence must add a genuinely new
+runtime marker or independent family rather than repeat this same topology.
 
 ## Person 1 account-identity readiness audit
 
