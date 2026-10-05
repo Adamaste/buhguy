@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBankAndroidNotification, isYandexBankAndroidNotification, isYandexBankProvider, normalizeAlfaBankEvent, normalizeSberBankEvent, normalizeTbankBankEvent, normalizeYandexBankEvent, normalizeYandexPayBankEvent } from './bank-normalization.js';
+import { isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBankAndroidNotification, isYandexBankProvider, isYandexPayOutgoingTransport, normalizeAlfaBankEvent, normalizeSberBankEvent, normalizeTbankBankEvent, normalizeYandexBankEvent, normalizeYandexPayBankEvent } from './bank-normalization.js';
 import { resolveNewBankTransactionIdentity } from './bank-account-resolution.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
@@ -72,7 +72,10 @@ function normalizeAmount(value) {
 }
 
 export function normalizeBankEvent(input) {
-  if (isYandexBankAndroidNotification(input)) return normalizeYandexPayBankEvent(input);
+  if (isYandexPayOutgoingTransport(input)) {
+    const outgoing = normalizeYandexPayBankEvent(input);
+    if (outgoing) return outgoing;
+  }
   if (isYandexBankProvider(input)) return normalizeYandexBankEvent(input);
   if (isSberBankAndroidNotification(input)) return normalizeSberBankEvent(input);
   if (isTbankBankAndroidNotification(input)) return normalizeTbankBankEvent(input);

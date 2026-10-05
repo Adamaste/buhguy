@@ -96,32 +96,12 @@ export function isYandexBankProvider(input) {
   return input.ingestionMetadata?.provider === YANDEX_PROVIDER;
 }
 
-function incompleteYandexPay({ occurred, hasFinancialMarker }) {
-  const partial = occurred !== null || hasFinancialMarker;
-  return {
-    eventType: 'UNKNOWN',
-    occurredAt: occurred,
-    amount: null,
-    currency: null,
-    direction: 'UNKNOWN',
-    merchant: null,
-    counterparty: null,
-    accountReference: null,
-    accountReferenceKind: null,
-    normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
-    evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
-    normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
-  };
-}
-
 export function normalizeYandexPayBankEvent(input) {
   const payload = input.payload ?? {};
   const title = normalizeWhitespace(payload.title);
   const description = normalizeWhitespace(payload.description);
   const text = normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
-  const hasFinancialMarker = title.startsWith('Карта ') || description.startsWith('Перевод ')
-    || text.startsWith('Перевод ');
   const match = title.match(YANDEX_PAY_TITLE_PATTERN)
     && description
     && text
@@ -129,7 +109,7 @@ export function normalizeYandexPayBankEvent(input) {
     ? description.match(YANDEX_PAY_BODY_PATTERN)
     : null;
 
-  if (!match || !occurred) return incompleteYandexPay({ occurred, hasFinancialMarker });
+  if (!match || !occurred) return null;
 
   return {
     eventType: 'OUTGOING_TRANSFER',
@@ -147,7 +127,7 @@ export function normalizeYandexPayBankEvent(input) {
   };
 }
 
-export function isYandexBankAndroidNotification(input) {
+export function isYandexPayOutgoingTransport(input) {
   const metadata = input.ingestionMetadata ?? {};
   return metadata.provider === YANDEX_PROVIDER
     && metadata.adapter === ANDROID_NOTIFICATION_ADAPTER

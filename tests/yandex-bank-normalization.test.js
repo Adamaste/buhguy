@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeBankEvent } from '../src/bank-ingestion.js';
+import { projectBankCashFlowTransaction } from '../src/bank-cash-flow-projection.js';
+import { projectBalancedBankJournal } from '../src/balanced-bank-journal-projection.js';
 
 const base = {
   sourceKey: 'android-adam-samsung-s938b',
@@ -219,4 +221,82 @@ test('Yandex Pro alias remains isolated from Yandex Pay v2', () => {
   assert.equal(result.direction, 'UNKNOWN');
   assert.equal(result.amount, null);
   assert.notEqual(result.normalizationStatus, 'READY');
+});
+
+test('direct Yandex transport preserves purchase and incoming fallback semantics', () => {
+  const purchase = normalizeBankEvent({ ...payBase, payload: {
+    title: 'Покупка',
+    description: 'Покупка на 42.10 RUB ТЕСТОВЫЙ МАГАЗИН',
+  }});
+  const incoming = normalizeBankEvent({ ...payBase, payload: {
+    title: 'Входящий перевод',
+    description: 'Пополнение на 100.00 RUB от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
+  }});
+  assert.deepEqual([purchase.eventType, purchase.direction, purchase.normalizationStatus, purchase.evidenceQuality], ['PURCHASE', 'DEBIT', 'READY', 'EXACT']);
+  assert.deepEqual([incoming.eventType, incoming.direction, incoming.normalizationStatus, incoming.evidenceQuality], ['INCOMING_TRANSFER', 'CREDIT', 'READY', 'EXACT']);
+});
+
+test('Yandex Pro alias preserves purchase and incoming and cannot activate Pay outgoing', () => {
+  const metadata = { ...payBase.ingestionMetadata, sourcePackage: 'ru.yandex.taximeter' };
+  const purchase = normalizeBankEvent({ ...payBase, ingestionMetadata: metadata, payload: {
+    title: 'Покупка', description: 'Покупка на 42.10 RUB ТЕСТОВЫЙ МАГАЗИН',
+  }});
+  const incoming = normalizeBankEvent({ ...payBase, ingestionMetadata: metadata, payload: {
+    title: 'Входящий перевод', description: 'Пополнение на 100.00 RUB от ТЕСТОВЫЙ ОТПРАВИТЕЛЬ',
+  }});
+  const outgoing = normalizeBankEvent({ ...payBase, ingestionMetadata: metadata, payload: payPayload('2468.10') });
+  assert.equal(purchase.eventType, 'PURCHASE');
+  assert.equal(incoming.eventType, 'INCOMING_TRANSFER');
+  assert.equal(outgoing.eventType, 'UNKNOWN');
+  assert.equal(outgoing.direction, 'UNKNOWN');
+  assert.equal(outgoing.amount, null);
+});
+
+test('Yandex Pay outgoing near misses fall through without provider-specific extraction', () => {
+  const payload = payPayload('2468.10');
+  const nearMiss = normalizeBankEvent({ ...payBase, payload: {
+    ...payload,
+    description: payload.description.replace('Доступно', 'Остаток'),
+    text: payload.text.replace('Доступно', 'Остаток'),
+  }});
+  assert.equal(nearMiss.eventType, 'UNKNOWN');
+  assert.equal(nearMiss.direction, 'UNKNOWN');
+  assert.equal(nearMiss.amount, null);
+  assert.notEqual(nearMiss.normalizationStatus, 'READY');
+});
+
+test('Yandex Pay outgoing requires event time and leaves the raw input unchanged', () => {
+  const payload = payPayload('2468.10');
+  const input = { ...payBase, eventTime: null, payload };
+  const before = structuredClone(input);
+  const result = normalizeBankEvent(input);
+  assert.equal(result.eventType, 'UNKNOWN');
+  assert.equal(result.amount, null);
+  assert.deepEqual(input, before);
+});
+
+test('Yandex Pay outgoing projects only with proven scope and remains unresolved without it', () => {
+  const normalized = normalizeBankEvent({ ...payBase, payload: payPayload('2468.10') });
+  const baseRow = {
+    bankTransactionId: 901,
+    occurredAt: normalized.occurredAt,
+    amount: normalized.amount,
+    currency: normalized.currency,
+    sourceEventType: normalized.eventType,
+    direction: normalized.direction,
+    normalizationStatus: normalized.normalizationStatus,
+    evidenceQuality: normalized.evidenceQuality,
+    sourceScopeKeys: ['scope-a'],
+    accountResolutionState: 'UNKNOWN',
+  };
+  const withoutScope = projectBankCashFlowTransaction({ ...baseRow, bankTransactionId: 902, sourceScopeKeys: [] });
+  assert.equal(withoutScope.projectionStatus, 'UNRESOLVED');
+  const cashFlow = projectBankCashFlowTransaction(baseRow, { scopeKey: 'scope-a' });
+  assert.equal(cashFlow.projectionStatus, 'PROJECTED');
+  assert.equal(cashFlow.movementType, 'OUTGOING_TRANSFER');
+  const journal = projectBalancedBankJournal(cashFlow);
+  assert.equal(journal.projectionStatus, 'PROJECTED');
+  assert.deepEqual(journal.postings.map((posting) => posting.account.code), ['UNCLASSIFIED_OUTGOING', 'UNRESOLVED_BANK_ACCOUNT']);
+  assert.equal(journal.postings[0].side, 'DEBIT');
+  assert.equal(journal.postings[1].side, 'CREDIT');
 });
