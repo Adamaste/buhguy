@@ -12,11 +12,21 @@ bank SQL query and never reads raw notification payloads.
 ## Accepted journal contract
 
 A candidate is projected only from a `PROJECTED` journal with the exact model
-version, a 64-character content key, positive bank transaction id, non-empty
+version and the SHA-256 key recomputed from the exact v1 journal fingerprint:
+model version, cash-flow projection version/key, scope, transaction id, event
+time, exact amount/currency, event type/direction, and canonical debit/credit
+accounts. A syntactically valid but content-inconsistent key is rejected.
+The journal must also have a positive bank transaction id, non-empty
 scope, valid event time, canonical decimal amount, uppercase three-letter
 currency, and exactly one debit and one credit posting. Both postings must
 carry the exact top-level amount and currency. The bank side and counter-side
 must match the established direction and symbolic-account mapping.
+
+The only accepted bank-side accounts are a positive financial-account id or
+the exact symbolic `UNRESOLVED_BANK_ACCOUNT`. A concrete bank side requires
+`accountIdentityStatus=CONCRETE` and resolution state `EXACT`, `MANUAL`, or
+`RECONCILED`; the unresolved symbolic side requires
+`accountIdentityStatus=UNRESOLVED`. No account identity is reconstructed.
 
 The journal provenance must identify the cash-flow projection version and key,
 the same bank transaction id, and the source reason/status. Malformed,

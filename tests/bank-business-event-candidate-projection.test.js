@@ -116,6 +116,91 @@ test('journal contract rejects malformed version, key, and posting cardinality',
   }
 });
 
+test('journal key is verified against the exact journal content fingerprint', () => {
+  const unresolved = journal();
+  const concrete = journal({ financialAccountId: 42, accountResolutionState: 'EXACT', financialAccountScopeKey: 'scope-a' });
+  const concreteWithOldKey = { ...concrete, journalKey: unresolved.journalKey };
+  const changedAmount = {
+    ...unresolved,
+    amount: '101.00',
+    postings: unresolved.postings.map((posting) => ({ ...posting, amount: '101.00' })),
+  };
+  for (const invalid of [
+    { ...unresolved, journalKey: 'a'.repeat(64) },
+    concreteWithOldKey,
+    changedAmount,
+  ]) {
+    const result = projectBankBusinessEventCandidate(invalid);
+    assert.equal(result.projectionStatus, BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.UNRESOLVED);
+    assert.equal(result.reasonCode, 'JOURNAL_CONTRACT_INVALID');
+  }
+  assertProjected(projectBankBusinessEventCandidate(unresolved));
+  assert.equal(unresolved.journalKey, journal().journalKey);
+});
+
+test('bank side accepts only unresolved or concrete financial-account representations', () => {
+  const valid = journal();
+  const arbitrarySymbolic = {
+    ...valid,
+    bankSide: { type: 'SYMBOLIC', code: 'UNCLASSIFIED_OUTGOING' },
+    postings: valid.postings.map((posting) => posting.side === 'CREDIT'
+      ? { ...posting, account: { type: 'SYMBOLIC', code: 'UNCLASSIFIED_OUTGOING' } }
+      : posting),
+  };
+  const result = projectBankBusinessEventCandidate(arbitrarySymbolic);
+  assert.equal(result.projectionStatus, BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.UNRESOLVED);
+  assert.equal(result.reasonCode, 'JOURNAL_CONTRACT_INVALID');
+  assertProjected(projectBankBusinessEventCandidate(valid));
+  assertProjected(projectBankBusinessEventCandidate(journal({
+    financialAccountId: 42,
+    accountResolutionState: 'EXACT',
+    financialAccountScopeKey: 'scope-a',
+  })));
+});
+
+test('bank-side identity provenance must agree with the account representation', () => {
+  const unresolved = journal();
+  const concrete = journal({ financialAccountId: 42, accountResolutionState: 'EXACT', financialAccountScopeKey: 'scope-a' });
+  for (const state of ['EXACT', 'MANUAL', 'RECONCILED']) {
+    assertProjected(projectBankBusinessEventCandidate(journal({
+      financialAccountId: 42,
+      accountResolutionState: state,
+      financialAccountScopeKey: 'scope-a',
+    })));
+  }
+  for (const invalid of [
+    { ...unresolved, sourceProvenance: { ...unresolved.sourceProvenance, accountIdentityStatus: 'CONCRETE', accountResolutionState: 'EXACT' } },
+    { ...concrete, sourceProvenance: { ...concrete.sourceProvenance, accountIdentityStatus: 'UNRESOLVED', accountResolutionState: 'UNKNOWN' } },
+    { ...concrete, sourceProvenance: { ...concrete.sourceProvenance, accountIdentityStatus: 'CONCRETE', accountResolutionState: 'UNKNOWN' } },
+  ]) {
+    const result = projectBankBusinessEventCandidate(invalid);
+    assert.equal(result.projectionStatus, BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.UNRESOLVED);
+    assert.equal(result.reasonCode, 'JOURNAL_CONTRACT_INVALID');
+  }
+});
+
+test('known event mappings require coherent source and journal reason codes', () => {
+  const cases = [
+    ['PURCHASE', 'DEBIT', 'PROVEN_PURCHASE_DEBIT'],
+    ['OUTGOING_TRANSFER', 'DEBIT', 'PROVEN_OUTGOING_TRANSFER_DEBIT'],
+    ['INCOMING_TRANSFER', 'CREDIT', 'PROVEN_INCOMING_TRANSFER_CREDIT'],
+  ];
+  for (const [sourceEventType, direction, reasonCode] of cases) {
+    const valid = journal({ sourceEventType, direction });
+    assertProjected(projectBankBusinessEventCandidate(valid));
+    for (const invalid of [
+      { ...valid, reasonCode: 'OTHER' },
+      { ...valid, sourceProvenance: { ...valid.sourceProvenance, sourceReasonCode: 'OTHER' } },
+      { ...valid, reasonCode },
+    ]) {
+      if (invalid.reasonCode === reasonCode && invalid.sourceProvenance?.sourceReasonCode !== 'OTHER') continue;
+      const result = projectBankBusinessEventCandidate(invalid);
+      assert.equal(result.projectionStatus, BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.UNRESOLVED);
+      assert.equal(result.reasonCode, 'JOURNAL_SEMANTIC_MISMATCH');
+    }
+  }
+});
+
 test('journal contract rejects amount/currency mismatches and wrong account orientation', () => {
   const valid = journal();
   const variants = [

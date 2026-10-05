@@ -25,6 +25,12 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/i;
 const MONEY = /^(\d+)(?:\.(\d{1,2}))?$/;
 const CURRENCY = /^[A-Z]{3}$/;
 const SIDES = new Set(['DEBIT', 'CREDIT']);
+const ACCOUNT_RESOLUTION_STATES = new Set(['EXACT', 'MANUAL', 'RECONCILED']);
+const KNOWN_REASON_CODES = Object.freeze({
+  PURCHASE: 'PROVEN_PURCHASE_DEBIT',
+  OUTGOING_TRANSFER: 'PROVEN_OUTGOING_TRANSFER_DEBIT',
+  INCOMING_TRANSFER: 'PROVEN_INCOMING_TRANSFER_CREDIT',
+});
 
 function expectedCashFlowProjectionKey(bankTransactionId) {
   return crypto.createHash('sha256')
@@ -61,6 +67,40 @@ function safeAccount(account) {
     return { type: account.type, code: account.code };
   }
   return null;
+}
+
+function safeBankSide(account) {
+  const normalized = safeAccount(account);
+  if (!normalized) return null;
+  if (normalized.type === JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT) return normalized;
+  return normalized.code === UNRESOLVED_BANK_ACCOUNT ? normalized : null;
+}
+
+function canonicalJournalAccount(account) {
+  if (account.type === JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT) {
+    return { type: JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT, financialAccountId: account.financialAccountId };
+  }
+  return { type: JOURNAL_ACCOUNT_TYPES.SYMBOLIC, code: account.code };
+}
+
+function contentJournalKey(journal, source, debit, credit, occurredAt, amount, currency) {
+  const fingerprint = {
+    modelVersion: journal.modelVersion,
+    sourceProjection: {
+      modelVersion: source.projectionVersion,
+      projectionKey: source.projectionKey.toLowerCase(),
+    },
+    scopeKey: journal.scopeKey,
+    bankTransactionId: journal.bankTransactionId,
+    occurredAt,
+    amount,
+    currency,
+    sourceEventType: journal.sourceEventType,
+    direction: journal.direction,
+    debitAccount: canonicalJournalAccount(debit.account),
+    creditAccount: canonicalJournalAccount(credit.account),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex');
 }
 
 function sameAccount(left, right) {
@@ -128,7 +168,7 @@ function validateJournal(journal) {
   if (new Set(postings.map((posting) => posting.side)).size !== 2) return 'JOURNAL_CONTRACT_INVALID';
   const debit = postings.find((posting) => posting.side === 'DEBIT');
   const credit = postings.find((posting) => posting.side === 'CREDIT');
-  const bankSide = safeAccount(journal.bankSide);
+  const bankSide = safeBankSide(journal.bankSide);
   if (!bankSide || !sameAccount(bankSide, journal.bankSide)) return 'JOURNAL_CONTRACT_INVALID';
   if (!postings.some((posting) => sameAccount(posting.account, bankSide))) return 'JOURNAL_CONTRACT_INVALID';
   const source = journal.sourceProvenance;
@@ -144,8 +184,15 @@ function validateJournal(journal) {
     && source.sourceProjectionStatus === 'UNRESOLVED';
   if (!known && !unknown) return 'JOURNAL_SEMANTIC_MISMATCH';
   if (source.projectionKey.toLowerCase() !== expectedCashFlowProjectionKey(journal.bankTransactionId)) return 'JOURNAL_CONTRACT_INVALID';
+  if (bankSide.type === JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT
+    && (source.accountIdentityStatus !== 'CONCRETE'
+      || !ACCOUNT_RESOLUTION_STATES.has(source.accountResolutionState))) return 'JOURNAL_CONTRACT_INVALID';
+  if (bankSide.type === JOURNAL_ACCOUNT_TYPES.SYMBOLIC
+    && source.accountIdentityStatus !== 'UNRESOLVED') return 'JOURNAL_CONTRACT_INVALID';
   if (known && (source.sourceProjectionStatus !== 'PROJECTED' || source.sourceMovementType !== journal.sourceEventType)) return 'JOURNAL_SEMANTIC_MISMATCH';
   if (unknown && source.sourceMovementType !== 'UNRESOLVED') return 'JOURNAL_SEMANTIC_MISMATCH';
+  if (known && (source.sourceReasonCode !== KNOWN_REASON_CODES[journal.sourceEventType]
+    || journal.reasonCode !== KNOWN_REASON_CODES[journal.sourceEventType])) return 'JOURNAL_SEMANTIC_MISMATCH';
   if ((known || unknown) && !['DEBIT', 'CREDIT'].includes(journal.direction)) return 'JOURNAL_SEMANTIC_MISMATCH';
   if ((journal.sourceEventType === 'PURCHASE' || journal.sourceEventType === 'OUTGOING_TRANSFER')
     && journal.direction !== 'DEBIT') return 'JOURNAL_SEMANTIC_MISMATCH';
@@ -166,6 +213,9 @@ function validateJournal(journal) {
     && (!sameAccount(debit.account, bankSide)
       || !sameAccount(credit.account, { type: JOURNAL_ACCOUNT_TYPES.SYMBOLIC, code: 'UNCLASSIFIED_INCOMING' }))) return 'JOURNAL_SEMANTIC_MISMATCH';
   if (source.journalProjectionVersion && source.journalProjectionVersion !== journal.modelVersion) return 'JOURNAL_CONTRACT_INVALID';
+  if (occurredAt !== journal.occurredAt
+    || contentJournalKey(journal, source, debit, credit, occurredAt, amount, currency)
+      !== journal.journalKey.toLowerCase()) return 'JOURNAL_CONTRACT_INVALID';
   return null;
 }
 
@@ -211,7 +261,7 @@ export function projectBankBusinessEventCandidate(journal) {
     candidateKind: mapping.candidateKind,
     businessEventType: mapping.businessEventType,
     transferDirection: mapping.transferDirection,
-    bankSide: safeAccount(journal.bankSide),
+    bankSide: safeBankSide(journal.bankSide),
     reasonCode: journal.sourceEventType === 'UNKNOWN' ? 'PROVEN_MONETARY_MOVEMENT_EVENT_TYPE_UNKNOWN' : 'PROVEN_BUSINESS_EVENT_CANDIDATE',
     sourceProvenance,
   };
