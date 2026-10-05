@@ -234,6 +234,57 @@ persisted. No Alfa parser change is authorized, no third purchase is required
 solely for validation, and any future evidence must add a genuinely new
 runtime marker or independent family rather than repeat this same topology.
 
+## Alfa transaction-lifecycle correlation forensic
+
+The available Android/backend lifecycle identity fields are the provider and
+source package/channel metadata, event time derived from Android notification
+post time, observed-at capture time, the immutable source-event identity, and
+the per-observation structural/normalization facts. The Android capture
+contract also has notification key, notification id, notification tag, title,
+text, big text, subtext, and channel id before persistence. The backend keeps
+one immutable observation and one bank transaction per source event. The
+notification key/tag and raw payload are not available through the safe
+semantic projection; channel is metadata and is not part of source-event-id
+derivation.
+
+The first controlled lifecycle was `437/341`, `438/342`, `439/343`; the
+second was `456/357`, `458/358`, `460/359`. In each, the primary structured
+notification preceded a structured update and then an empty companion. A
+natural same-shaped lifecycle was also observed as `461/360`, `462/361`,
+`464/362`; it matches the topology and structural member shapes, but is not
+counted as a controlled purchase. Within the controlled triplets, provider,
+source package, channel shape, adapter, schema version, and description/text
+equivalence agree, while source-event identities and payload identities are
+distinct.
+
+The evidence supports a bounded lifecycle heuristic, not a deterministic
+identity key. A safe prospective rule would require the same canonical
+provider/source metadata, exact primary/update/empty structural families, an
+ordered event-time topology, matching proven monetary evidence where present,
+and fail closed whenever more than one candidate group remains. Time and
+structural shape alone collide in the corpus: the update shape recurs in
+`438`, `458`, and `462`, the empty shape has multiple historical members, and
+amount/time proximity is not a unique economic-operation identity. The exact
+Android notification key/tag needed for stronger identity is not available at
+this layer. Therefore `ALFA_LIFECYCLE_CORRELATION=PROVEN_BOUNDED_HEURISTIC`,
+with ambiguous groups retained rather than merged.
+
+For lifecycle semantics, the primary is the canonical monetary member, the
+structured update is direction evidence only, and the empty member is
+non-monetary. One economic operation per group is a prospective rule only;
+the existing immutable observations and bank transactions are not collapsed.
+The recommended implementation boundary is a separate post-ingestion Alfa
+lifecycle/canonicalization projection, not single-observation parser logic.
+It must preserve all observations, select one primary only when the bounded
+rule is unambiguous, and otherwise emit no canonical monetary result.
+
+No Alfa implementation is authorized by this forensic result, and
+`PURCHASE` semantics remain unproven. No prospective unknown-DEBIT cash-flow
+or journal projection was run. A naive per-notification projection would
+retain a duplicate-count risk; no production accounting output was created.
+The result authorizes only further reviewed lifecycle-design work, not parser
+promotion, persistence, replay, backfill, or accounting mutation.
+
 ## Person 1 account-identity readiness audit
 
 The read-only production audit completed against the exact master above. The
@@ -1719,12 +1770,12 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 The Person 1 account-identity readiness audit is complete for development and
 the active phase is `RECONCILIATION_DEVELOPMENT`. The immediate next slice is
-a separate reviewed Sber purchase-normalizer slice for the exact evidence-
-backed family above. It must preserve fail-closed behavior and must not turn
-the notification into accounting truth by itself. Account identity may be
-used only when explicitly resolved; source ownership is not payer/beneficiary
-proof; and `INTERNAL_TRANSFER` requires independently proven two-sided
-own-account evidence.
+a separate reviewed Alfa lifecycle/canonicalization design slice for the
+bounded, fail-closed evidence above. It must preserve fail-closed behavior
+and must not turn a notification into accounting truth by itself. Account
+identity may be used only when explicitly resolved; source ownership is not
+payer/beneficiary proof; and `INTERNAL_TRANSFER` requires independently
+proven two-sided own-account evidence.
 
 Bank-to-receipt candidate matching is deferred to a later reconciliation
 slice. It remains part of the roadmap as additional independent purchase
