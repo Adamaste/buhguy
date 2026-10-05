@@ -389,7 +389,7 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
       SELECT item.receipt_id,
              count(DISTINCT item.id)::integer AS "receiptItemCount",
              count(DISTINCT item_fact.receipt_item_id)::integer AS "normalizedItemFactCount",
-             COALESCE(array_agg(DISTINCT item_fact.payment_type_code) FILTER (WHERE item_fact.payment_type_code IS NOT NULL), ARRAY[]::smallint[]) AS "itemPaymentTypeCodes"
+             COALESCE(array_agg(item_fact.payment_type_code ORDER BY item.id) FILTER (WHERE item_fact.receipt_item_id IS NOT NULL), ARRAY[]::smallint[]) AS "itemPaymentTypeCodes"
       FROM receipt_items item
       LEFT JOIN receipt_item_fiscal_facts item_fact ON item_fact.receipt_item_id = item.id AND item_fact.normalization_version = $1
       GROUP BY item.receipt_id

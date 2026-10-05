@@ -316,6 +316,36 @@ test('loader reads bank, ownership, and receipt evidence once with SELECT-only S
   assert.equal(calls.length, 3);
   assert.equal(calls.every((sql) => !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql)), true);
   assert.equal(calls.some((sql) => /fns_source_person/i.test(sql)), false);
+  const receiptSql = calls.find((sql) => /FROM receipts r/i.test(sql));
+  assert.match(receiptSql, /array_agg\(item_fact\.payment_type_code ORDER BY item\.id\)/i);
+  assert.doesNotMatch(receiptSql, /array_agg\(DISTINCT item_fact\.payment_type_code/i);
+});
+
+test('loader preserves one payment type value per normalized receipt item', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (/FROM bank_transactions bt/i.test(sql)) return { rows: [{
+        bankTransactionId: 10,
+        occurredAt: '2026-10-05T10:00:00.000Z',
+        amount: '100.00',
+        currency: 'RUB',
+        sourceEventType: 'PURCHASE',
+        direction: 'DEBIT',
+        normalizationStatus: 'READY',
+        evidenceQuality: 'EXACT',
+        sourceScopeKeys: ['scope-a'],
+        accountResolutionState: 'EXACT',
+        financialAccountId: 1,
+        financialAccountScopeKey: 'scope-a',
+      }] };
+      if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1)] };
+      if (/FROM receipts r/i.test(sql)) return { rows: [receiptRow({ receiptItemCount: 2, normalizedItemFactCount: 2, itemPaymentTypeCodes: [4, 4] })] };
+      throw new Error('unexpected query');
+    },
+  };
+  const result = await loadBankReceiptMatching(pool, { scopeKey: 'scope-a', internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 });
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
 });
 
 test('loader preserves cross-scope receipt evidence before requested-scope selection', async () => {
