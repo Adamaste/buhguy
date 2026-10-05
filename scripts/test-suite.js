@@ -33,6 +33,7 @@ const unitFiles = [
   'tests/migration-wrapper.test.js',
   'tests/bank-provider-fixtures.test.js',
   'tests/bank-business-event-candidate-projection.test.js',
+  'tests/bank-internal-transfer-matching.test.js',
   'tests/yandex-bank-normalization.test.js',
   'tests/alfa-bank-normalization.test.js',
   'tests/alfa-lifecycle-canonicalization.test.js',
