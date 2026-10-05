@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-04
 - Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows now prove a reusable transaction-amount position, but do not prove bounded purchase or DEBIT runtime semantics, so no Alfa purchase parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows prove a reusable transaction-amount position and a narrow DEBIT signal, but the signal is carried by a repeated update member and is unsafe to promote without lifecycle deduplication, so no Alfa v5 parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: retain the pairwise Alfa evidence as fail-closed forensic input and continue the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The second independent ordinary purchase has been correlated; no third purchase is required solely for validation. The reusable amount position is documented, but purchase/debit semantics remain unauthorized without a bounded runtime marker. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: retain the pairwise Alfa evidence as fail-closed forensic input and continue the primary development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The second independent ordinary purchase has been correlated; no third purchase is required solely for validation. Alfa v5 remains blocked on transaction-lifecycle deduplication for the repeated minus-bearing update; `PURCHASE` remains unproven. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -175,17 +175,56 @@ position follows the explicit `остаток` marker. That update-side position
 balance-like, but it is not evidence that the primary secondary field has the
 same role.
 
-The primary family has no stable explicit purchase/payment lexical marker and
-does not contain a directly proven DEBIT marker. Controlled ground truth is
-`PURCHASE` and `DEBIT`, but runtime semantics remain fail-closed:
+The primary family has no stable explicit purchase/payment lexical marker. Its
+primary amount is not preceded by a sign; the ASCII hyphen-minus `U+002D`
+appears immediately before the correlated amount only in the structured
+update title. The same minus-before-amount convention is present in the
+reviewed exact F5 outgoing-transfer family, while no independently proven
+incoming or non-monetary Alfa counterexample uses it. This supports a narrow
+DEBIT signal, but not PURCHASE. Controlled ground truth is `PURCHASE` and
+`DEBIT`, and runtime promotion remains fail-closed:
 
 - `REUSABLE_PURCHASE_MARKER_PROVEN=NO`;
-- `REUSABLE_DEBIT_SEMANTICS_PROVEN=NO`;
+- `REUSABLE_DEBIT_SEMANTICS_PROVEN=YES` only for the sign-bearing monetary
+  update shape;
 - `MERCHANT_POSITION_PROVEN=NO`;
 - `REFERENCE_PRESENT=YES`, with `REFERENCE_KIND=UNKNOWN` and no ownership
   inference;
 - `INDEPENDENT_MATCHING_PURCHASE_OPERATIONS=2` at the controlled-evidence
   level, but `ALFA_PURCHASE_GRAMMAR=INSUFFICIENT_EVIDENCE`.
+
+The full Alfa sign audit found eight current exact F5 outgoing primary
+observations with the minus convention, plus two historical F5-shaped rows
+that are not current runtime evidence. No independently proven incoming or
+non-monetary minus counterexample was found. A plus-shaped update exists, but
+it is not independently proven incoming, so plus is not an incoming proof.
+
+The canonical monetary lifecycle member for both controlled purchases is the
+primary (`437/341` and `456/357`). The update members (`438/342` and
+`458/358`) repeat the transaction-correlated title amount and also carry a
+separate body field after `остаток`; the empty companions are `439/343` and
+`460/359`. A later same-shaped Alfa lifecycle (`461/360`, `462/361`,
+`464/362`) was observed outside the controlled window and is not counted as
+another controlled purchase. Promoting every minus-bearing notification would
+therefore create a duplicate monetary row for one economic operation.
+
+Accordingly:
+
+- `UNKNOWN_DEBIT_SEMANTICS_AUTHORIZED=YES` as a narrow semantic observation,
+  not as permission to promote every notification;
+- `CANONICAL_MONETARY_LIFECYCLE_MEMBER=PRIMARY`;
+- `GENERIC_MINUS_PROMOTION_DOUBLE_COUNT_RISK=YES`;
+- `F5_TRANSFER_PLUS_MINUS_COMPANION_DOUBLE_COUNT_RISK=NO` for the reviewed
+  F5 corpus, whose companions are empty rather than a second monetary row;
+- `SAFE_SINGLE_MONETARY_ROW_RULE_PROVEN=NO`;
+- `ALFA_V5_AUTHORIZATION=DEBIT_PROVEN_BUT_LIFECYCLE_UNSAFE`;
+- `PURCHASE_SEMANTICS_AUTHORIZED=NO`.
+
+The required future implementation boundary is an explicit transaction-grain
+lifecycle/dedup rule that selects one canonical primary and does not promote
+the repeated update as a second monetary transaction. No parser, cash-flow,
+journal, business-event, ledger, or reconciliation persistence was changed or
+run for this forensic step.
 
 The primary family is not an exact historical match; the update/companion
 shape has a near historical envelope with a different sign form. The current
