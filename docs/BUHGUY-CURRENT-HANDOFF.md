@@ -25,7 +25,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: prepare and perform one ordinary user-controlled T-Bank card purchase only after the clean baseline recorded below; then correlate its complete notification lifecycle and close or identify the exact remaining purchase-evidence blocker. Do not repeat the T-Bank outgoing transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: complete the read-only forensic closeout for the controlled T-Bank purchase recorded below and, only through a separately reviewed baseline, consider one second independent purchase because the first sample does not prove a reusable purchase grammar. Do not repeat the T-Bank outgoing transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## T-Bank ordinary purchase validation baseline
 
@@ -54,13 +54,37 @@ No Android configuration, credentials, allowlist, listener state, database
 row, account resolution, ledger, business event, or reconciliation state was
 changed during this baseline.
 
-`READY_FOR_TBANK_PURCHASE=YES`: the next evidence operation may be one ordinary
-small distinctive purchase paid with T-Bank card or phone, not a transfer,
-with the amount chosen by the user. Wait for the complete notification
-lifecycle and do not perform another T-Bank operation until correlation is
-complete. The purchase is evidence validation only; it does not authorize a
-parser or imply `PURCHASE`, `DEBIT`, amount, currency, account identity, or
-accounting semantics before the notification itself proves them.
+The controlled ordinary purchase completed after this baseline produced one
+new lifecycle window: primary candidate observation `492` / transaction `375`,
+possible companion observation `491` / transaction `374`, and empty companion
+observation `496` / transaction `376`. All three used the exact T-Bank
+provider/Android/schema transport metadata and persisted through
+`tbank-bank-normalizer-v2`; the earlier apparent metadata gap was a reporting
+formatting error, not missing immutable metadata.
+
+Observation `492` has title, description, and text; description and text are
+equal; the body has a purchase-like lexical marker, an availability marker,
+two currency-marker occurrences, and a masked-reference-shaped position.
+No merchant/counterparty-shaped position or explicit debit/outgoing marker was
+proven. Its event time is present. The operator-confirmed amount matches one
+body monetary position, while a second monetary position remains separate but
+its balance role is unproven. Observation `491` is a non-title structured
+companion with one monetary/currency position that does not repeat the
+controlled transaction amount; observation `496` is empty/non-monetary.
+
+The complete T-Bank corpus has one exact match for the `492` structural
+predicate, namely this controlled window; there are no top-up or outgoing
+transfer collisions and no historical reusable purchase match. Persisted
+normalization remains `PARTIAL / UNKNOWN / UNKNOWN` with no amount or
+currency, and account resolution remains `UNKNOWN`. Therefore
+`TBANK_PURCHASE_AUTHORIZATION=SECOND_CONTROLLED_PURCHASE_REQUIRED`: a second
+independent purchase with a different amount would materially test repeatability,
+separate the transaction amount from the secondary position, and validate the
+single-primary lifecycle rule. No second operation is requested or performed
+in this closeout.
+
+No parser, account resolution, cash-flow, journal, business-event, ledger, or
+reconciliation persistence was changed. No replay or backfill occurred.
 
 ## Sber purchase normalizer v6 production rollout
 
