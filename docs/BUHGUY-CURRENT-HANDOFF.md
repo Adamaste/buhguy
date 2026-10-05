@@ -720,10 +720,12 @@ unknown account resolution.
 The same operation produced Sber observation `473` / transaction `367` as
 the opposite-side incoming event, with empty/non-ready companion observation
 `477` / transaction `368`. Sber persisted `READY / INCOMING_TRANSFER / CREDIT
-/ EXACT` against the already proven financial account; this establishes
-two-sided controlled-window amount/direction correlation, but does not turn
-the T-Bank structural shape into reusable outgoing grammar or prove an
-`INTERNAL_TRANSFER`. T-Bank observation `469` / transaction `365` is a
+/ EXACT` against the already proven financial account. This is a controlled
+cross-bank correlation, not independent two-sided monetary evidence: Sber has
+exact monetary evidence, while T-Bank has insufficient monetary evidence.
+The T-Bank structural shape therefore does not become reusable outgoing
+grammar or prove an `INTERNAL_TRANSFER`. T-Bank observation `469` /
+transaction `365` is a
 separate earlier top-up-like event: its event-time ordering and incompatible
 shape do not prove lifecycle membership.
 
@@ -734,6 +736,14 @@ near matches remained structurally non-identical. The corpus therefore does
 not authorize a T-Bank outgoing parser. A second same-family controlled
 transfer would not add the missing transaction amount or explicit direction
 marker, so no additional T-Bank operation is required solely for this gap.
+`INTERNAL_TRANSFER` remains unauthorized because T-Bank monetary facts are
+incomplete (amount, currency, and reusable direction are not proven) and the
+T-Bank financial-account identity is unresolved.
+`CONTROLLED_CROSS_BANK_CORRELATION=PASS`;
+`SBER_INCOMING_MONETARY_EVIDENCE=EXACT`;
+`TBANK_OUTGOING_MONETARY_EVIDENCE=INSUFFICIENT`;
+`INDEPENDENT_TWO_SIDED_MONETARY_EVIDENCE=NO`.
+
 No parser, schema, account-resolution, accounting, replay, backfill, or
 production configuration change was made.
 
