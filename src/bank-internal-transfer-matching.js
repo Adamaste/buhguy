@@ -77,6 +77,58 @@ function accountSnapshot(snapshot, accountId) {
   return (snapshot.accounts ?? []).find((account) => account.financialAccountId === accountId) ?? null;
 }
 
+function validateOwnershipSnapshot(snapshot) {
+  if (!snapshot || snapshot.modelVersion !== BANK_INTERNAL_TRANSFER_MATCHING_VERSION) {
+    throw new Error('ownershipSnapshot modelVersion is invalid');
+  }
+  if (!Array.isArray(snapshot.accounts)) throw new Error('ownershipSnapshot accounts must be an array');
+  const accountIds = new Set();
+  const accounts = snapshot.accounts.map((account) => {
+    if (!account || !positiveInteger(account.financialAccountId)
+      || accountIds.has(account.financialAccountId)
+      || !nonEmptyString(account.accountScopeKey)
+      || !Array.isArray(account.owners)) {
+      throw new Error('ownershipSnapshot account contract is invalid');
+    }
+    accountIds.add(account.financialAccountId);
+    const ownerIds = new Map();
+    const owners = account.owners.map((owner) => {
+      if (!owner || owner.financialAccountId !== account.financialAccountId
+        || owner.accountScopeKey !== account.accountScopeKey
+        || !positiveInteger(owner.personId)
+        || !nonEmptyString(owner.personScopeKey)
+        || owner.personScopeKey !== account.accountScopeKey
+        || owner.relationType !== 'OWNER'
+        || !nonEmptyString(owner.provenance)) {
+        throw new Error('ownershipSnapshot owner contract is invalid');
+      }
+      const prior = ownerIds.get(owner.personId);
+      const canonical = {
+        financialAccountId: owner.financialAccountId,
+        accountScopeKey: owner.accountScopeKey,
+        personId: owner.personId,
+        personScopeKey: owner.personScopeKey,
+        relationType: 'OWNER',
+        provenance: owner.provenance,
+      };
+      if (prior && stableJson(prior) !== stableJson(canonical)) {
+        throw new Error('ownershipSnapshot has conflicting duplicate owner evidence');
+      }
+      ownerIds.set(owner.personId, canonical);
+      return canonical;
+    });
+    return {
+      financialAccountId: account.financialAccountId,
+      accountScopeKey: account.accountScopeKey,
+      owners: [...ownerIds.values()].sort((left, right) => stableJson(left).localeCompare(stableJson(right))),
+    };
+  });
+  return {
+    modelVersion: BANK_INTERNAL_TRANSFER_MATCHING_VERSION,
+    accounts: accounts.sort((left, right) => left.financialAccountId - right.financialAccountId),
+  };
+}
+
 function candidateProjectionMatches(supplied, regenerated) {
   return REQUIRED_CANDIDATE_FIELDS.every((field) => stableJson(supplied?.[field]) === stableJson(regenerated?.[field]));
 }
@@ -87,18 +139,22 @@ function validateMaxTimeDelta(maxTimeDeltaMs) {
   }
 }
 
-function statusKey(candidate, index) {
-  return candidate?.candidateKey ?? `input-${String(index).padStart(8, '0')}`;
+function statusKey(status) {
+  return stableJson({
+    candidateKey: status.candidateKey,
+    bankTransactionId: status.bankTransactionId,
+    status: status.status,
+    reasonCode: status.reasonCode,
+  });
 }
 
-function statusRow(entry, index, status, reasonCode) {
+function statusRow(entry, status, reasonCode) {
   const candidate = entry?.candidate;
   return {
     candidateKey: candidate?.candidateKey ?? null,
     bankTransactionId: positiveInteger(candidate?.bankTransactionId) ? candidate.bankTransactionId : null,
     status,
     reasonCode,
-    inputIndex: index,
   };
 }
 
@@ -117,7 +173,7 @@ function parseTime(value) {
   return Number.isNaN(time) ? null : time;
 }
 
-function matchFingerprint(outgoing, incoming, ownerPersonId, outgoingOwners, incomingOwners, maxTimeDeltaMs, timeDeltaMs) {
+function matchFingerprint(outgoing, incoming, ownerPersonId, outgoingOwner, incomingOwner, maxTimeDeltaMs, timeDeltaMs) {
   return {
     modelVersion: BANK_INTERNAL_TRANSFER_MATCHING_VERSION,
     maxTimeDeltaMs,
@@ -140,18 +196,21 @@ function matchFingerprint(outgoing, incoming, ownerPersonId, outgoingOwners, inc
       financialAccountId: incoming.candidate.bankSide.financialAccountId,
       occurredAt: incoming.candidate.occurredAt,
     },
-    outgoingOwnerEvidence: outgoingOwners,
-    incomingOwnerEvidence: incomingOwners,
+    outgoingOwnerEvidence: [outgoingOwner],
+    incomingOwnerEvidence: [incomingOwner],
   };
 }
 
 function makeMatch(outgoing, incoming, commonOwner, outgoingAccount, incomingAccount, maxTimeDeltaMs, timeDeltaMs) {
+  const outgoingOwner = outgoingAccount.owners.find((owner) => owner.personId === commonOwner);
+  const incomingOwner = incomingAccount.owners.find((owner) => owner.personId === commonOwner);
+  if (!outgoingOwner || !incomingOwner) throw new Error('common owner evidence is missing');
   const fingerprint = matchFingerprint(
     outgoing,
     incoming,
     commonOwner,
-    outgoingAccount.owners,
-    incomingAccount.owners,
+    outgoingOwner,
+    incomingOwner,
     maxTimeDeltaMs,
     timeDeltaMs,
   );
@@ -182,8 +241,8 @@ function makeMatch(outgoing, incoming, commonOwner, outgoingAccount, incomingAcc
       occurredAt: incoming.candidate.occurredAt,
     },
     ownershipProvenance: {
-      outgoing: outgoingAccount.owners,
-      incoming: incomingAccount.owners,
+      outgoing: [outgoingOwner],
+      incoming: [incomingOwner],
     },
     reasonCode: 'PROVEN_TWO_SIDED_OWN_ACCOUNT_TRANSFER',
   };
@@ -252,11 +311,11 @@ function normalizeEntries(entries) {
 export function matchBankInternalTransfers(entries, ownershipSnapshot, { maxTimeDeltaMs } = {}) {
   validateMaxTimeDelta(maxTimeDeltaMs);
   if (!Array.isArray(entries)) throw new Error('entries must be an array');
-  if (!ownershipSnapshot || !Array.isArray(ownershipSnapshot.accounts)) throw new Error('ownershipSnapshot is required');
+  const canonicalSnapshot = validateOwnershipSnapshot(ownershipSnapshot);
   const normalized = normalizeEntries(entries);
   const statuses = new Map();
   for (const row of normalized) {
-    if (row.ineligibleReason) statuses.set(row.index, statusRow(row.entry, row.index, INTERNAL_TRANSFER_MATCH_STATUSES.INELIGIBLE, row.ineligibleReason));
+    if (row.ineligibleReason) statuses.set(row.index, statusRow(row.entry, INTERNAL_TRANSFER_MATCH_STATUSES.INELIGIBLE, row.ineligibleReason));
   }
   const eligible = normalized.filter((row) => !row.ineligibleReason);
   const outgoing = eligible.filter((row) => row.candidate.transferDirection === TRANSFER_DIRECTIONS.OUTGOING);
@@ -264,7 +323,7 @@ export function matchBankInternalTransfers(entries, ownershipSnapshot, { maxTime
   const edges = [];
   for (const left of outgoing) {
     for (const right of incoming) {
-      const edge = compatible(left, right, ownershipSnapshot, maxTimeDeltaMs);
+      const edge = compatible(left, right, canonicalSnapshot, maxTimeDeltaMs);
       if (edge) edges.push(edge);
     }
   }
@@ -290,7 +349,7 @@ export function matchBankInternalTransfers(entries, ownershipSnapshot, { maxTime
     }
     if (component.length === 1 && (adjacency.get(component[0]) ?? []).length === 0) {
       const item = normalized.find((candidate) => candidate.index === component[0]);
-      statuses.set(component[0], statusRow(item.entry, component[0], INTERNAL_TRANSFER_MATCH_STATUSES.UNMATCHED, 'NO_COMPATIBLE_COUNTERPART'));
+      statuses.set(component[0], statusRow(item.entry, INTERNAL_TRANSFER_MATCH_STATUSES.UNMATCHED, 'NO_COMPATIBLE_COUNTERPART'));
       continue;
     }
     const componentOutgoing = component.filter((index) => outgoing.some((item) => item.index === index));
@@ -300,7 +359,7 @@ export function matchBankInternalTransfers(entries, ownershipSnapshot, { maxTime
       || (adjacency.get(componentIncoming[0]) ?? []).length !== 1) {
       for (const index of component) {
         const item = normalized.find((candidate) => candidate.index === index);
-        statuses.set(index, statusRow(item.entry, index, INTERNAL_TRANSFER_MATCH_STATUSES.AMBIGUOUS, 'MULTIPLE_COMPATIBLE_CANDIDATES'));
+        statuses.set(index, statusRow(item.entry, INTERNAL_TRANSFER_MATCH_STATUSES.AMBIGUOUS, 'MULTIPLE_COMPATIBLE_CANDIDATES'));
       }
       continue;
     }
@@ -308,12 +367,12 @@ export function matchBankInternalTransfers(entries, ownershipSnapshot, { maxTime
     const outgoingItem = normalized.find((item) => item.index === componentOutgoing[0]);
     const incomingItem = normalized.find((item) => item.index === componentIncoming[0]);
     matches.push(makeMatch(edge.outgoing, edge.incoming, edge.ownerPersonId, edge.outgoingAccount, edge.incomingAccount, maxTimeDeltaMs, edge.timeDeltaMs));
-    statuses.set(outgoingItem.index, statusRow(outgoingItem.entry, outgoingItem.index, INTERNAL_TRANSFER_MATCH_STATUSES.MATCHED, 'PROVEN_TWO_SIDED_OWN_ACCOUNT_TRANSFER'));
-    statuses.set(incomingItem.index, statusRow(incomingItem.entry, incomingItem.index, INTERNAL_TRANSFER_MATCH_STATUSES.MATCHED, 'PROVEN_TWO_SIDED_OWN_ACCOUNT_TRANSFER'));
+    statuses.set(outgoingItem.index, statusRow(outgoingItem.entry, INTERNAL_TRANSFER_MATCH_STATUSES.MATCHED, 'PROVEN_TWO_SIDED_OWN_ACCOUNT_TRANSFER'));
+    statuses.set(incomingItem.index, statusRow(incomingItem.entry, INTERNAL_TRANSFER_MATCH_STATUSES.MATCHED, 'PROVEN_TWO_SIDED_OWN_ACCOUNT_TRANSFER'));
   }
   const candidateStatuses = normalized.map((row) => statuses.get(row.index)
-    ?? statusRow(row.entry, row.index, INTERNAL_TRANSFER_MATCH_STATUSES.UNMATCHED, 'NO_COMPATIBLE_COUNTERPART'))
-    .sort((left, right) => statusKey({ candidateKey: left.candidateKey }, left.inputIndex).localeCompare(statusKey({ candidateKey: right.candidateKey }, right.inputIndex)));
+    ?? statusRow(row.entry, INTERNAL_TRANSFER_MATCH_STATUSES.UNMATCHED, 'NO_COMPATIBLE_COUNTERPART'))
+    .sort((left, right) => statusKey(left).localeCompare(statusKey(right)));
   matches.sort((left, right) => left.matchKey.localeCompare(right.matchKey));
   const summary = {
     totalInputCandidates: entries.length,
@@ -362,6 +421,10 @@ export async function loadBankInternalTransferMatching(pool, { scopeKey = null, 
   }));
   const accountIds = entries
     .filter(({ candidate }) => candidate.projectionStatus === BUSINESS_EVENT_CANDIDATE_PROJECTION_STATUSES.PROJECTED
+      && candidate.candidateKind === BUSINESS_EVENT_CANDIDATE_KINDS.TRANSFER
+      && candidate.businessEventType === 'TRANSFER'
+      && (candidate.transferDirection === TRANSFER_DIRECTIONS.OUTGOING
+        || candidate.transferDirection === TRANSFER_DIRECTIONS.INCOMING)
       && candidate.bankSide?.type === 'FINANCIAL_ACCOUNT')
     .map(({ candidate }) => candidate.bankSide.financialAccountId);
   const snapshot = await loadBankInternalTransferOwnershipSnapshot(pool, accountIds);

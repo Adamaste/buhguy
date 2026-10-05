@@ -37,7 +37,7 @@ people never become `INTERNAL_TRANSFER`.
 An outgoing and incoming candidate match only when they have distinct
 transactions, candidate/journal keys, and financial accounts; exact equal
 amount and currency strings; compatible scope; exactly one common owner; and
-an absolute capture-time delta within the caller-supplied finite positive safe
+an absolute `occurredAt`/event-time delta within the caller-supplied finite positive safe
 integer `maxTimeDeltaMs` window. The window is inclusive and is evaluated
 without money arithmetic.
 

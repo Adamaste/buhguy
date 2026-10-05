@@ -4,6 +4,7 @@ import {
   BANK_INTERNAL_TRANSFER_MATCHING_VERSION,
   INTERNAL_TRANSFER_MATCH_STATUSES,
   buildBankInternalTransferOwnershipSnapshot,
+  loadBankInternalTransferMatching,
   loadBankInternalTransferOwnershipSnapshot,
   matchBankInternalTransfers,
 } from '../src/bank-internal-transfer-matching.js';
@@ -191,13 +192,44 @@ test('matching is deterministic, input-order independent, and changes with polic
   const first = run(input.entries, input.snapshot, 10_000);
   const reversed = run([...input.entries].reverse(), input.snapshot, 10_000);
   assert.deepEqual(first.matches, reversed.matches);
-  assert.deepEqual(first.candidateStatuses.map(({ inputIndex, ...row }) => row), reversed.candidateStatuses.map(({ inputIndex, ...row }) => row));
+  assert.deepEqual(first.candidateStatuses, reversed.candidateStatuses);
+  assert.equal(first.candidateStatuses.some((row) => 'inputIndex' in row), false);
+  assert.deepEqual(first.summary, reversed.summary);
   assert.equal(first.matches[0].matchKey, run(input.entries, input.snapshot, 10_000).matches[0].matchKey);
   assert.notEqual(first.matches[0].matchKey, run(input.entries, input.snapshot, 10_001).matches[0].matchKey);
   assert.equal(run(input.entries, ownership([owner(1, 7), owner(2, 8)])).matches.length, 0);
   const before = structuredClone(input);
   run(input.entries, input.snapshot);
   assert.deepEqual(input, before);
+});
+
+test('ownership snapshot contract rejects forged or conflicting evidence and accepts canonical snapshots', () => {
+  const input = pair();
+  const malformed = [
+    { ...input.snapshot, modelVersion: 'wrong-version' },
+    { accounts: input.snapshot.accounts },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], financialAccountId: 0 }] },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], owners: [{ ...input.snapshot.accounts[0].owners[0], relationType: 'AUTHORIZED_USER' }] }, input.snapshot.accounts[1]] },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], owners: [{ ...input.snapshot.accounts[0].owners[0], provenance: '' }] }, input.snapshot.accounts[1]] },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], owners: [{ ...input.snapshot.accounts[0].owners[0], financialAccountId: 2 }] }, input.snapshot.accounts[1]] },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], owners: [{ ...input.snapshot.accounts[0].owners[0], personScopeKey: 'scope-b' }] }, input.snapshot.accounts[1]] },
+    { ...input.snapshot, accounts: [...input.snapshot.accounts, structuredClone(input.snapshot.accounts[0])] },
+    { ...input.snapshot, accounts: [{ ...input.snapshot.accounts[0], owners: [...input.snapshot.accounts[0].owners, { ...input.snapshot.accounts[0].owners[0], provenance: 'CONFLICTING' }] }, input.snapshot.accounts[1]] },
+  ];
+  for (const snapshot of malformed) assert.throws(() => run(input.entries, snapshot), /ownershipSnapshot/);
+  assert.equal(run(input.entries, input.snapshot).matches.length, 1);
+});
+
+test('matched ownership provenance contains only the common owner and keys ignore unrelated owners', () => {
+  const baseInput = pair({}, {}, [owner(1, 7), owner(1, 8), owner(2, 7)]);
+  const baseResult = run(baseInput.entries, baseInput.snapshot);
+  assert.equal(baseResult.matches[0].ownerPersonId, 7);
+  assert.deepEqual(baseResult.matches[0].ownershipProvenance.outgoing.map((row) => row.personId), [7]);
+  assert.deepEqual(baseResult.matches[0].ownershipProvenance.incoming.map((row) => row.personId), [7]);
+  const unrelated = pair({}, {}, [owner(1, 7), owner(1, 8), owner(1, 9), owner(2, 7)]);
+  assert.equal(run(unrelated.entries, unrelated.snapshot).matches[0].matchKey, baseResult.matches[0].matchKey);
+  const changedCommon = pair({}, {}, [owner(1, 7, { provenance: 'CHANGED' }), owner(1, 8), owner(2, 7)]);
+  assert.notEqual(run(changedCommon.entries, changedCommon.snapshot).matches[0].matchKey, baseResult.matches[0].matchKey);
 });
 
 test('ownership loader is SELECT-only and excludes source-context tables', async () => {
@@ -212,4 +244,23 @@ test('ownership loader is SELECT-only and excludes source-context tables', async
   assert.match(calls[0].sql, /SELECT/);
   assert.doesNotMatch(calls[0].sql, /\b(INSERT|UPDATE|DELETE|MERGE)\b/i);
   assert.doesNotMatch(calls[0].sql, /bank_source_person/i);
+});
+
+test('convenience loader requests ownership only for directional transfer accounts', async () => {
+  const rows = [
+    bankRow({ bankTransactionId: 40, sourceEventType: 'PURCHASE', financialAccountId: 9, accountResolutionState: 'EXACT', financialAccountScopeKey: 'scope-a' }),
+    bankRow({ bankTransactionId: 41, financialAccountId: 1 }),
+    bankRow({ bankTransactionId: 42, sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT', financialAccountId: 2, occurredAt: '2026-10-05T10:00:05.000Z' }),
+  ];
+  const calls = [];
+  const pool = { query: async (sql, params) => {
+    calls.push({ sql, params });
+    if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1, 7), owner(2, 7)] };
+    return { rows };
+  } };
+  const result = await loadBankInternalTransferMatching(pool, { scopeKey: 'scope-a', maxTimeDeltaMs: 10_000 });
+  assert.equal(result.matches.length, 1);
+  const ownershipCall = calls.find(({ sql }) => /FROM financial_accounts a/i.test(sql));
+  assert.deepEqual(ownershipCall.params, [[1, 2]]);
+  assert.equal(ownershipCall.sql.includes('bank_source_person'), false);
 });
