@@ -16,16 +16,51 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-04
-- Current implementation baseline: `f4909f46e587f4f0ff5ee624ce853ab6abf2c020` (PR #88 merged; Sber purchase normalizer v6 is deployed, and Alfa lifecycle canonicalization v1 is available as a standalone non-mutating projection)
+- Last updated: 2026-10-05
+- Current implementation baseline: `f50426f76a3c7b7a732ac3d703a73e7dbd04fdf8` (PR #91 merged; Yandex Pay outgoing v2 is merged, but has not been deployed)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
 - Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. The controlled T-Bank outgoing window is now forensically closed as insufficient: observation `471` has a transfer-like, non-monetary shape but no reusable transaction amount or explicit outgoing marker, while Sber observation `473` independently proves the opposite-side incoming event. No second T-Bank operation is justified solely to repeat this unresolved shape. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
-- Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: retain the T-Bank outgoing gap as fail-closed and continue with the next separately reviewed provider-evidence or bank cash-flow development slice; do not perform a second T-Bank transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
+- Next action: prepare and perform one ordinary user-controlled T-Bank card purchase only after the clean baseline recorded below; then correlate its complete notification lifecycle and close or identify the exact remaining purchase-evidence blocker. Do not repeat the T-Bank outgoing transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+
+## T-Bank ordinary purchase validation baseline
+
+PR #91 was squash-merged into exact master `f50426f76a3c7b7a732ac3d703a73e7dbd04fdf8`.
+It adds the reviewed Yandex Pay outgoing v2 specialization with additive dispatch:
+existing direct-package Yandex purchase/incoming behavior and the Yandex Pro
+alias remain on the existing provider parser. Yandex Pay v2 has not been
+deployed. No replay, backfill, account-resolution mutation, or accounting
+persistence occurred.
+
+A read-only production/device baseline was completed on 2026-10-05 before any
+new T-Bank operation. Backend health and PostgreSQL were active; the global
+bank evidence totals were 372 observations (maximum id 489) and 372
+transactions (maximum id 373). The T-Bank corpus contained 99 observations
+through observation 489 / transaction 373. Existing T-Bank purchase-like
+notifications remain generic `PARTIAL / UNKNOWN` evidence without a reusable
+transaction-amount or currency grammar, so `EXISTING_TBANK_PURCHASE_GRAMMAR=NONE`.
+
+The authorized Android device `R5GL30GK60F` was connected, the notification
+listener was enabled/live, the collector was installed and launchable, T-Bank
+was allowlisted with notification delivery permitted, and the source/server
+and credential configuration markers were present. The outbox had zero pending
+events; capture, delivery, callback, and listener diagnostics were available;
+no collector-specific runtime crash or permanent-rejection backlog was found.
+No Android configuration, credentials, allowlist, listener state, database
+row, account resolution, ledger, business event, or reconciliation state was
+changed during this baseline.
+
+`READY_FOR_TBANK_PURCHASE=YES`: the next evidence operation may be one ordinary
+small distinctive purchase paid with T-Bank card or phone, not a transfer,
+with the amount chosen by the user. Wait for the complete notification
+lifecycle and do not perform another T-Bank operation until correlation is
+complete. The purchase is evidence validation only; it does not authorize a
+parser or imply `PURCHASE`, `DEBIT`, amount, currency, account identity, or
+accounting semantics before the notification itself proves them.
 
 ## Sber purchase normalizer v6 production rollout
 
