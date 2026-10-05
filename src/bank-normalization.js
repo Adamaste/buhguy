@@ -1,4 +1,4 @@
-export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v1';
+export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v2';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
@@ -11,6 +11,8 @@ const ANDROID_NOTIFICATION_ADAPTER = 'android-notification';
 const SBER_ANDROID_SCHEMA_VERSION = '1';
 const TBANK_ANDROID_SCHEMA_VERSION = '1';
 const ALFA_ANDROID_SCHEMA_VERSION = '1';
+const YANDEX_PAY_SOURCE_PACKAGE = 'com.yandex.bank';
+const YANDEX_PAY_NOTIFICATION_CHANNEL = 'notification_channel_1';
 const SBER_INCOMING_TITLE_PATTERN = /^Перевод по СБП от [\p{L}\p{M} '-]+\.$/u;
 const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]+$/u;
 const SBER_PURCHASE_TITLE_PATTERN = /^Покупка [\p{L}\p{M} .'-]+$/u;
@@ -22,6 +24,8 @@ const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\
 const ALFA_F5_RECIPIENT_SECTION = /^Получатель:\s+\d+\s*\*\s*\d{4}$/u;
 const ALFA_F5_TRAILING_SECTION = /^\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
 const SBER_PURCHASE_BODY_PATTERN = /^(\d+) ₽ — Баланс: (\d+,\d{2}) ₽ Счёт карты МИР •• (\d{4})$/u;
+const YANDEX_PAY_TITLE_PATTERN = /^Карта [\p{L}\p{M} .'-]+$/u;
+const YANDEX_PAY_BODY_PATTERN = /^Перевод [\p{L}\p{M} .'-]+\.\s+(\d+\.\d{2})\s+RUB\.\s+[\p{L}\p{M} .'-]+\.\s+\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}\.\s+Доступно\s+\d+\.\d{2}\s+RUB$/u;
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -90,6 +94,66 @@ export function normalizeYandexBankEvent(input) {
 
 export function isYandexBankProvider(input) {
   return input.ingestionMetadata?.provider === YANDEX_PROVIDER;
+}
+
+function incompleteYandexPay({ occurred, hasFinancialMarker }) {
+  const partial = occurred !== null || hasFinancialMarker;
+  return {
+    eventType: 'UNKNOWN',
+    occurredAt: occurred,
+    amount: null,
+    currency: null,
+    direction: 'UNKNOWN',
+    merchant: null,
+    counterparty: null,
+    accountReference: null,
+    accountReferenceKind: null,
+    normalizationStatus: partial ? 'PARTIAL' : 'UNKNOWN',
+    evidenceQuality: partial ? 'PARTIAL' : 'INSUFFICIENT',
+    normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
+  };
+}
+
+export function normalizeYandexPayBankEvent(input) {
+  const payload = input.payload ?? {};
+  const title = normalizeWhitespace(payload.title);
+  const description = normalizeWhitespace(payload.description);
+  const text = normalizeWhitespace(payload.text);
+  const occurred = occurredAt(input.eventTime);
+  const hasFinancialMarker = title.startsWith('Карта ') || description.startsWith('Перевод ')
+    || text.startsWith('Перевод ');
+  const match = title.match(YANDEX_PAY_TITLE_PATTERN)
+    && description
+    && text
+    && description === text
+    ? description.match(YANDEX_PAY_BODY_PATTERN)
+    : null;
+
+  if (!match || !occurred) return incompleteYandexPay({ occurred, hasFinancialMarker });
+
+  return {
+    eventType: 'OUTGOING_TRANSFER',
+    occurredAt: occurred,
+    amount: match[1],
+    currency: 'RUB',
+    direction: 'DEBIT',
+    merchant: null,
+    counterparty: null,
+    accountReference: null,
+    accountReferenceKind: null,
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
+    normalizationVersion: YANDEX_BANK_NORMALIZATION_VERSION,
+  };
+}
+
+export function isYandexBankAndroidNotification(input) {
+  const metadata = input.ingestionMetadata ?? {};
+  return metadata.provider === YANDEX_PROVIDER
+    && metadata.adapter === ANDROID_NOTIFICATION_ADAPTER
+    && metadata.schemaVersion === '1'
+    && metadata.sourcePackage === YANDEX_PAY_SOURCE_PACKAGE
+    && metadata.notificationChannel === YANDEX_PAY_NOTIFICATION_CHANNEL;
 }
 
 function incompleteTbank({ occurred, hasFinancialMarker }) {

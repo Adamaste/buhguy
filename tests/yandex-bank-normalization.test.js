@@ -10,6 +10,20 @@ const base = {
   ingestionMetadata: { adapter: 'android-notification', provider: 'com.yandex.bank', deviceType: 'android', schemaVersion: '1' },
 };
 
+const payBase = {
+  ...base,
+  ingestionMetadata: {
+    ...base.ingestionMetadata,
+    sourcePackage: 'com.yandex.bank',
+    notificationChannel: 'notification_channel_1',
+  },
+};
+
+function payPayload(amount, available = '9753.21') {
+  const body = `Перевод ТЕСТОВЫЙ ПОЛУЧАТЕЛЬ. ${amount} RUB. СИНТЕТИЧЕСКАЯ ОПЕРАЦИЯ. 2026.09.27 16:59. Доступно ${available} RUB`;
+  return { title: 'Карта ТЕСТОВАЯ', description: body, text: body };
+}
+
 test('Yandex purchase is normalized from exact title and description markers', () => {
   const result = normalizeBankEvent({ ...base, payload: {
     title: 'Покупка',
@@ -28,7 +42,7 @@ test('Yandex purchase is normalized from exact title and description markers', (
     accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: 'yandex-bank-normalizer-v1',
+    normalizationVersion: 'yandex-bank-normalizer-v2',
   });
 });
 
@@ -136,4 +150,73 @@ test('unrelated Yandex text and another provider never become a ready financial 
   assert.notEqual(unrelated.normalizationStatus, 'READY');
   assert.notEqual(otherProvider.normalizationStatus, 'READY');
   assert.equal(otherProvider.eventType, 'UNKNOWN');
+});
+
+test('Yandex Pay outgoing v2 accepts the exact reviewed family and first monetary position', () => {
+  const result = normalizeBankEvent({ ...payBase, payload: payPayload('2468.10') });
+  assert.deepEqual(result, {
+    eventType: 'OUTGOING_TRANSFER',
+    occurredAt: '2026-09-27T16:59:00.000Z',
+    amount: '2468.10',
+    currency: 'RUB',
+    direction: 'DEBIT',
+    merchant: null,
+    counterparty: null,
+    accountReference: null,
+    accountReferenceKind: null,
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
+    normalizationVersion: 'yandex-bank-normalizer-v2',
+  });
+});
+
+test('Yandex Pay outgoing v2 remains stable across amount and availability variation', () => {
+  const result = normalizeBankEvent({ ...payBase, payload: payPayload('1357.20', '8642.13') });
+  assert.equal(result.eventType, 'OUTGOING_TRANSFER');
+  assert.equal(result.direction, 'DEBIT');
+  assert.equal(result.amount, '1357.20');
+  assert.equal(result.currency, 'RUB');
+  assert.equal(result.normalizationStatus, 'READY');
+});
+
+test('Yandex Pay v2 requires equal non-empty description and text', () => {
+  const payload = payPayload('2468.10');
+  const mismatch = normalizeBankEvent({ ...payBase, payload: { ...payload, text: `${payload.text} ЛИШНИЙ ТЕКСТ` } });
+  const blankDescription = normalizeBankEvent({ ...payBase, payload: { ...payload, description: '   ' } });
+  for (const result of [mismatch, blankDescription]) {
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+    assert.notEqual(result.normalizationStatus, 'READY');
+    assert.equal(result.amount, null);
+  }
+});
+
+test('Yandex Pay v2 rejects unsupported envelope, currency, amount, and metadata near misses', () => {
+  const cases = [
+    { payload: { ...payPayload('2468.10'), title: 'Платёж ТЕСТОВЫЙ' } },
+    { payload: { ...payPayload('2468.10'), description: payPayload('2468.10').description.replace('RUB', 'USD'), text: payPayload('2468.10').text.replace('RUB', 'USD') } },
+    { payload: { ...payPayload('2468,10'), description: payPayload('2468,10').description, text: payPayload('2468,10').text } },
+    { payload: { ...payPayload('2468.10'), description: payPayload('2468.10').description.replace('2026.09.27 16:59.', '2026/09/27 16:59.'), text: payPayload('2468.10').text.replace('2026.09.27 16:59.', '2026/09/27 16:59.') } },
+    { ingestionMetadata: { ...payBase.ingestionMetadata, sourcePackage: 'ru.yandex.taximeter' } },
+    { ingestionMetadata: { ...payBase.ingestionMetadata, notificationChannel: 'other_channel' } },
+  ];
+  for (const current of cases) {
+    const result = normalizeBankEvent({ ...payBase, ...current, payload: current.payload ?? payPayload('2468.10') });
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.direction, 'UNKNOWN');
+    assert.equal(result.amount, null);
+    assert.notEqual(result.normalizationStatus, 'READY');
+  }
+});
+
+test('Yandex Pro alias remains isolated from Yandex Pay v2', () => {
+  const result = normalizeBankEvent({
+    ...payBase,
+    ingestionMetadata: { ...payBase.ingestionMetadata, sourcePackage: 'ru.yandex.taximeter' },
+    payload: payPayload('2468.10'),
+  });
+  assert.equal(result.eventType, 'UNKNOWN');
+  assert.equal(result.direction, 'UNKNOWN');
+  assert.equal(result.amount, null);
+  assert.notEqual(result.normalizationStatus, 'READY');
 });
