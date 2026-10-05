@@ -17,15 +17,36 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-05
-- Current implementation baseline: `24e30eb01627fdfe050f61386fab186b3dad7459` (PR #93 merged; Yandex Pay outgoing v2 is merged, but has not been deployed)
+- Current implementation baseline: `1a14d93be8148ffc02b8d137229dc5940d1eaada` (PR #95 merged; bank-business-event-candidate-projection-v1 is merged as a non-mutating in-memory projection)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. The controlled T-Bank outgoing window and ordinary T-Bank purchase campaign are closed as insufficient for runtime promotion: two purchase samples repeat the amount position and RUB but do not provide a reusable DEBIT marker. No further T-Bank purchase is required. Direct Yandex Pay and Yandex Pro purchase E2Es are both closed and proven; no additional controlled purchase is required. VTB and Ozon paid-notification purchase validation are skipped by the user's current decision; do not request paid activation unless that decision changes.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank-business-event-candidate-projection-v1 is merged and preserves fail-closed semantics: journal content-address verification, bank-side domain validation, and account-resolution provenance coherence are required. It emits bounded PURCHASE, directional TRANSFER, or UNKNOWN monetary-movement candidates without inferring `INTERNAL_TRANSFER`, receipt relationships, business-event persistence, or ledger persistence. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 remains a separate bounded projection. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. T-Bank outgoing and ordinary purchase validation remain insufficient for runtime promotion. Direct Yandex Pay and Yandex Pro purchase E2Es are closed and proven. VTB and Ozon paid-notification purchase validation are skipped by the user's current decision; do not request paid activation unless that decision changes.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: The controlled purchase campaign is closed: Sber is `CLOSED_PROVEN`, Alfa is `CLOSED_EVIDENCE_LIMIT`, T-Bank is `CLOSED_INSUFFICIENT_DEBIT_EVIDENCE`, Yandex Pay is `CLOSED_PROVEN`, Yandex Pro is `CLOSED_PROVEN`, and VTB/Ozon are `SKIPPED_PAID_NOTIFICATION_POLICY`. `CONTROLLED_PURCHASE_CAMPAIGN=CLOSED`; `FURTHER_CONTROLLED_PURCHASES_REQUIRED=NO`. Return to the main `bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching` sequence through separately proven semantics, beginning with `bank-business-event-candidate-projection-v1`. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: `two-sided internal-transfer matching`. The next slice must remain a separate non-mutating projection: only two independently proven opposite-direction bank sides with concrete, same-owner financial accounts, equal exact amount/currency, bounded compatible time, compatible scope, distinct accounts, and one-to-one consumption may become an internal-transfer candidate. One-sided transfers remain directional and unchanged; ambiguous or unresolved ownership fails closed. No persistence, ledger posting, receipt matching, or production E2E is implied.
+
+## Bank business-event candidate projection v1
+
+PR #95 is merged in master `1a14d93be8148ffc02b8d137229dc5940d1eaada`.
+`bank-business-event-candidate-projection-v1` is a non-mutating, in-memory
+projection chain:
+
+`bank transaction`
+-> `bank-cash-flow-projection-v1`
+-> `balanced-bank-journal-projection-v1`
+-> `bank-business-event-candidate-projection-v1`
+
+`PURCHASE + DEBIT` produces a PURCHASE candidate; proven outgoing and incoming
+transfers produce directional TRANSFER candidates; exact UNKNOWN with proven
+DEBIT/CREDIT produces `UNCLASSIFIED_MONETARY_MOVEMENT`. The projection never
+infers `INTERNAL_TRANSFER`. It verifies the journal content-address key,
+restricts bankSide to a concrete financial account or
+`UNRESOLVED_BANK_ACCOUNT`, and requires coherent account-resolution provenance.
+
+No receipt matching, business-event persistence, ledger persistence, database
+mutation, production wiring, deployment, replay, or backfill was added.
 
 ## T-Bank ordinary purchase validation baseline
 
