@@ -56,6 +56,8 @@ function receiptRow(overrides = {}) {
     paymentComponentsStatus: 'RECONCILED',
     paymentStage: 'SETTLEMENT_ONLY',
     correctionStatus: 'UNKNOWN',
+    receiptItemCount: 1,
+    normalizedItemFactCount: 1,
     itemPaymentTypeCodes: [4],
     ecashTotalSum: '100.00',
     ecashTotalState: 'PRESENT_VALUE',
@@ -149,6 +151,19 @@ test('exact currency and inclusive time boundary are required', () => {
   assert.equal(match(bankEntry(), receiptRow({ dateTime: '2026-10-05T09:59:30.000Z' }), ownership(), { receiptMaxTimeDeltaMs: 30_000 }).matches.length, 1);
 });
 
+test('zero-edge eligible bank and receipt are both UNMATCHED', () => {
+  for (const receipt of [
+    receiptRow({ ecashTotalSum: '101.00', totalSum: '101.00' }),
+    receiptRow({ currency: 'USD' }),
+    receiptRow({ dateTime: '2026-10-05T10:02:00.000Z' }),
+  ]) {
+    const result = match(bankEntry(), receipt);
+    assert.equal(result.matches.length, 0);
+    assert.equal(result.bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+    assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  }
+});
+
 test('same-scope observations remain one receipt, cross-scope observations fail closed', () => {
   const same = receiptRow({ scopeKeys: ['scope-a', 'scope-a'] });
   assert.equal(match(bankEntry(), same).matches.length, 1);
@@ -168,6 +183,71 @@ test('one-to-one matching fails closed for ambiguity and preserves independent p
   const two = matchBankReceipts([firstBank, secondBank], ownership(), [firstReceipt, secondReceipt], { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 2_000 });
   assert.equal(two.matches.length, 2);
   assert.equal(new Set(two.matches.map((row) => row.receipt.receiptId)).size, 2);
+
+  const twoBanksOneReceipt = matchBankReceipts(
+    [firstBank, bankEntry({ bankTransactionId: 12, occurredAt: '2026-10-05T10:00:10.000Z' })],
+    ownership(),
+    [firstReceipt],
+    { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 },
+  );
+  assert.equal(twoBanksOneReceipt.bankStatuses.every((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS), true);
+  assert.equal(twoBanksOneReceipt.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+});
+
+test('receipt statuses preserve ids and matcher-owned reasons at every status', () => {
+  const matched = match(bankEntry(), receiptRow());
+  assert.deepEqual(matched.receiptStatuses[0], {
+    receiptId: 20,
+    receiptCandidateKey: matched.receiptStatuses[0].receiptCandidateKey,
+    status: BANK_RECEIPT_MATCHING_STATUSES.MATCHED,
+    reasonCode: 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH',
+  });
+  const unmatched = match(bankEntry(), receiptRow({ ecashTotalSum: '101.00', totalSum: '101.00' }));
+  assert.equal(unmatched.receiptStatuses[0].receiptId, 20);
+  assert.equal(unmatched.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  assert.equal(unmatched.receiptStatuses[0].reasonCode, 'NO_COMPATIBLE_BANK_PURCHASE');
+  const ambiguous = matchBankReceipts(
+    [bankEntry()],
+    ownership(),
+    [receiptRow(), receiptRow({ receiptId: 21, normalizedContentSha256: 'b'.repeat(64) })],
+    { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 },
+  );
+  assert.deepEqual(ambiguous.receiptStatuses.map((row) => row.receiptId).sort((a, b) => a - b), [20, 21]);
+  assert.equal(ambiguous.receiptStatuses.every((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS), true);
+  assert.equal(ambiguous.receiptStatuses.every((row) => row.reasonCode === 'AMBIGUOUS_COMPATIBLE_BANK_PURCHASES'), true);
+  const ineligible = match(bankEntry(), receiptRow({ scopeKeys: ['scope-a', 'scope-b'] }));
+  assert.equal(ineligible.receiptStatuses[0].receiptId, 20);
+  assert.equal(ineligible.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  assert.equal(ineligible.receiptStatuses[0].reasonCode, 'RECEIPT_EVIDENCE_INELIGIBLE');
+});
+
+test('bank statuses are ledger-entry level and summary partitions are exact', () => {
+  const result = matchBankReceipts(
+    [bankEntry(), bankEntry({ bankTransactionId: 11, amount: '101.00' }), bankEntry({ bankTransactionId: 12, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT' })],
+    ownership(),
+    [receiptRow(), receiptRow({ receiptId: 21, ecashTotalSum: '999.00', totalSum: '999.00' })],
+    { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 },
+  );
+  assert.equal(result.bankStatuses.length, result.summary.totalBankLedgerEntries);
+  assert.equal(result.bankStatuses.find((row) => row.economicKind === 'OUTGOING_TRANSFER').reasonCode, 'BANK_NOT_PURCHASE');
+  assert.equal(result.bankStatuses.find((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED).reasonCode, 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH');
+  assert.equal(result.bankStatuses.find((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED).reasonCode, 'NO_COMPATIBLE_RECEIPT');
+  assert.equal(result.summary.totalBankLedgerEntries, result.summary.eligibleBankPurchases + result.summary.ineligibleBankEntries);
+  assert.equal(result.summary.eligibleBankPurchases, result.summary.matchedBankPurchases + result.summary.unmatchedBankPurchases + result.summary.ambiguousBankPurchases);
+  assert.equal(result.summary.matchedBankPurchases, result.summary.matchedPairs);
+  const internal = matchBankReceipts(
+    [
+      bankEntry({ bankTransactionId: 30, sourceEventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', financialAccountId: 1 }),
+      bankEntry({ bankTransactionId: 31, sourceEventType: 'INCOMING_TRANSFER', direction: 'CREDIT', financialAccountId: 2, occurredAt: '2026-10-05T10:00:05.000Z' }),
+    ],
+    ownership([owner(1), owner(2)]),
+    [],
+    { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 },
+  );
+  assert.equal(internal.summary.totalBankLedgerEntries, 1);
+  assert.equal(internal.bankStatuses.length, 1);
+  assert.equal(internal.bankStatuses[0].reasonCode, 'BANK_NOT_PURCHASE');
+  assert.equal(internal.summary.ineligibleBankEntries, 1);
 });
 
 test('match keys and complete results are deterministic and input-order independent', () => {
@@ -184,6 +264,27 @@ test('duplicate receipt ids are rejected and output contains no raw evidence', (
   const result = match(bankEntry(), receiptRow());
   assert.equal(JSON.stringify(result).includes('seller'), false);
   assert.equal(JSON.stringify(result).includes('payload'), false);
+});
+
+test('malformed receipt identities are ineligible uncertainty, while real duplicate ids throw', () => {
+  const malformed = [receiptRow({ receiptId: undefined, id: undefined }), receiptRow({ receiptId: undefined, id: undefined, normalizedContentSha256: 'b'.repeat(64) })];
+  assert.doesNotThrow(() => matchBankReceipts([bankEntry()], ownership(), malformed, { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 }));
+  const result = matchBankReceipts([bankEntry()], ownership(), malformed, { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 });
+  assert.equal(result.receiptStatuses.every((row) => row.receiptId === null && row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE), true);
+  assert.throws(() => matchBankReceipts([bankEntry()], ownership(), [receiptRow({ receiptId: 20 }), receiptRow({ receiptId: 20, normalizedContentSha256: 'b'.repeat(64) })], { internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 }), /duplicate receiptId/);
+});
+
+test('current fiscal v1 requires exact UNKNOWN non-correction state', () => {
+  assert.equal(projectBankReceiptCandidate(receiptRow({ correctionStatus: 'UNKNOWN' })).status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  for (const correctionStatus of ['CORRECTION', null, 'UNSUPPORTED']) {
+    assert.equal(projectBankReceiptCandidate(receiptRow({ correctionStatus })).status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  }
+});
+
+test('all receipt items require normalized payment facts with type 4', () => {
+  assert.equal(projectBankReceiptCandidate(receiptRow({ receiptItemCount: 2, normalizedItemFactCount: 2, itemPaymentTypeCodes: [4, 4] })).status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  assert.equal(projectBankReceiptCandidate(receiptRow({ receiptItemCount: 2, normalizedItemFactCount: 1, itemPaymentTypeCodes: [4] })).status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  assert.equal(projectBankReceiptCandidate(receiptRow({ receiptItemCount: 2, normalizedItemFactCount: 2, itemPaymentTypeCodes: [4, 5] })).status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
 });
 
 test('loader reads bank, ownership, and receipt evidence once with SELECT-only SQL', async () => {
@@ -215,4 +316,19 @@ test('loader reads bank, ownership, and receipt evidence once with SELECT-only S
   assert.equal(calls.length, 3);
   assert.equal(calls.every((sql) => !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql)), true);
   assert.equal(calls.some((sql) => /fns_source_person/i.test(sql)), false);
+});
+
+test('loader preserves cross-scope receipt evidence before requested-scope selection', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (/FROM bank_transactions bt/i.test(sql)) return { rows: [bankEntry().candidate] };
+      if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1)] };
+      if (/FROM receipts r/i.test(sql)) return { rows: [receiptRow({ scopeKeys: ['scope-a', 'scope-b'] })] };
+      throw new Error('unexpected query');
+    },
+  };
+  const result = await loadBankReceiptMatching(pool, { scopeKey: 'scope-a', internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 });
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  assert.equal(result.summary.ineligibleReceipts, 1);
 });

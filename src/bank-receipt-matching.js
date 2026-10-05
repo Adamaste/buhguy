@@ -107,7 +107,9 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot) {
 }
 
 export function projectBankReceiptCandidate(row) {
-  const receiptId = Number(row?.receiptId ?? row?.id);
+  const rawReceiptId = row?.receiptId ?? row?.id;
+  const parsedReceiptId = Number(rawReceiptId);
+  const receiptId = positiveInteger(parsedReceiptId) ? parsedReceiptId : null;
   const scopeKeys = canonicalScopeKeys(row);
   const amount = row?.ecashTotalSum;
   const currency = canonicalCurrency(row?.currency);
@@ -124,8 +126,10 @@ export function projectBankReceiptCandidate(row) {
     && row?.householdCashDirection === 'OUT'
     && row?.paymentComponentsStatus === 'RECONCILED'
     && row?.paymentStage === 'SETTLEMENT_ONLY'
-    && row?.correctionStatus !== 'CORRECTION'
-    && Array.isArray(itemCodes) && itemCodes.length > 0 && itemCodes.every((code) => Number(code) === 4)
+    && row?.correctionStatus === 'UNKNOWN'
+    && Number.isInteger(row?.receiptItemCount) && row.receiptItemCount > 0
+    && Number.isInteger(row?.normalizedItemFactCount) && row.normalizedItemFactCount === row.receiptItemCount
+    && Array.isArray(itemCodes) && itemCodes.length === row.receiptItemCount && itemCodes.every((code) => Number(code) === 4)
     && row?.ecashTotalState === 'PRESENT_VALUE'
     && canonicalMoney(amount) !== null
     && explicitZero(row?.cashTotalSum, row?.cashTotalState)
@@ -171,10 +175,12 @@ function validateReceiptInputs(rows) {
   const ids = new Set();
   const keys = new Set();
   for (const row of rows) {
-    const id = Number(row?.receiptId ?? row?.id);
-    if (ids.has(id)) throw new Error('duplicate receiptId input');
-    ids.add(id);
     const candidate = projectBankReceiptCandidate(row);
+    const id = candidate.receipt?.receiptId ?? candidate.receiptId;
+    if (id !== null) {
+      if (ids.has(id)) throw new Error('duplicate receiptId input');
+      ids.add(id);
+    }
     if (candidate.receipt?.receiptCandidateKey) {
       if (keys.has(candidate.receipt.receiptCandidateKey)) throw new Error('duplicate receiptCandidateKey input');
       keys.add(candidate.receipt.receiptCandidateKey);
@@ -235,6 +241,8 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   const matches = [];
   const visitedBanks = new Set();
   const visitedReceipts = new Set();
+  for (const bank of eligibleBanks) statuses.set(`bank:${bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  for (const receipt of eligibleReceipts) statuses.set(`receipt:${receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
   const visit = (type, key, component) => {
     const marker = `${type}:${key}`;
     if ((type === 'bank' ? visitedBanks : visitedReceipts).has(key)) return;
@@ -245,6 +253,10 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   };
   for (const bank of eligibleBanks) {
     if (visitedBanks.has(bank.candidateKey)) continue;
+    if (graph.bank.get(bank.candidateKey).length === 0) {
+      visitedBanks.add(bank.candidateKey);
+      continue;
+    }
     const component = [];
     visit('bank', bank.candidateKey, component);
     const banks = component.filter(([type]) => type === 'bank').map(([, key]) => bankByKey.get(key));
@@ -274,31 +286,54 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   for (const receipt of eligibleReceipts) {
     if (visitedReceipts.has(receipt.receiptCandidateKey)) continue;
     visitedReceipts.add(receipt.receiptCandidateKey);
-    statuses.set(`receipt:${receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
   }
-  const bankStatuses = ledger.sourceStatuses.map((source) => {
-    const status = source.status === 'STANDALONE' && eligibleBanks.some((bank) => bank.candidateKey === source.candidateKey)
-      ? statuses.get(`bank:${source.candidateKey}`) ?? BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED
+  const bankStatuses = ledger.entries.map((entry) => {
+    const eligibility = projectBankReceiptEligibility(entry, ownershipSnapshot);
+    const source = entry.sourceProvenance ?? {};
+    const eligible = eligibility.bank;
+    const status = eligible
+      ? statuses.get(`bank:${eligible.candidateKey}`) ?? BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED
       : BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE;
-    return { ...source, status };
+    return {
+      ledgerKey: entry.ledgerKey,
+      economicKind: entry.economicKind,
+      status,
+      reasonCode: eligible
+        ? (status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
+          ? 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH'
+          : status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
+            ? 'AMBIGUOUS_COMPATIBLE_RECEIPTS'
+            : 'NO_COMPATIBLE_RECEIPT')
+        : eligibility.reasonCode,
+      upstreamReasonCode: entry.reasonCode ?? null,
+      candidateKey: source.candidateKey ?? null,
+      journalKey: source.journalKey ?? null,
+      bankTransactionId: source.bankTransactionId ?? null,
+    };
   }).sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
   const receiptStatuses = receiptCandidates.map((candidate) => ({
-    receiptId: candidate.receiptId,
+    receiptId: candidate.receipt?.receiptId ?? candidate.receiptId,
     receiptCandidateKey: candidate.receipt?.receiptCandidateKey ?? null,
     status: candidate.receipt ? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) ?? BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED) : candidate.status,
-    reasonCode: candidate.reasonCode ?? null,
+    reasonCode: candidate.receipt
+      ? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
+        ? 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH'
+        : statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
+          ? 'AMBIGUOUS_COMPATIBLE_BANK_PURCHASES'
+          : 'NO_COMPATIBLE_BANK_PURCHASE')
+      : candidate.reasonCode ?? null,
   })).sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
   matches.sort((left, right) => left.matchKey.localeCompare(right.matchKey));
   const summary = {
     totalBankLedgerEntries: ledger.entries.length,
-    eligibleBankPurchases: eligibleBanks.length,
+    eligibleBankPurchases: bankStatuses.filter((row) => row.status !== BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).length,
     ineligibleBankEntries: bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).length,
     totalReceipts: receiptRows.length,
     eligibleReceipts: eligibleReceipts.length,
     ineligibleReceipts: receiptStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).length,
     matchedPairs: matches.length,
-    matchedBankPurchases: matches.length,
-    matchedReceipts: matches.length,
+    matchedBankPurchases: bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED).length,
+    matchedReceipts: receiptStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED).length,
     unmatchedBankPurchases: bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED).length,
     unmatchedReceipts: receiptStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED).length,
     ambiguousBankPurchases: bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS).length,
@@ -306,7 +341,14 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     receiptIneligibleByReason: Object.fromEntries(receiptStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).reduce((map, row) => map.set(row.reasonCode, (map.get(row.reasonCode) ?? 0) + 1), new Map())),
     bankIneligibleByReason: Object.fromEntries(bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).reduce((map, row) => map.set(row.reasonCode, (map.get(row.reasonCode) ?? 0) + 1), new Map())),
   };
-  if (summary.matchedBankPurchases !== summary.matchedPairs || summary.matchedReceipts !== summary.matchedPairs) throw new Error('receipt matching cardinality invariant failed');
+  if (summary.totalBankLedgerEntries !== bankStatuses.length
+    || summary.totalReceipts !== receiptStatuses.length
+    || summary.totalBankLedgerEntries !== summary.eligibleBankPurchases + summary.ineligibleBankEntries
+    || summary.totalReceipts !== summary.eligibleReceipts + summary.ineligibleReceipts
+    || summary.eligibleBankPurchases !== summary.matchedBankPurchases + summary.unmatchedBankPurchases + summary.ambiguousBankPurchases
+    || summary.eligibleReceipts !== summary.matchedReceipts + summary.unmatchedReceipts + summary.ambiguousReceipts
+    || summary.matchedBankPurchases !== summary.matchedPairs
+    || summary.matchedReceipts !== summary.matchedPairs) throw new Error('receipt matching cardinality invariant failed');
   return { matches, bankStatuses, receiptStatuses, summary };
 }
 
@@ -336,6 +378,22 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
   const dateTo = expandedBound(to, receiptMaxTimeDeltaMs, 1);
   const params = [NORMALIZED_FACT_VERSION, dateFrom, dateTo, scopeKey];
   const receipts = (await pool.query(`
+    WITH receipt_scopes AS (
+      SELECT observation.receipt_id,
+             COALESCE(array_agg(DISTINCT receipt_scope.scope_key) FILTER (WHERE receipt_scope.scope_key IS NOT NULL), ARRAY[]::text[]) AS "scopeKeys"
+      FROM receipt_source_observations observation
+      LEFT JOIN fns_sources source ON source.id = observation.fns_source_id
+      LEFT JOIN accounting_scopes receipt_scope ON receipt_scope.id = source.scope_id
+      GROUP BY observation.receipt_id
+    ), receipt_item_coverage AS (
+      SELECT item.receipt_id,
+             count(DISTINCT item.id)::integer AS "receiptItemCount",
+             count(DISTINCT item_fact.receipt_item_id)::integer AS "normalizedItemFactCount",
+             COALESCE(array_agg(DISTINCT item_fact.payment_type_code) FILTER (WHERE item_fact.payment_type_code IS NOT NULL), ARRAY[]::smallint[]) AS "itemPaymentTypeCodes"
+      FROM receipt_items item
+      LEFT JOIN receipt_item_fiscal_facts item_fact ON item_fact.receipt_item_id = item.id AND item_fact.normalization_version = $1
+      GROUP BY item.receipt_id
+    )
     SELECT r.id AS "receiptId", r.date_time AS "dateTime", r.currency,
            f.normalization_version AS "normalizationVersion", f.normalized_content_sha256 AS "normalizedContentSha256",
            f.normalization_status AS "normalizationStatus", f.fiscal_operation_type AS "fiscalOperationType",
@@ -347,23 +405,21 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
            f.credit_sum AS "creditSum", f.credit_state AS "creditState",
            f.provision_sum AS "provisionSum", f.provision_state AS "provisionState",
            r.total_sum AS "totalSum",
-           COALESCE(array_agg(DISTINCT item_fact.payment_type_code) FILTER (WHERE item_fact.payment_type_code IS NOT NULL), ARRAY[]::smallint[]) AS "itemPaymentTypeCodes",
-           COALESCE(array_agg(DISTINCT receipt_scope.scope_key) FILTER (WHERE receipt_scope.scope_key IS NOT NULL), ARRAY[]::text[]) AS "scopeKeys"
+           receipt_item_coverage."receiptItemCount", receipt_item_coverage."normalizedItemFactCount",
+           receipt_item_coverage."itemPaymentTypeCodes", COALESCE(receipt_scopes."scopeKeys", ARRAY[]::text[]) AS "scopeKeys"
     FROM receipts r
     JOIN receipt_fiscal_facts f ON f.receipt_id = r.id AND f.normalization_version = $1
-    LEFT JOIN receipt_items item ON item.receipt_id = r.id
-    LEFT JOIN receipt_item_fiscal_facts item_fact ON item_fact.receipt_item_id = item.id AND item_fact.normalization_version = $1
-    LEFT JOIN receipt_source_observations observation ON observation.receipt_id = r.id
-    LEFT JOIN fns_sources source ON source.id = observation.fns_source_id
-    LEFT JOIN accounting_scopes receipt_scope ON receipt_scope.id = source.scope_id
+    LEFT JOIN receipt_item_coverage ON receipt_item_coverage.receipt_id = r.id
+    LEFT JOIN receipt_scopes ON receipt_scopes.receipt_id = r.id
     WHERE ($2::timestamptz IS NULL OR r.date_time >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR r.date_time < $3::timestamptz)
-      AND ($4::text IS NULL OR receipt_scope.scope_key = $4)
+      AND ($4::text IS NULL OR $4 = ANY(COALESCE(receipt_scopes."scopeKeys", ARRAY[]::text[])))
     GROUP BY r.id, f.normalization_version, f.normalized_content_sha256, f.normalization_status,
       f.fiscal_operation_type, f.household_cash_direction, f.payment_components_status,
       f.payment_stage, f.correction_status, f.ecash_total_sum, f.ecash_total_state,
       f.cash_total_sum, f.cash_total_state, f.prepaid_sum, f.prepaid_state,
-      f.credit_sum, f.credit_state, f.provision_sum, f.provision_state
+      f.credit_sum, f.credit_state, f.provision_sum, f.provision_state,
+      receipt_item_coverage."receiptItemCount", receipt_item_coverage."normalizedItemFactCount", receipt_item_coverage."itemPaymentTypeCodes", receipt_scopes."scopeKeys"
     ORDER BY r.id`, params)).rows;
   return matchBankReceipts(entries, ownershipSnapshot, receipts, { internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs });
 }
