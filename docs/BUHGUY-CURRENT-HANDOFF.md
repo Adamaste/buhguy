@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-05
 - Current implementation baseline: `f50426f76a3c7b7a732ac3d703a73e7dbd04fdf8` (PR #91 merged; Yandex Pay outgoing v2 is merged, but has not been deployed)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. The controlled T-Bank outgoing window is now forensically closed as insufficient: observation `471` has a transfer-like, non-monetary shape but no reusable transaction amount or explicit outgoing marker, while Sber observation `473` independently proves the opposite-side incoming event. No second T-Bank operation is justified solely to repeat this unresolved shape. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. The controlled T-Bank outgoing window remains forensically closed as insufficient: observation `471` has a transfer-like, non-monetary shape but no reusable transaction amount or explicit outgoing marker, while Sber observation `473` independently proves the opposite-side incoming event. The first controlled T-Bank purchase has one exact structural sample and requires one second independent purchase with a different amount before parser authorization. Ozon reusable incoming grammar, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: complete the read-only forensic closeout for the controlled T-Bank purchase recorded below and, only through a separately reviewed baseline, consider one second independent purchase because the first sample does not prove a reusable purchase grammar. Do not repeat the T-Bank outgoing transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: the first T-Bank purchase forensic is complete; take a fresh clean Android/backend baseline and perform exactly one second controlled ordinary T-Bank purchase with a different amount. No third T-Bank purchase is authorized unless the second sample reveals a genuinely new blocker. Do not repeat the T-Bank outgoing transfer solely to repeat observation `471`. Return to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence only through separately proven semantics. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## T-Bank ordinary purchase validation baseline
 
@@ -55,12 +55,15 @@ row, account resolution, ledger, business event, or reconciliation state was
 changed during this baseline.
 
 The controlled ordinary purchase completed after this baseline produced one
-new lifecycle window: primary candidate observation `492` / transaction `375`,
-possible companion observation `491` / transaction `374`, and empty companion
+new lifecycle window: primary observation `492` / transaction `375`, companion
+observation `491` / transaction `374`, and empty companion
 observation `496` / transaction `376`. All three used the exact T-Bank
 provider/Android/schema transport metadata and persisted through
 `tbank-bank-normalizer-v2`; the earlier apparent metadata gap was a reporting
 formatting error, not missing immutable metadata.
+
+`492/375=PRIMARY`, `491/374=COMPANION`, and `496/376=EMPTY_COMPANION`.
+`ONE_MONETARY_CANDIDATE_PER_PURCHASE=BOUNDED_HEURISTIC`.
 
 Observation `492` has title, description, and text; description and text are
 equal; the body has a purchase-like lexical marker, an availability marker,
@@ -71,6 +74,10 @@ body monetary position, while a second monetary position remains separate but
 its balance role is unproven. Observation `491` is a non-title structured
 companion with one monetary/currency position that does not repeat the
 controlled transaction amount; observation `496` is empty/non-monetary.
+
+`TBANK_FIRST_PURCHASE_MARKER=PROVEN`; `TBANK_FIRST_PURCHASE_DEBIT_MARKER=NOT_PROVEN`;
+`TBANK_FIRST_PURCHASE_AMOUNT_POSITION=1`; `TBANK_492_CURRENCY_PROVEN=YES`;
+`TBANK_492_BALANCE_POSITION_SEPARATE=UNPROVEN`.
 
 The complete T-Bank corpus has one exact match for the `492` structural
 predicate, namely this controlled window; there are no top-up or outgoing
