@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-04
-- Current implementation baseline: `8e18a9d65c933045820b0771afbcdd1c28546956` (PR #81 merged; Sber purchase normalizer v6 is deployed, while provider evidence remains fail-closed where reusable grammar is not proven)
+- Current implementation baseline: `f4909f46e587f4f0ff5ee624ce853ab6abf2c020` (PR #88 merged; Sber purchase normalizer v6 is deployed, and Alfa lifecycle canonicalization v1 is available as a standalone non-mutating projection)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family; two independent Alfa purchase windows prove a reusable primary amount position, but the exact primary shape also occurs in one natural window without purchase ground truth. The primary is disjoint from the exact F5 transfer grammar, yet PURCHASE/DEBIT promotion remains fail-closed until the lifecycle/evidence boundary is explicit; no Alfa v5 parser is authorized. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic natural-event validation items. Do not manufacture bank operations solely for validation
+- Current blocker: No parser gap blocks Person 1 MVP. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 now provides a separate bounded, fail-closed, non-mutating projection. Alfa canonicalization emits one `UNKNOWN / DEBIT / READY / EXACT` candidate only for an unambiguous reviewed lifecycle; it deliberately does not infer `PURCHASE` or `INTERNAL_TRANSFER`, and exact F5 outgoing transfer remains exclusively owned by `alfa-bank-normalizer-v4`. Ozon reusable incoming grammar, Yandex Pay outgoing grammar, T-Bank outgoing, Yandex Pro outgoing, and VTB transport remain opportunistic validation items. Do not manufacture unnecessary repeated operations
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 is deployed and unchanged
-- Next action: retain the Alfa primary-grammar and lifecycle evidence as fail-closed input, keep the primary-only/no-double-count boundary, and continue the development sequence bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching. The exact primary shape is separated from F5 but has one natural same-shaped unknown window; no Alfa v5 parser promotion is authorized. Person 2/3, `INTERNAL_TRANSFER`, business events, ledger persistence, and receipt matching remain out of scope for this closeout.
+- Next action: run a controlled validation campaign for remaining provider gaps, one operation at a time, beginning with T-Bank outgoing, before returning to the main bank cash flow -> business events -> two-sided internal transfers -> ledger -> receipt matching sequence. User-chosen real operations are allowed; take a clean Android/backend baseline first, use a small distinctive amount, wait for the full notification lifecycle, correlate it, and close the gap or identify the exact remaining blocker. Do not manufacture unnecessary repeated operations when one sample proves the required fact. Person 2/3, `INTERNAL_TRANSFER`, business-event persistence, ledger persistence, and receipt matching remain out of scope for this closeout.
 
 ## Sber purchase normalizer v6 production rollout
 
@@ -284,6 +284,36 @@ or journal projection was run. A naive per-notification projection would
 retain a duplicate-count risk; no production accounting output was created.
 The result authorizes only further reviewed lifecycle-design work, not parser
 promotion, persistence, replay, backfill, or accounting mutation.
+
+## Alfa lifecycle canonicalization v1 closeout
+
+PR #88 was squash-merged into exact master
+`f4909f46e587f4f0ff5ee624ce853ab6abf2c020`. The implementation is a standalone
+`alfa-lifecycle-canonicalization-v1` post-ingestion projection. It is
+non-mutating: it does not rewrite historical `bank_transactions`, persist
+cash-flow or journals, create business events, perform reconciliation, or
+authorize production wiring.
+
+The canonical lifecycle is transaction-grain and fail-closed:
+
+- the primary is the sole monetary member;
+- the structured update is `DEBIT` direction evidence only;
+- the empty companion is non-monetary;
+- an unambiguous reviewed lifecycle produces exactly one
+  `UNKNOWN / DEBIT / READY / EXACT` canonical candidate;
+- ambiguous or same-amount-overlapping lifecycles produce no canonical
+  monetary candidate;
+- `PURCHASE` and `INTERNAL_TRANSFER` are deliberately not inferred.
+
+The exact F5 outgoing transfer remains exclusively owned by
+`alfa-bank-normalizer-v4`; the lifecycle projection does not classify a title
+amount alone as F5. No accounting scope is fabricated. Missing proven scope
+fails closed, while an explicitly scoped in-memory UNKNOWN/DEBIT candidate may
+produce `Dr UNCLASSIFIED_OUTGOING / Cr bank side` only when the normal
+cash-flow/journal prerequisites are independently satisfied.
+
+This closeout added no DB migration, production wiring, production mutation,
+replay, backfill, or deployment.
 
 ## Alfa primary purchase-grammar discrimination forensic
 
@@ -1818,20 +1848,27 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 ## Immediate next action
 
 The Person 1 account-identity readiness audit is complete for development and
-the active phase is `RECONCILIATION_DEVELOPMENT`. The immediate next slice is
-a separate reviewed Alfa lifecycle/canonicalization design slice for the
-bounded, fail-closed evidence above. It must preserve fail-closed behavior
-and must not turn a notification into accounting truth by itself. Account
-identity may be used only when explicitly resolved; source ownership is not
-payer/beneficiary proof; and `INTERNAL_TRANSFER` requires independently
-proven two-sided own-account evidence.
+the active phase is `RECONCILIATION_DEVELOPMENT`. The Alfa lifecycle
+canonicalization slice is complete and remains non-mutating. The immediate
+next action is a controlled validation campaign for remaining provider gaps,
+one operation at a time, beginning with T-Bank outgoing, before returning to
+the main `bank cash flow -> business events -> two-sided internal transfers ->
+ledger -> receipt matching` sequence.
 
-Bank-to-receipt candidate matching is deferred to a later reconciliation
-slice. It remains part of the roadmap as additional independent purchase
-evidence and is not abandoned. No production parser deployment, persistence,
-business-event creation, ledger posting, or reconciliation decision is
-allowed in the next parser slice. Fresh provider E2E waits remain
-opportunistic and do not block development.
+Controlled real operations are allowed when the user independently chooses to
+perform them. Take a clean Android/backend baseline first, use a small
+distinctive amount, perform one bank/one operation, wait for the full
+notification lifecycle, correlate it, and close the gap or identify the exact
+remaining blocker. Do not manufacture unnecessary repeated operations when
+one sample already proves the required fact.
+
+Bank-to-receipt candidate matching remains a later reconciliation slice; it is
+not abandoned. Account identity may be used only when explicitly resolved;
+source ownership is not payer/beneficiary proof; and `INTERNAL_TRANSFER`
+requires independently proven two-sided own-account evidence. No production
+parser deployment, persistence, business-event creation, ledger posting, or
+reconciliation decision is implied by this closeout. Fresh provider E2E waits
+remain opportunistic and do not block development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
