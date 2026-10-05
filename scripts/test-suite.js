@@ -34,6 +34,7 @@ const unitFiles = [
   'tests/bank-provider-fixtures.test.js',
   'tests/yandex-bank-normalization.test.js',
   'tests/alfa-bank-normalization.test.js',
+  'tests/alfa-lifecycle-canonicalization.test.js',
   'tests/sber-bank-normalization.test.js',
   'tests/bank-event-type-migration.test.js',
   'tests/bank-device-auth.test.js',
