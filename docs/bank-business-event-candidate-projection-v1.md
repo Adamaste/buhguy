@@ -62,4 +62,3 @@ are receipt/item-fiscal-fact oriented and their repository APIs persist graph
 state. A future integration therefore needs a separately reviewed
 evidence/persistence design; bank transactions must not be shoehorned into a
 receipt field.
-
