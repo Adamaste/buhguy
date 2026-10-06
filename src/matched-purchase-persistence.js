@@ -93,8 +93,9 @@ async function persistPurchase(client, scope, fields, enrichment) {
       || existing.origin !== SYSTEM_DERIVED || existing.graph_model_version !== GRAPH_MODEL_VERSION
       || existing.rule_code !== STANDALONE_PURCHASE_RULE || existing.rule_version !== STANDALONE_PURCHASE_VERSION
       || String(existing.amount) !== fields.amount || existing.currency !== fields.currency) fail('PURCHASE_PERSISTENCE_CONFLICT');
-    const evidence = (await client.query(`SELECT id,origin,graph_model_version,rule_code,rule_version,evidence_role FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND normalization_version=$3 ORDER BY id`, [existing.id, fields.receiptId, fields.receiptNormalizationVersion])).rows;
-    if (evidence.length !== 1 || evidence[0].origin !== SYSTEM_DERIVED || evidence[0].graph_model_version !== GRAPH_MODEL_VERSION || evidence[0].rule_code !== STANDALONE_PURCHASE_RULE || evidence[0].rule_version !== STANDALONE_PURCHASE_VERSION || evidence[0].evidence_role !== 'PURCHASE_EVIDENCE') fail('PURCHASE_PERSISTENCE_CONFLICT');
+    const evidence = (await client.query(`SELECT id,origin,graph_model_version,rule_code,rule_version,evidence_role,semantic_key FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND normalization_version=$3 ORDER BY id`, [existing.id, fields.receiptId, fields.receiptNormalizationVersion])).rows;
+    const expectedEvidenceKey = hash({ eventId: Number(existing.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, role: 'PURCHASE_EVIDENCE' });
+    if (evidence.length !== 1 || evidence[0].origin !== SYSTEM_DERIVED || evidence[0].graph_model_version !== GRAPH_MODEL_VERSION || evidence[0].rule_code !== STANDALONE_PURCHASE_RULE || evidence[0].rule_version !== STANDALONE_PURCHASE_VERSION || evidence[0].evidence_role !== 'PURCHASE_EVIDENCE' || evidence[0].semantic_key !== expectedEvidenceKey) fail('PURCHASE_PERSISTENCE_CONFLICT');
     return { event: existing, evidenceId: Number(evidence[0].id) };
   }
   const identity = enrichment.purchaseIdentity.identityKey;
@@ -105,10 +106,19 @@ async function persistPurchase(client, scope, fields, enrichment) {
     ON CONFLICT(scope_id,semantic_key,graph_model_version,rule_code,rule_version,origin) DO UPDATE SET description=business_events.description
     RETURNING *`, [scope.id, identity, fields.amount, fields.currency, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
   const event = eventResult.rows[0];
-  if (!event) fail('PURCHASE_PERSISTENCE_CONFLICT');
+  if (!event || event.event_type !== 'PURCHASE' || event.resolution_status !== 'CONFIRMED'
+    || event.origin !== SYSTEM_DERIVED || event.graph_model_version !== GRAPH_MODEL_VERSION
+    || event.rule_code !== STANDALONE_PURCHASE_RULE || event.rule_version !== STANDALONE_PURCHASE_VERSION
+    || event.semantic_key !== identity || String(event.amount) !== fields.amount || event.currency !== fields.currency) fail('PURCHASE_PERSISTENCE_CONFLICT');
   const evidenceKey = hash({ eventId: Number(event.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, role: 'PURCHASE_EVIDENCE' });
-  const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE',$5,$6,$7,$8,$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING id`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
-  return { event, evidenceId: Number(evidence.rows[0].id) };
+  const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE',$5,$6,$7,$8,$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING *`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
+  const evidenceRow = evidence.rows[0];
+  if (!evidenceRow || Number(evidenceRow.event_id) !== Number(event.id) || Number(evidenceRow.receipt_id) !== Number(fields.receiptId)
+    || evidenceRow.normalization_version !== fields.receiptNormalizationVersion || evidenceRow.evidence_role !== 'PURCHASE_EVIDENCE'
+    || evidenceRow.origin !== SYSTEM_DERIVED || evidenceRow.graph_model_version !== GRAPH_MODEL_VERSION
+    || evidenceRow.rule_code !== STANDALONE_PURCHASE_RULE || evidenceRow.rule_version !== STANDALONE_PURCHASE_VERSION
+    || evidenceRow.semantic_key !== evidenceKey) fail('PURCHASE_PERSISTENCE_CONFLICT');
+  return { event, evidenceId: Number(evidenceRow.id) };
 }
 
 async function persistBankEvidence(client, scope, fields, enrichment, eventId, matchId) {
@@ -123,7 +133,9 @@ async function persistBankEvidence(client, scope, fields, enrichment, eventId, m
 
 async function mappedAccount(client, scope, fields) {
   const code = `FINANCIAL_ACCOUNT:${fields.financialAccountId}`;
-  let row = (await client.query('SELECT * FROM ledger_accounts WHERE scope_id=$1 AND (financial_account_id=$2 OR account_code=$3) FOR UPDATE', [scope.id, fields.financialAccountId, code])).rows[0];
+  const rows = (await client.query('SELECT * FROM ledger_accounts WHERE scope_id=$1 AND (financial_account_id=$2 OR account_code=$3) FOR UPDATE', [scope.id, fields.financialAccountId, code])).rows;
+  if (rows.length > 1) fail('LEDGER_ACCOUNT_MAPPING_CONFLICT');
+  let row = rows[0];
   if (!row) row = (await client.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,$2,'ASSET','Mapped financial account',$3,$4) RETURNING *`, [scope.id, code, fields.financialAccountId, fields.currency])).rows[0];
   if (row.account_code !== code || row.account_type !== 'ASSET' || Number(row.financial_account_id) !== fields.financialAccountId || row.account_currency !== fields.currency || Number(row.scope_id) !== Number(scope.id)) fail('LEDGER_ACCOUNT_MAPPING_CONFLICT');
   return row;
