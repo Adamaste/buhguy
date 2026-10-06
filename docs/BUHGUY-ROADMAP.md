@@ -345,11 +345,18 @@ supports FUTURE_SINGLE and REFINE paths, applies deterministic financial-account
 mapping, enforces one bank-funded ACTIVE ledger entry, converges on replay and
 concurrency, fails closed on conflicting provenance, and refreshes certification
 using ACTIVE semantics. No migration, deployment, replay, backfill, or
-production mutation was performed. The next stage is matched-purchase writer
-orchestration / controlled production-readiness validation: decide when/how
-eligible matches invoke the writer, provide a non-mutating preview/dry-run,
-expose eligibility/block reasons and idempotency identifiers, and define
-operational retry/observability behavior. Ambiguity remains fail-closed.
+production mutation was performed. The matched-purchase writer orchestration
+preview v1 is now implemented and merged as a strictly non-mutating,
+authoritative-loader read-only preview with explicit windows, deterministic
+decisions, stable orchestration identity, stale match-key fail-closed
+handling, PostgreSQL READ ONLY/snapshot proof, and safe summary
+observability. It has no writer execution path and no sync or
+accounting-catchup wiring. The next stage is controlled production
+read-only matched-purchase preview: inspect production schema/runtime
+identity, run the exact preview for the Person 1 scope through a read-only
+DB path, capture safe summary/decision identifiers, and verify persistence
+state is unchanged. Do not invoke the writer, deploy a trigger, replay,
+backfill, or mutate production. Ambiguity remains fail-closed.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
