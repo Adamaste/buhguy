@@ -108,7 +108,7 @@ async function persistPurchase(client, scope, fields, enrichment) {
 
 async function persistBankEvidence(client, scope, fields, enrichment, eventId, matchId) {
   const enrichmentKey = requiredHash(enrichment.enrichmentKey, 'enrichmentKey');
-  const semanticKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, scopeId: Number(scope.id), eventId, matchId, enrichmentKey });
+  const semanticKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, scopeId: Number(scope.id), eventId, matchId });
   const result = await client.query(`INSERT INTO business_event_bank_evidence(scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key) VALUES($1,$2,$3,$4,'BANK_PURCHASE_MATCH',$5,$6) ON CONFLICT(scope_id,bank_receipt_match_id) DO NOTHING RETURNING id`, [scope.id, eventId, matchId, enrichmentKey, MATCHED_PURCHASE_ENRICHMENT_VERSION, semanticKey]);
   if (result.rowCount) return Number(result.rows[0].id);
   const existing = (await client.query('SELECT id,scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key FROM business_event_bank_evidence WHERE scope_id=$1 AND bank_receipt_match_id=$2 FOR UPDATE', [scope.id, matchId])).rows[0];
@@ -132,7 +132,7 @@ async function catalogAccount(client, scope, code) {
 
 async function persistLedger(client, scope, fields, enrichment, eventId, evidenceId, matchId, mapped) {
   const debit = await catalogAccount(client, scope, 'UNCLASSIFIED_ACQUISITION');
-  const semanticKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, enrichmentKey: enrichment.enrichmentKey, eventId, matchKey: fields.matchKey, bankTransactionId: fields.bankTransactionId, financialAccountId: fields.financialAccountId, amount: fields.amount, currency: fields.currency });
+  const semanticKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, eventId, matchKey: fields.matchKey, bankTransactionId: fields.bankTransactionId, financialAccountId: fields.financialAccountId, amount: fields.amount, currency: fields.currency });
   let entry = (await client.query(`SELECT * FROM ledger_entries WHERE scope_id=$1 AND semantic_key=$2 AND derivation_rule=$3 AND derivation_version='v1' AND origin='SYSTEM_DERIVED' FOR UPDATE`, [scope.id, semanticKey, MATCHED_PURCHASE_BANK_LEDGER_RULE])).rows[0];
   if (!entry) entry = (await client.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description) VALUES($1,$2,$3,$4,$5,$6,'v1','READY','FUNDING_UNRECONCILED','SYSTEM_DERIVED','MATCHED_PURCHASE_BANK_FUNDING','Bank-funded matched purchase') RETURNING *`, [scope.id, eventId, fields.currency, fields.bankOccurredAt, semanticKey, MATCHED_PURCHASE_BANK_LEDGER_RULE])).rows[0];
   if (Number(entry.scope_id) !== Number(scope.id) || Number(entry.source_event_id) !== Number(eventId) || entry.currency !== fields.currency || new Date(entry.event_at).toISOString() !== fields.bankOccurredAt) fail('LEDGER_CONFLICT');
