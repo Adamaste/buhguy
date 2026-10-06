@@ -260,7 +260,10 @@ async function assertNoProtectedLedgerEntries(client, scopeKey, eventIds = null)
                      AND old_side.superseded_ledger_entry_id=e.id)
         OR EXISTS (SELECT 1 FROM ledger_entry_supersessions replacement_side
                    WHERE replacement_side.scope_id=e.scope_id
-                     AND replacement_side.replacement_ledger_entry_id=e.id))${eventClause}
+                     AND replacement_side.replacement_ledger_entry_id=e.id)
+        OR EXISTS (SELECT 1 FROM ledger_source_links bank_link
+                   WHERE bank_link.ledger_entry_id=e.id
+                     AND (bank_link.bank_receipt_match_id IS NOT NULL OR bank_link.bank_transaction_id IS NOT NULL)))${eventClause}
     LIMIT 1`, params)).rows;
   if (protectedRows.length) {
     const error = new Error('Ledger refresh/rebuild cannot destructively replace protected supersession history');

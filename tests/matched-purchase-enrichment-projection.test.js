@@ -97,8 +97,8 @@ test('preserves both times, ownership boundary, exact money, and no second ledge
   assert.equal(result.targetLedgerPlan.amount, '100.00');
   assert.equal(result.targetLedgerPlan.postings.length, 2);
   assert.equal(result.sourceProvenance.payerPersonId, undefined);
-  assert.equal(result.persistenceBoundary.persistenceAllowed, false);
-  assert.equal(result.persistenceBoundary.blockedBySchemaBoundaries.length, 4);
+  assert.equal(result.persistenceBoundary.persistenceAllowed, true);
+  assert.deepEqual(result.persistenceBoundary.blockedBySchemaBoundaries, []);
 });
 
 test('loader calls matching once and only issues SELECT reads', async () => {
