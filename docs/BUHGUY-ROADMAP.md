@@ -332,9 +332,14 @@ additional independent purchase evidence. The non-mutating bank cash-flow,
 balanced-journal, business-event-candidate, bank-ledger, bank-to-receipt
 matching, and matched-purchase-enrichment projections are implemented. The
 matched-purchase persistence contract is reviewed and merged as a design-only
-stage. The next stage is matched purchase persistence schema foundation:
-implement the reviewed migration and PostgreSQL tests, while business-event,
-ledger, and reconciliation write paths remain unimplemented.
+stage, and the schema foundation is now implemented by migration 018 with
+PostgreSQL constraint coverage. Business-event and matched-purchase write paths
+remain unimplemented. The next stage is matched purchase active-ledger runtime
+semantics: certification, reconciliation, and analytics reads must select only
+ACTIVE entries, superseded history must remain immutable, source state must
+change when supersession state changes, and destructive refresh/rebuild paths
+must fail closed or become supersession-aware. No matched-purchase writer or
+production mutation is implied.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
