@@ -47,6 +47,7 @@ integration('matched purchase persistence schema enforces reviewed contracts', {
   let scopeId;
   let otherScopeId;
   let accountId;
+  let sameScopeAccountId;
   let otherAccountId;
   let receiptId;
   let secondReceiptId;
@@ -61,6 +62,7 @@ integration('matched purchase persistence schema enforces reviewed contracts', {
     scopeId = Number((await client.query("INSERT INTO accounting_scopes(scope_key,label) VALUES('matched-persistence-scope','fixture') RETURNING id")).rows[0].id);
     otherScopeId = Number((await client.query("INSERT INTO accounting_scopes(scope_key,label) VALUES('matched-persistence-other-scope','fixture') RETURNING id")).rows[0].id);
     accountId = Number((await client.query("INSERT INTO financial_accounts(scope_id,institution,display_name,currency) VALUES($1,'fixture-bank','fixture account','RUB') RETURNING id", [scopeId])).rows[0].id);
+    sameScopeAccountId = Number((await client.query("INSERT INTO financial_accounts(scope_id,institution,display_name,currency) VALUES($1,'fixture-bank','second fixture account','RUB') RETURNING id", [scopeId])).rows[0].id);
     otherAccountId = Number((await client.query("INSERT INTO financial_accounts(scope_id,institution,display_name,currency) VALUES($1,'fixture-bank','other account','RUB') RETURNING id", [otherScopeId])).rows[0].id);
     receiptId = Number((await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency) VALUES('matched-persistence-r1',NOW(),'fixture',12.34,'RUB') RETURNING id")).rows[0].id);
     secondReceiptId = Number((await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency) VALUES('matched-persistence-r2',NOW(),'fixture',12.34,'RUB') RETURNING id")).rows[0].id);
@@ -78,7 +80,7 @@ integration('matched purchase persistence schema enforces reviewed contracts', {
     assert.equal((await client.query('SELECT financial_account_id,account_currency FROM ledger_accounts WHERE id=$1', [bankAccountId])).rows[0].financial_account_id, null);
     await rejects(client, "INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,'FINANCIAL_ACCOUNT:duplicate','ASSET','duplicate',$2,'RUB')", [scopeId, accountId], '23505');
     await rejects(client, "INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,'FINANCIAL_ACCOUNT:control','CONTROL','wrong type',$2,'RUB')", [scopeId, accountId], '23514');
-    await rejects(client, "INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,'FINANCIAL_ACCOUNT:currency','ASSET','wrong currency',$2,'USD')", [scopeId, accountId], '23503');
+    await rejects(client, "INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,'FINANCIAL_ACCOUNT:currency','ASSET','wrong currency',$2,'USD')", [scopeId, sameScopeAccountId], '23503');
     await rejects(client, "INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,'FINANCIAL_ACCOUNT:scope','ASSET','wrong scope',$2,'RUB')", [otherScopeId, accountId], '23503');
 
     firstEntryId = Number((await client.query("INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin) VALUES($1,$2,'RUB',NOW(),repeat('6',64),'fixture','v1','READY','FUNDING_UNRECONCILED','SYSTEM_DERIVED') RETURNING id", [scopeId, eventId])).rows[0].id);
