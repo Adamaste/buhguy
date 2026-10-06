@@ -40,6 +40,13 @@ Each matched decision includes a deterministic future write plan:
 - supersession: `APPEND_OR_REUSE` only for refinement;
 - certification: `REFRESH_ACTIVE_STATE`.
 
+The `orchestrationKey` is a content-addressed identity of the economic
+matched purchase, not of its current disposition. It is derived only from
+this orchestration model version, `scopeKey`, `matchKey`, and `enrichmentKey`.
+Therefore the same key is retained when a decision moves from
+`PERSIST_REQUIRED` to `NOOP_ALREADY_PERSISTED` after the public writer
+commits; a change to any of those stable semantic inputs produces a new key.
+
 The no-op plan uses `REUSE` for persisted semantic rows and sets
 `expectedSemanticChange=false`.
 
@@ -63,6 +70,20 @@ receipt-collector matched-purchase preview \
   --receipt-window-ms <ms> \
   [--from <iso>] [--to <iso>] [--match-key <sha256>]
 ```
+
+An explicit `--match-key` must be a SHA-256 identifier and must resolve to an
+authoritative `MATCHED` pair in the selected read-only snapshot. A missing or
+stale exact key returns `REVIEW_REQUIRED` with `MATCH_NOT_FOUND` and exit code
+2; it is never reported as an empty successful `READY` preview. The public
+preview passes only the reviewed scope, time range, match key, and window
+options to SELECT-only loaders, so test injection options cannot affect
+authoritative production preview.
+
+Completion emits one safe summary log event,
+`matched_purchase_orchestration_preview_completed`, containing only the scope,
+readiness, requested time range/window values, and aggregate decision/status
+counts. Raw notification or receipt evidence, ownership details, account/card
+references, and secrets are not logged.
 
 Mutation flags and subcommands are rejected. Exit code `0` means `READY`, exit
 code `2` means `REVIEW_REQUIRED`, and invalid input/database failures retain

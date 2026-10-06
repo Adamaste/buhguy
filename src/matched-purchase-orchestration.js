@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { BANK_RECEIPT_MATCHING_STATUSES, loadBankReceiptMatching } from './bank-receipt-matching.js';
+import { createLogger } from './logger.js';
 import {
   LEDGER_DISPOSITIONS,
   MATCHED_PURCHASE_ENRICHMENT_STATUSES,
@@ -22,9 +23,17 @@ function canonicalize(value) {
 function stableJson(value) { return JSON.stringify(canonicalize(value)); }
 function fingerprint(value) { return crypto.createHash('sha256').update(stableJson(value)).digest('hex'); }
 function positiveInteger(value) { return Number.isInteger(value) && value > 0; }
+const SHA256 = /^[0-9a-f]{64}$/i;
 
 function validateWindow(value, name) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a finite positive safe integer`);
+}
+
+export function validateMatchedPurchaseMatchKey(value) {
+  if (value !== null && value !== undefined && (typeof value !== 'string' || !SHA256.test(value))) {
+    throw new Error('matchKey must be a SHA-256 identifier');
+  }
+  return value ?? null;
 }
 
 function safePurchaseIdentity(identity) {
@@ -103,9 +112,6 @@ function orchestrationKey(fields) {
     scopeKey: fields.scopeKey,
     matchKey: fields.matchKey,
     enrichmentKey: fields.enrichmentKey,
-    bankTransactionId: fields.bankTransactionId,
-    receiptId: fields.receiptId,
-    orchestrationAction: fields.orchestrationAction,
   });
 }
 
@@ -129,7 +135,7 @@ function matchedDecision(match, enrichment) {
   };
 }
 
-export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [] } = {}) {
+export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [], selectionFailure = null } = {}) {
   if (!matching || typeof matching !== 'object') throw new Error('matching result is required');
   const enrichmentByMatchKey = new Map(enrichments.map((item) => [item.matchKey, item]));
   const decisions = (matching.matches ?? [])
@@ -162,9 +168,11 @@ export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments
     ineligibleBankEntries: Number(matching.summary?.ineligibleBankEntries ?? bankStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).length),
     ineligibleReceipts: Number(matching.summary?.ineligibleReceipts ?? receiptStatuses.filter((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE).length),
   };
+  const readiness = selectionFailure || summary.blockedMatchedPairs || summary.ambiguousBankPurchases || summary.ambiguousReceipts ? 'REVIEW_REQUIRED' : 'READY';
   return {
     modelVersion: MATCHED_PURCHASE_ORCHESTRATION_VERSION,
-    readiness: summary.blockedMatchedPairs || summary.ambiguousBankPurchases || summary.ambiguousReceipts ? 'REVIEW_REQUIRED' : 'READY',
+    readiness,
+    ...(selectionFailure ? { selection: selectionFailure } : {}),
     summary,
     decisions,
     bankStatuses,
@@ -172,13 +180,39 @@ export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments
   };
 }
 
+export function logMatchedPurchaseOrchestrationPreview(result, options, logger = createLogger()) {
+  logger?.info?.('matched_purchase_orchestration_preview_completed', {
+    scopeKey: options.scopeKey ?? null,
+    readiness: result.readiness,
+    from: options.from ?? null,
+    to: options.to ?? null,
+    internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
+    receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
+    ...result.summary,
+  });
+}
+
 export async function previewMatchedPurchaseOrchestration(pool, options = {}) {
   validateWindow(options.internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(options.receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
-  const matching = await loadBankReceiptMatching(pool, options);
-  const matches = options.matchKey
-    ? (matching.matches ?? []).filter((match) => match.matchKey === options.matchKey)
+  const matchKey = validateMatchedPurchaseMatchKey(options.matchKey);
+  const loaderOptions = {
+    scopeKey: options.scopeKey,
+    from: options.from ?? null,
+    to: options.to ?? null,
+    matchKey,
+    internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
+    receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
+  };
+  const matching = await loadBankReceiptMatching(pool, loaderOptions);
+  const exactMatches = matchKey
+    ? (matching.matches ?? []).filter((match) => match.matchKey === matchKey)
     : (matching.matches ?? []);
-  const enrichments = await Promise.all(matches.map(async (match) => loadMatchedPurchaseEnrichment(pool, { ...options, matchKey: match.matchKey })));
-  return buildMatchedPurchaseOrchestrationPreview({ matching: { ...matching, matches }, enrichments });
+  const selectionFailure = matchKey && exactMatches.length === 0
+    ? { matchKey, status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' }
+    : null;
+  const enrichments = await Promise.all(exactMatches.map(async (match) => loadMatchedPurchaseEnrichment(pool, { ...loaderOptions, matchKey: match.matchKey })));
+  const result = buildMatchedPurchaseOrchestrationPreview({ matching: { ...matching, matches: exactMatches }, enrichments, selectionFailure });
+  logMatchedPurchaseOrchestrationPreview(result, loaderOptions, options.logger);
+  return result;
 }

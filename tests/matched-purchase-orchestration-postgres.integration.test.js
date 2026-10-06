@@ -6,6 +6,7 @@ import { loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
+import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -87,12 +88,27 @@ async function cleanup(pool, scopeId) {
 function readOnlyPool(pool, queries) {
   return {
     query: async (text, params) => {
-      const normalized = String(text).trim().toUpperCase();
-      if (!normalized.startsWith('SELECT') && !normalized.startsWith('WITH')) throw new Error(`NON_READ_ONLY_SQL:${text}`);
+      const normalized = String(text).replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ').trim().toUpperCase();
+      if (!/^(SELECT|WITH)\b/.test(normalized)
+        || /\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|VACUUM|CALL|DO|COPY|BEGIN|COMMIT|ROLLBACK|SET)\b/.test(normalized)) {
+        throw new Error(`NON_READ_ONLY_SQL:${text}`);
+      }
       queries.push({ text: String(text), params });
       return pool.query(text, params);
     },
   };
+}
+
+async function withReadOnlyTransaction(pool, queries, callback) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET TRANSACTION READ ONLY');
+    return await callback(readOnlyPool({ query: (text, params) => client.query(text, params) }, queries));
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
 }
 
 integration('authoritative preview is PERSIST_REQUIRED and SELECT-only', { concurrency: false }, async () => {
@@ -101,12 +117,58 @@ integration('authoritative preview is PERSIST_REQUIRED and SELECT-only', { concu
     const fixture = await createFixture(pool, 'preview-authoritative');
     const before = await snapshot(pool);
     const queries = [];
-    const result = await previewMatchedPurchaseOrchestration(readOnlyPool(pool, queries), { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 });
+    const result = await withReadOnlyTransaction(pool, queries, (readOnly) => previewMatchedPurchaseOrchestration(readOnly, { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 }));
     assert.equal(result.readiness, 'READY');
     assert.equal(result.summary.persistRequired, 1);
     assert.equal(result.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
     assert.ok(queries.length > 0);
     assert.equal(await snapshot(pool), before);
+  } finally { await pool.end(); }
+});
+
+integration('public preview ignores caller matchingLoader injection and rejects stale match selection', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-loader-isolation');
+    const options = { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
+    const result = await previewMatchedPurchaseOrchestration(pool, { ...options, matchingLoader: async () => ({ matches: [] }) });
+    assert.equal(result.readiness, 'READY');
+    assert.equal(result.summary.persistRequired, 1);
+    const missing = await previewMatchedPurchaseOrchestration(pool, { ...options, matchKey: digest('missing-match') });
+    assert.equal(missing.readiness, 'REVIEW_REQUIRED');
+    assert.deepEqual(missing.selection, { matchKey: digest('missing-match'), status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' });
+  } finally { await pool.end(); }
+});
+
+integration('real writer persistence preserves orchestration identity and read-only NOOP preview', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-already-persisted');
+    const options = { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
+    const before = await previewMatchedPurchaseOrchestration(pool, options);
+    assert.equal(before.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+    await persistMatchedPurchase(pool, options);
+    const queries = [];
+    const persistedSnapshot = await snapshot(pool);
+    const after = await withReadOnlyTransaction(pool, queries, (readOnly) => previewMatchedPurchaseOrchestration(readOnly, { ...options, matchingLoader: async () => ({ matches: [] }) }));
+    assert.equal(after.decisions[0].orchestrationAction, 'NOOP_ALREADY_PERSISTED');
+    assert.equal(after.decisions[0].orchestrationKey, before.decisions[0].orchestrationKey);
+    assert.equal(after.decisions[0].matchKey, before.decisions[0].matchKey);
+    assert.equal(after.decisions[0].enrichmentKey, before.decisions[0].enrichmentKey);
+    assert.equal(after.decisions[0].writePlan.expectedSemanticChange, false);
+    assert.ok(queries.length > 0);
+    assert.equal(await snapshot(pool), persistedSnapshot);
+  } finally { await pool.end(); }
+});
+
+integration('query guard rejects data modifying CTE and all mutation classes', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const queries = [];
+    const readOnly = readOnlyPool(pool, queries);
+    for (const sql of ['INSERT INTO receipts DEFAULT VALUES', 'UPDATE receipts SET seller= seller', 'DELETE FROM receipts', 'MERGE INTO receipts USING receipts ON false WHEN NOT MATCHED THEN INSERT DEFAULT VALUES', 'TRUNCATE receipts', 'CREATE TABLE forbidden_guard(id integer)', 'WITH removed AS (DELETE FROM receipts RETURNING id) SELECT * FROM removed']) {
+      await assert.rejects(() => readOnly.query(sql), /NON_READ_ONLY_SQL/);
+    }
   } finally { await pool.end(); }
 });
 

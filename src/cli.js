@@ -20,7 +20,7 @@ import { analyticsSummary, analyticsBlocked, analyticsTrace, assertSupportedMetr
 import { standalonePurchaseCensus, persistStandalonePurchases } from './standalone-purchase.js';
 import { accountingCoverageReport, compareCoverageReports } from './accounting-coverage.js';
 import { runAccountingCatchup } from './accounting-pipeline.js';
-import { previewMatchedPurchaseOrchestration } from './matched-purchase-orchestration.js';
+import { previewMatchedPurchaseOrchestration, validateMatchedPurchaseMatchKey } from './matched-purchase-orchestration.js';
 import { effectiveAccountingScopeKey, runAccountingCatchupsForSources, runSourceSyncCycle } from './source-sync-cycle.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
@@ -89,6 +89,7 @@ export async function runMatchedPurchaseOrchestrationCommand(args, { pool, write
   const receiptMaxTimeDeltaMs = Number(args['receipt-window-ms']);
   if (!Number.isSafeInteger(internalTransferMaxTimeDeltaMs) || internalTransferMaxTimeDeltaMs <= 0) throw new ReceiptCollectorError('Matched-purchase preview requires a finite positive --internal-transfer-window-ms');
   if (!Number.isSafeInteger(receiptMaxTimeDeltaMs) || receiptMaxTimeDeltaMs <= 0) throw new ReceiptCollectorError('Matched-purchase preview requires a finite positive --receipt-window-ms');
+  try { validateMatchedPurchaseMatchKey(args['match-key'] ?? null); } catch (error) { throw new ReceiptCollectorError(error.message); }
   const result = await preview(pool, {
     scopeKey: args['scope-key'],
     from: args.from ?? null,

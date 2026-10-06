@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import crypto from 'node:crypto';
-import { buildMatchedPurchaseOrchestrationPreview } from '../src/matched-purchase-orchestration.js';
+import { buildMatchedPurchaseOrchestrationPreview, logMatchedPurchaseOrchestrationPreview } from '../src/matched-purchase-orchestration.js';
 import { runMatchedPurchaseOrchestrationCommand } from '../src/cli.js';
 
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -62,6 +62,21 @@ test('REFINE and already persisted decisions expose distinct safe plans', () => 
   assert.equal(noop.writePlan.bankFundedLedgerEntry, 'REUSE');
 });
 
+test('orchestration identity is stable when only the action changes', () => {
+  const item = match();
+  const refine = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [item] }),
+    enrichments: [enrichment(item, 'REFINE_EXISTING_FISCAL_FUNDING')],
+  });
+  const noop = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [item] }),
+    enrichments: [enrichment(item, 'REUSE_EXISTING_BANK_FUNDING')],
+  });
+  assert.equal(refine.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+  assert.equal(noop.decisions[0].orchestrationAction, 'NOOP_ALREADY_PERSISTED');
+  assert.equal(refine.decisions[0].orchestrationKey, noop.decisions[0].orchestrationKey);
+});
+
 test('blocked enrichment and ambiguous matching require review, while ordinary unmatched evidence is visible', () => {
   const item = match();
   const result = buildMatchedPurchaseOrchestrationPreview({
@@ -117,4 +132,35 @@ test('CLI preview returns readiness exit codes without exposing an execution pat
   const code = await runMatchedPurchaseOrchestrationCommand({ _: ['preview'], 'scope-key': 'scope-a', 'internal-transfer-window-ms': '10', 'receipt-window-ms': '20' }, { pool: {}, preview, write: (value) => { output = value; } });
   assert.equal(code, 0);
   assert.equal(output.readiness, 'READY');
+});
+
+test('CLI rejects malformed explicit match keys', async () => {
+  await assert.rejects(() => runMatchedPurchaseOrchestrationCommand({
+    _: ['preview'],
+    'scope-key': 'scope-a',
+    'internal-transfer-window-ms': '10',
+    'receipt-window-ms': '10',
+    'match-key': 'stale',
+  }, { pool: {} }), /SHA-256/);
+});
+
+test('preview summary logging contains only the safe summary contract', () => {
+  const events = [];
+  const item = match();
+  const result = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [item] }),
+    enrichments: [enrichment(item, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
+  });
+  logMatchedPurchaseOrchestrationPreview(result, {
+    scopeKey: 'scope-a', from: null, to: null, internalTransferMaxTimeDeltaMs: 10, receiptMaxTimeDeltaMs: 20,
+  }, { info: (event, fields) => events.push({ event, fields }) });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'matched_purchase_orchestration_preview_completed');
+  assert.deepEqual(Object.keys(events[0].fields).sort(), [
+    'alreadyPersisted', 'ambiguousBankPurchases', 'ambiguousReceipts', 'blockedMatchedPairs',
+    'from', 'ineligibleBankEntries', 'ineligibleReceipts', 'internalTransferMaxTimeDeltaMs',
+    'matchedPairs', 'persistRequired', 'readiness', 'receiptMaxTimeDeltaMs', 'scopeKey',
+    'to', 'unmatchedBankPurchases', 'unmatchedReceipts',
+  ].sort());
+  assert.equal(events[0].fields.scopeKey, 'scope-a');
 });
