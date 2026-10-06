@@ -52,6 +52,10 @@ async function sourceState(pool, scopeId) {
   });
 }
 
+export async function certificationSourceStateKey(pool, scopeId) {
+  return sourceState(pool, scopeId);
+}
+
 async function loadInputs(pool, scopeKey, eventIds = null) {
   const scope = (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
   if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
@@ -77,16 +81,16 @@ async function insertFacts(client, runId, facts) {
 export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [], client: transactionClient = null } = {}) {
   if (!eventIds.length) return { bounded: true, eventIds: [], facts: 0 };
   const queryable = transactionClient ?? pool;
-  const { scope } = await loadInputs(queryable, scopeKey, eventIds);
+  const { scope } = await loadInputs(queryable, scopeKey);
   const sourceStateKey = await sourceState(queryable, scope.id);
-  const input = await loadInputs(queryable, scopeKey, eventIds);
-  const facts = deriveCertificationFacts({ ...input, sourceStateKey });
+  const completeInput = await loadInputs(queryable, scopeKey);
+  const facts = deriveCertificationFacts({ ...completeInput, sourceStateKey });
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const run = await ensureRun(client, scope.id, sourceStateKey);
-    await client.query(`DELETE FROM certification_facts WHERE run_id=$1 AND ledger_entry_id IN (SELECT id FROM ledger_entries WHERE source_event_id=ANY($2::bigint[]))`, [run.id, eventIds]);
+    await client.query('DELETE FROM certification_facts WHERE run_id=$1', [run.id]);
     await insertFacts(client, run.id, facts);
     await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
     const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;
