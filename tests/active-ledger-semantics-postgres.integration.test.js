@@ -56,7 +56,7 @@ integration('active-ledger semantics exclude superseded history and protect refr
     assert.equal(analytics.metrics.FISCAL_NEW_MONEY.amount, '12.00');
     assert.equal(analytics.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '12.00');
     const coverageRows = await loadCoverageRows(pool, { scopeKey });
-    const coverageEvent = coverageRows[0]?.related?.events.find((item) => Number(item.eventId) === eventId);
+    const coverageEvent = coverageRows.find((row) => Number(row.id) === receiptId)?.related?.events.find((item) => Number(item.eventId) === eventId);
     assert.equal(Number(coverageEvent?.ledgerEntryId), replacementEntryId);
     assert.notEqual(Number(coverageEvent?.ledgerEntryId), oldEntryId);
 
