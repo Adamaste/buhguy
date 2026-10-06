@@ -344,19 +344,21 @@ bank-receipt evidence, refines standalone PURCHASE evidence append-only,
 supports FUTURE_SINGLE and REFINE paths, applies deterministic financial-account
 mapping, enforces one bank-funded ACTIVE ledger entry, converges on replay and
 concurrency, fails closed on conflicting provenance, and refreshes certification
-using ACTIVE semantics. No migration, deployment, replay, backfill, or
-production mutation was performed. The matched-purchase writer orchestration
+using ACTIVE semantics. Migration 018 schema foundation is now applied in
+production through a controlled schema-only rollout with PostgreSQL
+constraint coverage; no writer, deployment, replay, backfill, or production
+business-data mutation occurred. The matched-purchase writer orchestration
 preview v1 is now implemented and merged as a strictly non-mutating,
 authoritative-loader read-only preview with explicit windows, deterministic
 decisions, stable orchestration identity, stale match-key fail-closed
 handling, PostgreSQL READ ONLY/snapshot proof, and safe summary
 observability. It has no writer execution path and no sync or
-accounting-catchup wiring. The next stage is controlled production
-read-only matched-purchase preview: inspect production schema/runtime
-identity, run the exact preview for the Person 1 scope through a read-only
-DB path, capture safe summary/decision identifiers, and verify persistence
-state is unchanged. Do not invoke the writer, deploy a trigger, replay,
-backfill, or mutate production. Ambiguity remains fail-closed.
+accounting-catchup wiring. The next stage is matched-purchase production
+matching-window policy review before any controlled read-only preview:
+inspect production schema/runtime identity, define explicit finite windows,
+and keep the preview on a read-only DB path. Do not invoke the writer, deploy
+a trigger, replay, backfill, or mutate production. Ambiguity remains
+fail-closed.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals

@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-06
 - Current implementation baseline: `812e4c67e991d770d783aff960bb7cfb8b75979d` (PR #113 squash-merged; matched-purchase writer orchestration preview v1 is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, and matched-purchase writer orchestration preview v1 stages are merged. Certification, reconciliation, and analytics consume ACTIVE ledger state; superseded history remains immutable and stale certification source states are not reused as current coverage. The next narrow stage is a controlled production read-only matched-purchase preview; no writer execution or production mutation is authorized by that stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, and matched-purchase writer orchestration preview v1 stages are merged. Migration 018 is now applied in production as a schema-only rollout; the new persistence tables are empty and historical business/accounting rows are unchanged. Certification, reconciliation, and analytics consume ACTIVE ledger state; superseded history remains immutable and stale certification source states are not reused as current coverage. The next narrow stage is production matching-window policy review; no writer execution, preview, replay, backfill, deployment, or further production mutation is authorized by that stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `controlled production read-only matched-purchase preview`. Use the exact merged-master preview after inspecting production schema/runtime identity; run it for the Person 1 scope through an explicitly read-only database role or transaction with reviewed matching windows; capture only safe summary and decision identifiers; verify production persistence-table counts/hashes are unchanged before and after. Do not invoke `persistMatchedPurchase`, enable automatic execution, deploy a writer trigger, replay, backfill, or mutate production.
+- Next action: `matched-purchase production matching-window policy review`. First review and approve explicit finite matching windows and the read-only production execution contract for the Person 1 scope; do not execute the preview yet. The migration 018 rollout was schema-only, with no writer invocation, deployment, replay, backfill, or production business-data mutation.
 
 ## Bank business-event candidate projection v1
 
@@ -205,6 +205,33 @@ semantics`:
 
 This stage does not add a matched-purchase persistence writer, deployment,
 replay, backfill, or production mutation.
+
+## Matched purchase persistence schema foundation production rollout
+
+Master `7c116d7498ff154cf2c81b53b8b86b7c22136939` was used only as an
+isolated migration source. The active backend runtime was not deployed or
+restarted; its production path remains `/opt/accountant/receipt-collector`,
+and the ingestion service remained healthy. Migration 018 was applied through
+the reviewed migration runner as the sole authorized production mutation.
+
+The pre-migration schema was 017 and migration 018 was the only pending
+migration. A fresh PostgreSQL backup was created before the change, validated
+with gzip and `pg_restore --list`, retained with `postgres:postgres` ownership
+and mode 600, and recorded with SHA-256
+`67a4b7394d3550ec0bf8245c45b6a50f35d8456eedf01f79f41536cbfc510469`.
+The post-migration schema is 018 with exactly one new schema-migration row.
+`bank_receipt_matches`, `business_event_bank_evidence`, and
+`ledger_entry_supersessions` are present and empty. Historical counts and
+common-column fingerprints remained unchanged; the pre-existing ledger state
+was unchanged, including its pre-existing no-posting entries and zero debit /
+credit imbalance among entries with postings. The runtime service remained
+active and `receipt-collector-sync.timer` remained enabled and active.
+
+No grants changed. No matched-purchase writer or preview was invoked; no
+deployment, replay, backfill, or production business-data mutation occurred.
+The next action is `matched-purchase production matching-window policy
+review`; no preview or writer execution is authorized until that policy is
+reviewed.
 
 ## Matched purchase active-ledger runtime semantics closeout
 
