@@ -112,7 +112,7 @@ async function persistBankEvidence(client, scope, fields, enrichment, eventId, m
   const result = await client.query(`INSERT INTO business_event_bank_evidence(scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key) VALUES($1,$2,$3,$4,'BANK_PURCHASE_MATCH',$5,$6) ON CONFLICT(scope_id,bank_receipt_match_id) DO NOTHING RETURNING id`, [scope.id, eventId, matchId, enrichmentKey, MATCHED_PURCHASE_ENRICHMENT_VERSION, semanticKey]);
   if (result.rowCount) return Number(result.rows[0].id);
   const existing = (await client.query('SELECT id,scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key FROM business_event_bank_evidence WHERE scope_id=$1 AND bank_receipt_match_id=$2 FOR UPDATE', [scope.id, matchId])).rows[0];
-  if (!existing || Number(existing.business_event_id) !== Number(eventId) || Number(existing.bank_receipt_match_id) !== Number(matchId) || existing.enrichment_key !== enrichmentKey || existing.semantic_key !== semanticKey) fail('BANK_EVIDENCE_CONFLICT');
+  if (!existing || Number(existing.business_event_id) !== Number(eventId) || Number(existing.bank_receipt_match_id) !== Number(matchId) || existing.evidence_role !== 'BANK_PURCHASE_MATCH' || existing.rule_version !== MATCHED_PURCHASE_ENRICHMENT_VERSION || existing.semantic_key !== semanticKey) fail('BANK_EVIDENCE_CONFLICT');
   return Number(existing.id);
 }
 
