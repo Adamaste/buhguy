@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-06
-- Current implementation baseline: `9b6b1499a3700be783e746c5f7ccc3e228084ed7` (PR #111 squash-merged; atomic matched-purchase persistence writer v1 is merged)
+- Current implementation baseline: `812e4c67e991d770d783aff960bb7cfb8b75979d` (PR #113 squash-merged; matched-purchase writer orchestration preview v1 is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, and atomic matched-purchase persistence writer v1 stages are merged. Certification, reconciliation, and analytics consume ACTIVE ledger state; superseded history remains immutable and stale certification source states are not reused as current coverage. The next narrow stage is matched-purchase writer orchestration / controlled production-readiness validation; no production mutation is authorized by that stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, and matched-purchase writer orchestration preview v1 stages are merged. Certification, reconciliation, and analytics consume ACTIVE ledger state; superseded history remains immutable and stale certification source states are not reused as current coverage. The next narrow stage is a controlled production read-only matched-purchase preview; no writer execution or production mutation is authorized by that stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `matched-purchase writer orchestration / controlled production-readiness validation`. Decide when and how authoritative eligible matches invoke the writer; provide a non-mutating preview/dry-run of intended writes before any production mutation; expose eligibility/block reasons and idempotency identifiers; preserve fail-closed ambiguity handling; and define operational retry and observability behavior. Do not deploy, replay, backfill, or mutate production in this stage.
+- Next action: `controlled production read-only matched-purchase preview`. Use the exact merged-master preview after inspecting production schema/runtime identity; run it for the Person 1 scope through an explicitly read-only database role or transaction with reviewed matching windows; capture only safe summary and decision identifiers; verify production persistence-table counts/hashes are unchanged before and after. Do not invoke `persistMatchedPurchase`, enable automatic execution, deploy a writer trigger, replay, backfill, or mutate production.
 
 ## Bank business-event candidate projection v1
 
@@ -256,6 +256,35 @@ production-readiness validation`:
 - define operational retry and observability behavior.
 
 This stage must not yet deploy, replay, backfill, or mutate production.
+
+## Matched purchase writer orchestration preview v1 closeout
+
+PR #113 was squash-merged into master
+`812e4c67e991d770d783aff960bb7cfb8b75979d`. The
+`matched-purchase-writer-orchestration-v1` preview is strictly non-mutating:
+it uses the authoritative matching and enrichment loaders, requires explicit
+finite matching windows, and emits deterministic `PERSIST_REQUIRED`,
+`NOOP_ALREADY_PERSISTED`, and `BLOCKED` decisions. `AMBIGUOUS`, `UNMATCHED`,
+and `INELIGIBLE` evidence remains visible.
+
+The orchestration key is stable across successful persistence because it is
+content-addressed from the reviewed stable semantic identity rather than the
+current action. Explicit stale match selection fails closed. PostgreSQL tests
+prove SELECT-only query behavior, a READ ONLY transaction, unchanged
+persistence-table snapshots, stable pre/post-writer identity, authoritative
+loader isolation, and safe summary observability. Orchestration has no writer
+execution path and no sync or accounting-catchup wiring.
+
+No migration, deployment, replay, backfill, or production mutation occurred.
+The next action is `controlled production read-only matched-purchase preview`:
+inspect production schema/runtime identity first, run the exact preview for
+the Person 1 scope with explicitly reviewed windows through a read-only DB
+path, record only safe summary/decision identifiers, classify the result as
+`PERSIST_REQUIRED`, `NOOP_ALREADY_PERSISTED`, `BLOCKED`, `AMBIGUOUS`,
+`UNMATCHED`, or `INELIGIBLE`, and verify before/after persistence-table
+counts/hashes are unchanged. Do not invoke `persistMatchedPurchase`, enable
+automatic execution, deploy a writer trigger, replay, backfill, or mutate
+production in this stage.
 
 ## T-Bank ordinary purchase validation baseline
 
