@@ -34,7 +34,7 @@ async function createFixture(pool, prefix, { standalone = false, amount = '12.34
     const tx = (await client.query("INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,event_type,normalization_status,normalization_version,evidence_quality) VALUES($1,NOW(),$2,'RUB','DEBIT','PURCHASE','READY','fixture','EXACT') RETURNING id,occurred_at", [observationId, amount])).rows[0];
     const txId = Number(tx.id);
     await client.query("INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason) VALUES($1,$2,'EXACT','fixture','fixture')", [txId, accountId]);
-    const receipt = (await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency) VALUES($1,NOW(),'fixture',$2,'RUB') RETURNING id,date_time", [receiptKey, amount])).rows[0];
+    const receipt = (await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type) VALUES($1,NOW(),'fixture',$2,'RUB',1) RETURNING id,date_time", [receiptKey, amount])).rows[0];
     const receiptId = Number(receipt.id);
     const fnsSourceId = Number((await client.query('INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref,device_ref) VALUES($1,$2,$3,\'fixture\',\'fixture\') RETURNING id', [scopeId, fnsKey, prefix])).rows[0].id);
     await client.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2)', [fnsSourceId, personId]);
@@ -193,7 +193,8 @@ integration('refresh and rebuild fail closed for future and refined protected st
     for (const [prefix, standalone] of [['future-refresh', false], ['refine-refresh', true]]) {
       const fixture = await createFixture(pool, prefix, { standalone });
       const options = await writerOptions(fixture);
-      await persistMatchedPurchase(pool, options);
+      const result = await persistMatchedPurchase(pool, options);
+      fixture.eventId = result.eventId;
       const before = await snapshotScope(pool, fixture.scopeId);
       await assert.rejects(() => refreshLedgerForReceipt(pool, { scopeKey: fixture.scopeKey, receiptId: fixture.receiptId }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
       await assert.rejects(() => rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [fixture.eventId], replace: true }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
@@ -218,7 +219,7 @@ integration('persisted provenance conflicts fail closed without writer mutation'
         const control = Number((await pool.query("SELECT id FROM ledger_accounts WHERE scope_id=$1 AND account_code='UNCLASSIFIED_ACQUISITION'", [fixture.scopeId])).rows[0].id);
         await pool.query('UPDATE ledger_postings SET account_id=$1 WHERE ledger_entry_id=$2 AND credit>0', [control, initial.ledgerEntryId]);
       } else if (kind === 'bank-evidence') {
-        await pool.query("UPDATE business_event_bank_evidence SET enrichment_key=$1 WHERE business_event_id=$2", [hash('z'), initial.eventId]);
+        await pool.query("UPDATE business_event_bank_evidence SET enrichment_key=$1 WHERE business_event_id=$2", [digest('malformed enrichment'), initial.eventId]);
       } else {
         await pool.query("UPDATE ledger_entry_supersessions SET reason_code='MALFORMED' WHERE business_event_id=$1", [initial.eventId]);
       }
