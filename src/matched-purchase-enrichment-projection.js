@@ -260,7 +260,10 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
   const ids = eventIdList(eventRows);
   if (!ids.length) return projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents: [], existingPurchaseEvidence: [], existingLedgerEntries: [] });
   const evidenceRows = (await pool.query('SELECT * FROM business_event_evidence WHERE event_id = ANY($1::bigint[]) ORDER BY id', [ids])).rows;
-  const ledgerRows = (await pool.query(`SELECT le.*, s.scope_key FROM ledger_entries le JOIN accounting_scopes s ON s.id=le.scope_id WHERE le.source_event_id = ANY($1::bigint[]) ORDER BY le.id`, [ids])).rows;
+  const ledgerRows = (await pool.query(`SELECT le.*, s.scope_key FROM ledger_entries le JOIN accounting_scopes s ON s.id=le.scope_id
+    WHERE le.source_event_id = ANY($1::bigint[])
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s2 WHERE s2.scope_id=le.scope_id AND s2.superseded_ledger_entry_id=le.id)
+    ORDER BY le.id`, [ids])).rows;
   const ledgerIds = ledgerRows.map((row) => Number(row.id)).filter(positiveInteger);
   const postingRows = ledgerIds.length
     ? (await pool.query('SELECT lp.*, la.account_code FROM ledger_postings lp JOIN ledger_accounts la ON la.id=lp.account_id WHERE lp.ledger_entry_id = ANY($1::bigint[]) ORDER BY lp.id', [ledgerIds])).rows

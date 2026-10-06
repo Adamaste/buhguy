@@ -53,6 +53,7 @@ const unitFiles = [
 ];
 
 const postgresFiles = [
+  'tests/active-ledger-semantics-postgres.integration.test.js',
   'tests/ledger-postgres.integration.test.js',
   'tests/certification-postgres.integration.test.js',
   'tests/analytics-postgres.integration.test.js',
