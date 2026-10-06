@@ -148,7 +148,7 @@ integration('real standalone purchase is refined append-only and replays through
     assert.deepEqual((await pool.query('SELECT * FROM ledger_postings WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows, oldPostings);
     assert.deepEqual((await pool.query('SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows, oldLinks);
     const evidence = (await pool.query("SELECT * FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND evidence_role='PURCHASE_EVIDENCE'", [fixture.eventId, fixture.receiptId])).rows[0];
-    assert.equal(evidence.semantic_key, businessEventEvidenceSemanticKey({ scopeKey: fixture.scopeKey, eventId: fixture.eventId, receiptId: fixture.receiptId, normalizationVersion: 'fiscal-normalizer-v1', evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: 'STANDALONE_PURCHASE_V1', ruleVersion: 'standalone-purchase-v1', resolutionStatus: 'CONFIRMED' }));
+    assert.equal(evidence.semantic_key, businessEventEvidenceSemanticKey({ scopeKey: fixture.scopeKey, eventId: fixture.eventId, receiptId: fixture.receiptId, normalizationVersion: 'fiscal-normalizer-v1', evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: 'STANDALONE_PURCHASE_V1', ruleVersion: 'standalone-purchase-v1', resolutionStatus: 'CONFIRMED', currency: 'RUB' }));
   } finally { await pool.end(); }
 });
 

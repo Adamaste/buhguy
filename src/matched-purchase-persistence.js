@@ -99,7 +99,7 @@ async function persistPurchase(client, scope, fields, enrichment) {
         AND evidence_role='PURCHASE_EVIDENCE' AND origin=$4
         AND graph_model_version=$5 AND rule_code=$6 AND rule_version=$7
       ORDER BY id`, [existing.id, fields.receiptId, fields.receiptNormalizationVersion, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION])).rows;
-    const expectedEvidenceKey = businessEventEvidenceSemanticKey({ scopeKey: scope.scope_key, eventId: Number(existing.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED' });
+    const expectedEvidenceKey = businessEventEvidenceSemanticKey({ scopeKey: scope.scope_key, eventId: Number(existing.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED', currency: fields.currency });
     if (evidence.length !== 1 || evidence[0].semantic_key !== expectedEvidenceKey) fail('PURCHASE_PERSISTENCE_CONFLICT');
     return { event: existing, evidenceId: Number(evidence[0].id) };
   }
@@ -115,7 +115,7 @@ async function persistPurchase(client, scope, fields, enrichment) {
     || event.origin !== SYSTEM_DERIVED || event.graph_model_version !== GRAPH_MODEL_VERSION
     || event.rule_code !== STANDALONE_PURCHASE_RULE || event.rule_version !== STANDALONE_PURCHASE_VERSION
     || event.semantic_key !== identity || String(event.amount) !== fields.amount || event.currency !== fields.currency) fail('PURCHASE_PERSISTENCE_CONFLICT');
-  const evidenceKey = businessEventEvidenceSemanticKey({ scopeKey: scope.scope_key, eventId: Number(event.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED' });
+  const evidenceKey = businessEventEvidenceSemanticKey({ scopeKey: scope.scope_key, eventId: Number(event.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED', currency: fields.currency });
   const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE',$5,$6,$7,$8,$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING *`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
   const evidenceRow = evidence.rows[0];
   if (!evidenceRow || Number(evidenceRow.event_id) !== Number(event.id) || Number(evidenceRow.receipt_id) !== Number(fields.receiptId)
