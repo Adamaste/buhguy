@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-06
-- Current implementation baseline: `bec6fe8b8f0746993f82fd83c205ff96c1eb9f94` (PR #101 squash-merged; bank-receipt-matching-v1 is merged as a deterministic non-mutating evidence matcher)
+- Current implementation baseline: `d354fb5eb9ff2cf40eb1e72faf65e3a03d9cfbf8` (PR #103 squash-merged; matched-purchase-enrichment-projection-v1 is merged as a deterministic non-mutating enrichment projection)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, and bank-receipt-matching v1 stages are merged. Receipt matching now links only exact eligible bank-backed PURCHASE movements to strict electronic-settlement fiscal receipts under the same scope and explicit bank-account OWNER gate, with one-to-one fail-closed ambiguity and no second cash-flow posting. The remaining design blocker is the persistence/enrichment boundary: define how a proven bank+receipt relationship enriches the existing purchase/business-event representation without duplicating ledger entries or rewriting existing standalone receipt history.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, and matched-purchase-enrichment-projection-v1 stages are merged. Bank movement remains the sole monetary funding fact; a matched receipt enriches one purchase and never creates a second cash flow. The remaining blocker is the persistence contract/schema design. Four reviewed persistence gaps must be resolved before writes: business_event_evidence cannot link bank transaction/match evidence; ledger_source_links cannot link bank evidence; persisted ledger lacks reviewed refinement/supersession semantics for replacing `FISCAL_PAYMENT_CLEARING` with concrete bank funding; and financial_account identity has no reviewed persisted ledger-account mapping.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `matched purchase enrichment/persistence boundary audit/design`. Audit the existing business-event, standalone-purchase, ledger, and reconciliation persistence contracts and design the smallest deterministic next slice that can represent a proven bank+receipt purchase relationship without creating a second monetary movement. Start non-mutating; do not add a schema migration or production write path until that boundary is reviewed.
+- Next action: `matched purchase persistence contract/schema design`. Design the minimal persistence model for the already-reviewed matched-purchase enrichment before implementing it. No migration, production writes, replay, backfill, or deployment is authorized by this handoff.
 
 ## Bank business-event candidate projection v1
 
@@ -131,6 +131,40 @@ PR #101 exact-head CI run `37368023085` ultimately passed the test job,
 PostgreSQL integration gate, full suite, and Android job after GitHub-hosted
 runner cancellations/delays; `android-signed` was correctly skipped for the
 pull_request event.
+
+## Matched purchase enrichment projection v1
+
+PR #103 was squash-merged into master `d354fb5eb9ff2cf40eb1e72faf65e3a03d9cfbf8`.
+`matched-purchase-enrichment-projection-v1` is a deterministic, non-mutating,
+in-memory projection over the validated bank-to-receipt match and its existing
+upstream bank cash-flow, balanced-journal, business-event-candidate, and ledger
+projections:
+
+`bank transaction`
+-> `bank-cash-flow-projection-v1`
+-> `balanced-bank-journal-projection-v1`
+-> `bank-business-event-candidate-projection-v1`
+-> `bank-ledger-projection-v1`
+-> `bank-receipt-matching-v1`
+-> `matched-purchase-enrichment-projection-v1`.
+
+The bank movement remains the sole monetary funding fact. A matched receipt
+enriches exactly one purchase and never creates a second cash flow. The existing
+`STANDALONE_PURCHASE_V1` is reused conceptually; no receipt-side second posting
+or silent standalone-history rewrite is introduced. Persistence remains blocked
+and unimplemented.
+
+The minimal persistence design must address four reviewed gaps:
+
+1. `business_event_evidence` cannot link bank transaction or match evidence.
+2. `ledger_source_links` cannot link bank evidence.
+3. Persisted ledger lacks reviewed refinement/supersession semantics for
+   replacing `FISCAL_PAYMENT_CLEARING` with concrete bank funding.
+4. `financial_account` identity has no reviewed persisted ledger-account mapping.
+
+The next stage is `matched purchase persistence contract/schema design`.
+Design the minimal model first; do not implement a migration, production write
+path, replay, backfill, or deployment in this docs closeout.
 
 
 ## T-Bank ordinary purchase validation baseline
@@ -2139,15 +2173,14 @@ canonicalization, bank business-event candidate, two-sided internal-transfer,
 bank-ledger, and `bank-receipt-matching-v1` slices are complete and remain
 non-mutating.
 
-The immediate next action is the separate
-`matched purchase enrichment/persistence boundary audit/design` slice.
-Inspect the existing business-event graph, `STANDALONE_PURCHASE_V1`, ledger,
-certification, and reconciliation persistence contracts and define how a
-proven bank-backed purchase plus matched receipt should become one enriched
-economic purchase without a second cash-flow posting, duplicate ledger entry,
-or silent history rewrite. Prefer a deterministic non-mutating projection
-first; no schema migration or production persistence is authorized merely by
-this handoff.
+The immediate next action is
+`matched purchase persistence contract/schema design`.
+The non-mutating matched-purchase enrichment projection is already merged.
+Now design the minimal persistence model for a proven bank-backed purchase plus
+matched receipt, reusing `STANDALONE_PURCHASE_V1` conceptually without a second
+cash-flow posting, duplicate ledger entry, or silent history rewrite. Resolve
+the four documented persistence gaps before any implementation. No schema
+migration or production persistence is authorized merely by this handoff.
 
 Controlled real operations are allowed only when the user independently
 chooses to perform them. The controlled purchase campaign is closed; do not
@@ -2155,11 +2188,11 @@ manufacture additional operations. Future natural provider events may be
 audited with a clean Android/backend baseline and full notification-lifecycle
 correlation when relevant.
 
-Bank-to-receipt candidate matching is now merged as a non-mutating evidence
-relationship layer. Account identity may be used only when explicitly
-resolved; bank-account OWNER evidence is not payer/beneficiary proof; and
-`INTERNAL_TRANSFER` still requires independently proven two-sided own-account
-evidence. The next slice must decide the enrichment/persistence boundary
+Bank-to-receipt candidate matching and matched-purchase enrichment are merged
+as non-mutating evidence/projection layers. Account identity may be used only
+when explicitly resolved; bank-account OWNER evidence is not payer/beneficiary
+proof; and `INTERNAL_TRANSFER` still requires independently proven two-sided
+own-account evidence. The next slice is persistence contract/schema design,
 without fabricating a second monetary event. No production parser deployment,
 persistence, business-event creation, ledger write, replay, backfill, or
 production reconciliation decision is implied by this closeout. Fresh provider

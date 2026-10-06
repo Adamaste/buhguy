@@ -276,7 +276,9 @@ movement semantics first, extend business-event semantics second, recognize
 internal transfers only with independently proven two-sided own-account
 evidence, integrate sufficiently proven events into the ledger, and use
 bank-to-receipt matching as additional independent purchase evidence. The
-candidate-matching portion is not yet implemented or proven in production.
+non-mutating bank-to-receipt matching and matched-purchase enrichment
+projections are implemented; persistence and production proof remain separate
+follow-up work.
 
 Example candidate relationship:
 
@@ -326,11 +328,11 @@ The near-term sequence is to project proven bank cash-flow semantics first,
 extend business-event semantics second, recognize internal transfers only with
 independently proven two-sided own-account evidence, integrate sufficiently
 proven events into the ledger, and then use bank-to-receipt matching as
-additional independent purchase evidence. The non-mutating bank cash-flow
-projection is implemented by the current development slice and becomes
-available on master after PR #77; the next slice is a non-mutating balanced
-journal projection. Business-event persistence, internal-transfer matching,
-ledger integration, and bank-to-receipt matching remain subsequent stages.
+additional independent purchase evidence. The non-mutating bank cash-flow,
+balanced-journal, business-event-candidate, bank-ledger, bank-to-receipt
+matching, and matched-purchase-enrichment projections are implemented. The
+next stage is matched purchase persistence contract/schema design; business-
+event, ledger, and reconciliation persistence remain unimplemented.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
