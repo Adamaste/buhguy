@@ -30,7 +30,7 @@ async function sourceState(pool, scopeId) {
       AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
     ORDER BY p.ledger_entry_id,p.id`, [scopeId])).rows;
   const links = (await pool.query(`SELECT l.ledger_entry_id,l.business_event_id,l.graph_evidence_id,
-      l.graph_allocation_id,l.receipt_id,l.normalization_version,l.link_role,l.semantic_key
+      l.graph_allocation_id,l.receipt_id,l.normalization_version,l.link_role,l.semantic_key,l.bank_receipt_match_id,l.bank_transaction_id
     FROM ledger_source_links l
     JOIN ledger_entries e ON e.id=l.ledger_entry_id
     WHERE e.scope_id=$1
@@ -135,6 +135,9 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
       add(entry, 'CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', debit('UNCLASSIFIED_ACQUISITION'), 'BUSINESS_GRAPH_CONFIRMED');
       add(entry, 'ACQUISITION_CLASSIFICATION', 'CLASSIFICATION_CERTIFICATION', 'PROVISIONAL', debit('UNCLASSIFIED_ACQUISITION'), 'UNCLASSIFIED_ACQUISITION');
       add(entry, 'FISCAL_NEW_MONEY', 'FUNDING_CERTIFICATION', 'PROVISIONAL', credit('FISCAL_PAYMENT_CLEARING'), 'FUNDING_UNRECONCILED');
+    } else if (entry.derivation_rule === 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1') {
+      add(entry, 'CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', debit('UNCLASSIFIED_ACQUISITION'), 'BUSINESS_GRAPH_CONFIRMED');
+      add(entry, 'ACQUISITION_CLASSIFICATION', 'CLASSIFICATION_CERTIFICATION', 'PROVISIONAL', debit('UNCLASSIFIED_ACQUISITION'), 'UNCLASSIFIED_ACQUISITION');
     } else if (entry.derivation_rule === 'LEDGER_RETURN_V1') {
       add(entry, 'CONFIRMED_RETURN_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', credit('UNCLASSIFIED_ACQUISITION'), 'BUSINESS_GRAPH_CONFIRMED');
       add(entry, 'OUTSTANDING_REFUND_RECEIVABLE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', debit('MERCHANT_REFUND_RECEIVABLE'), 'REFUND_NOT_YET_PROVEN');

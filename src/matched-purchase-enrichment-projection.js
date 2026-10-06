@@ -14,6 +14,7 @@ export const PURCHASE_IDENTITY_DISPOSITIONS = Object.freeze({
 export const LEDGER_DISPOSITIONS = Object.freeze({
   REFINE_EXISTING_FISCAL_FUNDING: 'REFINE_EXISTING_FISCAL_FUNDING',
   FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED: 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED',
+  REUSE_EXISTING_BANK_FUNDING: 'REUSE_EXISTING_BANK_FUNDING',
   LEDGER_CONFLICT: 'LEDGER_CONFLICT',
 });
 
@@ -63,13 +64,9 @@ function eventReferencesReceipt(row, receiptId, evidence) {
 
 function persistenceBoundary() {
   return {
-    persistenceAllowed: false,
-    blockedBySchemaBoundaries: [
-      'business_event_evidence_is_receipt_only_and_cannot_link_bank_transaction_or_match',
-      'ledger_source_links_cannot_link_bank_evidence',
-      'persisted_ledger_has_no_reviewed_version_supersession_for_fiscal_clearing_refinement',
-      'financial_account_identity_has_no_reviewed_persisted_ledger_account_mapping',
-    ],
+    persistenceAllowed: true,
+    blockedBySchemaBoundaries: [],
+    writerModelVersion: 'matched-purchase-persistence-v1',
   };
 }
 
@@ -168,6 +165,21 @@ function exactFiscalLedgerShape(entry, match) {
     && credit?.account?.type === 'CODE' && credit.account.code === 'FISCAL_PAYMENT_CLEARING';
 }
 
+function exactBankFundedLedgerShape(entry, match) {
+  if (valueOf(entry, 'scopeKey', 'scope_key') !== match.scopeKey
+    || valueOf(entry, 'currency') !== match.currency
+    || valueOf(entry, 'derivationRule', 'derivation_rule') !== 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1'
+    || valueOf(entry, 'derivationStatus', 'derivation_status') !== 'READY') return false;
+  const postings = Array.isArray(entry?.postings) ? entry.postings : [];
+  if (postings.length !== 2) return false;
+  const normalized = postings.map((posting) => ({ side: postingSide(posting), account: postingAccount(posting), amount: postingAmount(posting), currency: posting.currency ?? entry.currency }));
+  const debit = normalized.find((posting) => posting.side === 'DEBIT');
+  const credit = normalized.find((posting) => posting.side === 'CREDIT');
+  return normalized.every((posting) => posting.side && posting.amount === match.amount && posting.currency === match.currency)
+    && debit?.account?.type === 'CODE' && debit.account.code === 'UNCLASSIFIED_ACQUISITION'
+    && credit?.account?.type === 'CODE' && credit.account.code === `FINANCIAL_ACCOUNT:${match.bank.financialAccountId}`;
+}
+
 function relevantLedgerEntries(ledgerEntries, event) {
   const id = event ? eventId(event) : null;
   return (Array.isArray(ledgerEntries) ? ledgerEntries : []).filter((entry) => {
@@ -198,14 +210,17 @@ export function projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents
   if (!purchase.disposition) return blocked(normalizedMatch, purchase.reasonCode);
   if (purchase.disposition === PURCHASE_IDENTITY_DISPOSITIONS.AMBIGUOUS) return blocked(normalizedMatch, purchase.reasonCode, { purchaseIdentity: { disposition: purchase.disposition } });
   const relevant = relevantLedgerEntries(existingLedgerEntries, purchase.event);
-  if (relevant.length > 1 || (relevant.length === 1 && !exactFiscalLedgerShape(relevant[0], normalizedMatch))) {
+  const bankFunded = relevant.filter((entry) => exactBankFundedLedgerShape(entry, normalizedMatch));
+  if (relevant.length > 1 || (relevant.length === 1 && !exactFiscalLedgerShape(relevant[0], normalizedMatch) && !exactBankFundedLedgerShape(relevant[0], normalizedMatch))) {
     return blocked(normalizedMatch, 'LEDGER_CONFLICT', {
       purchaseIdentity: { disposition: purchase.disposition, eventId: purchase.event ? eventId(purchase.event) : null },
       ledgerDisposition: LEDGER_DISPOSITIONS.LEDGER_CONFLICT,
     });
   }
-  const ledgerDisposition = relevant.length === 1
-    ? LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING
+  const ledgerDisposition = bankFunded.length === 1
+    ? LEDGER_DISPOSITIONS.REUSE_EXISTING_BANK_FUNDING
+    : relevant.length === 1
+      ? LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING
     : LEDGER_DISPOSITIONS.FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED;
   const plan = targetLedgerPlan(normalizedMatch);
   const purchaseIdentity = purchase.disposition === PURCHASE_IDENTITY_DISPOSITIONS.REUSE_EXISTING_PURCHASE
@@ -222,6 +237,11 @@ export function projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents
     receiptId: normalizedMatch.receipt.receiptId,
     normalizationVersion: normalizedMatch.receipt.normalizationVersion,
     bankAccountOwnershipProvenance: normalizedMatch.bankAccountOwnershipProvenance ?? null,
+    sourceProjectionStatus: normalizedMatch.bank.projectionStatus ?? null,
+    sourceMovementType: normalizedMatch.bank.movementType ?? normalizedMatch.bank.direction ?? null,
+    accountIdentityStatus: normalizedMatch.bank.accountIdentityStatus ?? null,
+    accountResolutionState: normalizedMatch.bank.accountResolutionState ?? null,
+    accountResolutionProvenance: normalizedMatch.bank.accountResolutionProvenance ?? null,
   };
   const enrichmentKey = fingerprint({
     modelVersion: MATCHED_PURCHASE_ENRICHMENT_VERSION,
@@ -260,7 +280,7 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
   const ids = eventIdList(eventRows);
   if (!ids.length) return projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents: [], existingPurchaseEvidence: [], existingLedgerEntries: [] });
   const evidenceRows = (await pool.query('SELECT * FROM business_event_evidence WHERE event_id = ANY($1::bigint[]) ORDER BY id', [ids])).rows;
-  const ledgerRows = (await pool.query(`SELECT le.*, s.scope_key FROM ledger_entries le JOIN accounting_scopes s ON s.id=le.scope_id WHERE le.source_event_id = ANY($1::bigint[]) ORDER BY le.id`, [ids])).rows;
+  const ledgerRows = (await pool.query(`SELECT le.*, s.scope_key FROM ledger_entries le JOIN accounting_scopes s ON s.id=le.scope_id WHERE le.source_event_id = ANY($1::bigint[]) AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions es WHERE es.scope_id=le.scope_id AND es.superseded_ledger_entry_id=le.id) ORDER BY le.id`, [ids])).rows;
   const ledgerIds = ledgerRows.map((row) => Number(row.id)).filter(positiveInteger);
   const postingRows = ledgerIds.length
     ? (await pool.query('SELECT lp.*, la.account_code FROM ledger_postings lp JOIN ledger_accounts la ON la.id=lp.account_id WHERE lp.ledger_entry_id = ANY($1::bigint[]) ORDER BY lp.id', [ledgerIds])).rows
@@ -271,10 +291,15 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
     list.push(posting);
     postingsByEntry.set(Number(posting.ledger_entry_id), list);
   }
+  const linkRows = ledgerIds.length
+    ? (await pool.query('SELECT l.*, m.match_key FROM ledger_source_links l LEFT JOIN bank_receipt_matches m ON m.id=l.bank_receipt_match_id WHERE l.ledger_entry_id = ANY($1::bigint[]) ORDER BY l.id', [ledgerIds])).rows
+    : [];
+  const linksByEntry = new Map();
+  for (const link of linkRows) linksByEntry.set(Number(link.ledger_entry_id), [...(linksByEntry.get(Number(link.ledger_entry_id)) ?? []), link]);
   return projectMatchedPurchaseEnrichment({
     match,
     existingPurchaseEvents: eventRows,
     existingPurchaseEvidence: evidenceRows,
-    existingLedgerEntries: ledgerRows.map((row) => ({ ...row, postings: postingsByEntry.get(Number(row.id)) ?? [] })),
+    existingLedgerEntries: ledgerRows.map((row) => ({ ...row, postings: postingsByEntry.get(Number(row.id)) ?? [], sourceLinks: linksByEntry.get(Number(row.id)) ?? [] })),
   });
 }
