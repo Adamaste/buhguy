@@ -18,6 +18,7 @@ integration('active-ledger semantics exclude superseded history and protect refr
   let receiptId = null;
   let oldEntryId = null;
   let replacementEntryId = null;
+  let finalEntryId = null;
   try {
     const scope = (await pool.query('INSERT INTO accounting_scopes(scope_key,label) VALUES($1,$2) RETURNING id', [scopeKey, 'active-ledger fixture'])).rows[0];
     scopeId = Number(scope.id);
@@ -34,16 +35,23 @@ integration('active-ledger semantics exclude superseded history and protect refr
     const insertEntry = async (semanticKey, description) => Number((await pool.query("INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,description) VALUES($1,$2,'RUB',NOW(),$3,'LEDGER_STANDALONE_PURCHASE_V1','v1','READY','FUNDING_UNRECONCILED','SYSTEM_DERIVED',$4) RETURNING id", [scopeId, eventId, semanticKey, description])).rows[0].id);
     oldEntryId = await insertEntry('1'.repeat(64), 'historical fiscal clearing');
     replacementEntryId = await insertEntry('2'.repeat(64), 'bank-funded replacement');
-    for (const entryId of [oldEntryId, replacementEntryId]) {
+    finalEntryId = await insertEntry('3'.repeat(64), 'final bank-funded replacement');
+    for (const entryId of [oldEntryId, replacementEntryId, finalEntryId]) {
       await pool.query('INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit) VALUES($1,$2,\'RUB\',12,0),($1,$3,\'RUB\',0,12)', [entryId, accounts.UNCLASSIFIED_ACQUISITION, accounts.FISCAL_PAYMENT_CLEARING]);
       await pool.query("INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,receipt_id,normalization_version,link_role,semantic_key) VALUES($1,$2,$3,$4,'fiscal-normalizer-v1','FISCAL_EVIDENCE',$5)", [entryId, eventId, evidence.id, receiptId, `${entryId}`.padStart(64, '0')]);
     }
 
     const before = await rebuildCertification(pool, { scopeKey });
-    assert.equal(before.facts.filter((fact) => fact.metricCode === 'FISCAL_NEW_MONEY').length, 2);
-    assert.equal(before.facts.filter((fact) => fact.metricCode === 'CONFIRMED_ACQUISITION_VALUE').length, 2);
+    assert.equal(before.facts.filter((fact) => fact.metricCode === 'FISCAL_NEW_MONEY').length, 3);
+    assert.equal(before.facts.filter((fact) => fact.metricCode === 'CONFIRMED_ACQUISITION_VALUE').length, 3);
+    await rebuildCertification(pool, { scopeKey, persist: true });
 
     await pool.query("INSERT INTO ledger_entry_supersessions(scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code) VALUES($1,$2,$3,$4,repeat('e',64),repeat('f',64),'MATCHED_PURCHASE_REFINEMENT')", [scopeId, oldEntryId, replacementEntryId, eventId]);
+    const middle = await rebuildCertification(pool, { scopeKey });
+    assert.equal(middle.facts.filter((fact) => fact.metricCode === 'FISCAL_NEW_MONEY').length, 2);
+    assert.equal(middle.facts.every((fact) => fact.ledgerEntryId !== oldEntryId), true);
+
+    await pool.query("INSERT INTO ledger_entry_supersessions(scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code) VALUES($1,$2,$3,$4,repeat('0',64),repeat('1',64),'MATCHED_PURCHASE_REFINEMENT')", [scopeId, replacementEntryId, finalEntryId, eventId]);
 
     const after = await rebuildCertification(pool, { scopeKey });
     assert.notEqual(after.sourceStateKey, before.sourceStateKey);
@@ -55,20 +63,23 @@ integration('active-ledger semantics exclude superseded history and protect refr
     const analytics = await analyticsSummary(pool, { scopeKey });
     assert.equal(analytics.metrics.FISCAL_NEW_MONEY.amount, '12.00');
     assert.equal(analytics.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '12.00');
+    await rebuildCertification(pool, { scopeKey, persist: true });
     const coverageRows = await loadCoverageRows(pool, { scopeKey });
     const coverageEvent = coverageRows.find((row) => Number(row.id) === receiptId)?.related?.events.find((item) => Number(item.eventId) === eventId);
-    assert.equal(Number(coverageEvent?.ledgerEntryId), replacementEntryId);
+    assert.equal(Number(coverageEvent?.ledgerEntryId), finalEntryId);
     assert.notEqual(Number(coverageEvent?.ledgerEntryId), oldEntryId);
+    assert.notEqual(Number(coverageEvent?.ledgerEntryId), replacementEntryId);
+    assert.equal(after.facts.every((fact) => fact.ledgerEntryId === finalEntryId), true);
 
     await rebuildCertification(pool, { scopeKey, persist: true, replace: true });
     const snapshot = async () => ({
       entries: (await pool.query('SELECT id,semantic_key FROM ledger_entries WHERE scope_id=$1 ORDER BY id', [scopeId])).rows,
-      postings: (await pool.query('SELECT ledger_entry_id,account_id,debit,credit FROM ledger_postings WHERE ledger_entry_id IN ($1,$2) ORDER BY id', [oldEntryId, replacementEntryId])).rows,
-      links: (await pool.query('SELECT ledger_entry_id,semantic_key FROM ledger_source_links WHERE ledger_entry_id IN ($1,$2) ORDER BY id', [oldEntryId, replacementEntryId])).rows,
+      postings: (await pool.query('SELECT ledger_entry_id,account_id,debit,credit FROM ledger_postings WHERE ledger_entry_id IN ($1,$2,$3) ORDER BY id', [oldEntryId, replacementEntryId, finalEntryId])).rows,
+      links: (await pool.query('SELECT ledger_entry_id,semantic_key FROM ledger_source_links WHERE ledger_entry_id IN ($1,$2,$3) ORDER BY id', [oldEntryId, replacementEntryId, finalEntryId])).rows,
       facts: (await pool.query('SELECT ledger_entry_id,metric_code,amount,source_state_key FROM certification_facts WHERE scope_id=$1 ORDER BY id', [scopeId])).rows,
       runs: (await pool.query('SELECT id,source_state_key FROM reconciliation_runs WHERE scope_id=$1 ORDER BY id', [scopeId])).rows,
       results: (await pool.query('SELECT run_id,metric_code,amount FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1) ORDER BY id', [scopeId])).rows,
-      supersessions: (await pool.query('SELECT superseded_ledger_entry_id,replacement_ledger_entry_id,semantic_key FROM ledger_entry_supersessions WHERE scope_id=$1', [scopeId])).rows,
+      supersessions: (await pool.query('SELECT superseded_ledger_entry_id,replacement_ledger_entry_id,semantic_key FROM ledger_entry_supersessions WHERE scope_id=$1 ORDER BY id', [scopeId])).rows,
     });
     const protectedBefore = await snapshot();
     await assert.rejects(

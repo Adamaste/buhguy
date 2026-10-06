@@ -41,7 +41,15 @@ async function sourceState(pool, scopeId) {
     FROM ledger_entry_supersessions
     WHERE scope_id=$1
     ORDER BY id`, [scopeId])).rows;
-  return fiscalContentFingerprint({ counts, activeEntries: entries, activePostings: postings, activeLinks: links, supersessions });
+  return fiscalContentFingerprint({
+    scopeId: Number(scopeId),
+    certificationModelVersion: CERTIFICATION_MODEL_VERSION,
+    counts,
+    activeEntries: entries,
+    activePostings: postings,
+    activeLinks: links,
+    supersessions,
+  });
 }
 
 async function loadInputs(pool, scopeKey, eventIds = null) {

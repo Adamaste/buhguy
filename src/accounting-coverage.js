@@ -148,7 +148,13 @@ export async function loadCoverageRows(pool, { scopeKey = 'default', from = null
       ORDER BY le.created_at DESC, le.id DESC LIMIT 1) le ON true
     WHERE e.scope_id=$1 AND ev.receipt_id=ANY($2::bigint[]) ORDER BY ev.receipt_id,e.id`, [scope.id, ids])).rows;
   const certifications = (await pool.query(`SELECT f.business_event_id AS "businessEventId", f.metric_code AS "metricCode", f.status, f.reason_code AS "reasonCode"
-    FROM certification_facts f WHERE f.scope_id=$1 AND f.business_event_id IN (SELECT DISTINCT ev.event_id FROM business_event_evidence ev WHERE ev.receipt_id=ANY($2::bigint[]))`, [scope.id, ids])).rows;
+    FROM certification_facts f
+    WHERE f.scope_id=$1
+      AND f.business_event_id IN (SELECT DISTINCT ev.event_id FROM business_event_evidence ev WHERE ev.receipt_id=ANY($2::bigint[]))
+      AND (f.ledger_entry_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ledger_entry_supersessions s
+        WHERE s.scope_id=f.scope_id AND s.superseded_ledger_entry_id=f.ledger_entry_id
+      ))`, [scope.id, ids])).rows;
   const analytics = (await pool.query(`SELECT receipt_id AS "receiptId" FROM analytics_purchases WHERE receipt_id=ANY($1::bigint[]) AND status='CERTIFIED'`, [ids])).rows;
   const eventMap = new Map(); for (const event of events) eventMap.set(String(event.receiptId), [...(eventMap.get(String(event.receiptId)) ?? []), event]);
   const certMap = new Map(); for (const item of certifications) certMap.set(String(item.businessEventId), [...(certMap.get(String(item.businessEventId)) ?? []), item]);
