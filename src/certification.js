@@ -8,17 +8,52 @@ const money = (value) => n(value).toFixed(2);
 const inPeriod = (value, from, to) => (!from || new Date(value) >= new Date(from)) && (!to || new Date(value) < new Date(to));
 
 async function sourceState(pool, scopeId) {
-  const row = (await pool.query(`SELECT
+  const counts = (await pool.query(`SELECT
     (SELECT count(*) FROM receipts) AS receipts,
     (SELECT count(*) FROM receipt_items) AS items,
     (SELECT count(*) FROM receipt_raw) AS raw,
     (SELECT count(*) FROM business_events WHERE scope_id=$1) AS events,
     (SELECT count(*) FROM business_event_evidence ev JOIN business_events e ON e.id=ev.event_id WHERE e.scope_id=$1) AS evidence,
     (SELECT count(*) FROM business_event_edges WHERE scope_id=$1) AS edges,
-    (SELECT count(*) FROM business_event_allocations WHERE scope_id=$1) AS allocations,
-    (SELECT count(*) FROM ledger_entries WHERE scope_id=$1) AS ledger_entries,
-    (SELECT count(*) FROM ledger_postings p JOIN ledger_entries e ON e.id=p.ledger_entry_id WHERE e.scope_id=$1) AS ledger_postings`, [scopeId])).rows[0];
-  return fiscalContentFingerprint(row);
+    (SELECT count(*) FROM business_event_allocations WHERE scope_id=$1) AS allocations`, [scopeId])).rows[0];
+  const entries = (await pool.query(`SELECT e.id,e.scope_id,e.source_event_id,e.currency,e.event_at,e.semantic_key,
+      e.derivation_rule,e.derivation_version,e.derivation_status,e.certification_status,e.origin,e.reason_code,e.description
+    FROM ledger_entries e
+    WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
+    ORDER BY e.id`, [scopeId])).rows;
+  const postings = (await pool.query(`SELECT p.ledger_entry_id,p.account_id,p.currency,p.debit,p.credit,
+      p.source_allocation_id,p.source_receipt_id
+    FROM ledger_postings p
+    JOIN ledger_entries e ON e.id=p.ledger_entry_id
+    WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
+    ORDER BY p.ledger_entry_id,p.id`, [scopeId])).rows;
+  const links = (await pool.query(`SELECT l.ledger_entry_id,l.business_event_id,l.graph_evidence_id,
+      l.graph_allocation_id,l.receipt_id,l.normalization_version,l.link_role,l.semantic_key
+    FROM ledger_source_links l
+    JOIN ledger_entries e ON e.id=l.ledger_entry_id
+    WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
+    ORDER BY l.ledger_entry_id,l.id`, [scopeId])).rows;
+  const supersessions = (await pool.query(`SELECT scope_id,superseded_ledger_entry_id,
+      replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code
+    FROM ledger_entry_supersessions
+    WHERE scope_id=$1
+    ORDER BY id`, [scopeId])).rows;
+  return fiscalContentFingerprint({
+    scopeId: Number(scopeId),
+    certificationModelVersion: CERTIFICATION_MODEL_VERSION,
+    counts,
+    activeEntries: entries,
+    activePostings: postings,
+    activeLinks: links,
+    supersessions,
+  });
+}
+
+export async function certificationSourceStateKey(pool, scopeId) {
+  return sourceState(pool, scopeId);
 }
 
 async function loadInputs(pool, scopeKey, eventIds = null) {
@@ -28,9 +63,10 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
   const params = eventIds?.length ? [scope.id, eventIds] : [scope.id];
   const entries = (await pool.query(`SELECT e.*,b.event_type,b.rule_code,b.rule_version,b.amount AS event_amount
     FROM ledger_entries e JOIN business_events b ON b.id=e.source_event_id
-    WHERE e.scope_id=$1${filter} ORDER BY e.id`, params)).rows;
-  const postings = (await pool.query(`SELECT p.*,a.account_code FROM ledger_postings p JOIN ledger_entries e ON e.id=p.ledger_entry_id JOIN ledger_accounts a ON a.id=p.account_id WHERE e.scope_id=$1${filter} ORDER BY p.id`, params)).rows;
-  const links = (await pool.query(`SELECT l.*,ev.event_id FROM ledger_source_links l JOIN ledger_entries e ON e.id=l.ledger_entry_id LEFT JOIN business_event_evidence ev ON ev.id=l.graph_evidence_id WHERE e.scope_id=$1${filter} ORDER BY l.id`, params)).rows;
+    WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY e.id`, params)).rows;
+  const postings = (await pool.query(`SELECT p.*,a.account_code FROM ledger_postings p JOIN ledger_entries e ON e.id=p.ledger_entry_id JOIN ledger_accounts a ON a.id=p.account_id WHERE e.scope_id=$1 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY p.id`, params)).rows;
+  const links = (await pool.query(`SELECT l.*,ev.event_id FROM ledger_source_links l JOIN ledger_entries e ON e.id=l.ledger_entry_id LEFT JOIN business_event_evidence ev ON ev.id=l.graph_evidence_id WHERE e.scope_id=$1 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY l.id`, params)).rows;
   return { scope, entries, postings, links };
 }
 
@@ -45,16 +81,16 @@ async function insertFacts(client, runId, facts) {
 export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [], client: transactionClient = null } = {}) {
   if (!eventIds.length) return { bounded: true, eventIds: [], facts: 0 };
   const queryable = transactionClient ?? pool;
-  const { scope } = await loadInputs(queryable, scopeKey, eventIds);
+  const { scope } = await loadInputs(queryable, scopeKey);
   const sourceStateKey = await sourceState(queryable, scope.id);
-  const input = await loadInputs(queryable, scopeKey, eventIds);
-  const facts = deriveCertificationFacts({ ...input, sourceStateKey });
+  const completeInput = await loadInputs(queryable, scopeKey);
+  const facts = deriveCertificationFacts({ ...completeInput, sourceStateKey });
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const run = await ensureRun(client, scope.id, sourceStateKey);
-    await client.query(`DELETE FROM certification_facts WHERE run_id=$1 AND ledger_entry_id IN (SELECT id FROM ledger_entries WHERE source_event_id=ANY($2::bigint[]))`, [run.id, eventIds]);
+    await client.query('DELETE FROM certification_facts WHERE run_id=$1', [run.id]);
     await insertFacts(client, run.id, facts);
     await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
     const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;

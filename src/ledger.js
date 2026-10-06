@@ -214,6 +214,7 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
   try {
     if (ownsTransaction) await client.query('BEGIN');
     if (replace) {
+      await assertNoProtectedLedgerEntries(client, scopeKey, eventIds);
       if (!eventIds?.length) {
         const dependency = (await client.query(`SELECT count(*)::int AS count
           FROM certification_facts f
@@ -247,6 +248,27 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
   } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
 }
 
+async function assertNoProtectedLedgerEntries(client, scopeKey, eventIds = null) {
+  const eventClause = eventIds?.length ? ' AND e.source_event_id = ANY($2::bigint[])' : '';
+  const params = eventIds?.length ? [scopeKey, eventIds] : [scopeKey];
+  const protectedRows = (await client.query(`SELECT e.id
+    FROM ledger_entries e
+    JOIN accounting_scopes s ON s.id=e.scope_id
+    WHERE s.scope_key=$1
+      AND (EXISTS (SELECT 1 FROM ledger_entry_supersessions old_side
+                   WHERE old_side.scope_id=e.scope_id
+                     AND old_side.superseded_ledger_entry_id=e.id)
+        OR EXISTS (SELECT 1 FROM ledger_entry_supersessions replacement_side
+                   WHERE replacement_side.scope_id=e.scope_id
+                     AND replacement_side.replacement_ledger_entry_id=e.id))${eventClause}
+    LIMIT 1`, params)).rows;
+  if (protectedRows.length) {
+    const error = new Error('Ledger refresh/rebuild cannot destructively replace protected supersession history');
+    error.code = 'LEDGER_SUPERSESSION_PROTECTED';
+    throw error;
+  }
+}
+
 async function affectedEventIds(pool, scopeKey, receiptId) {
   const result = await pool.query(`WITH RECURSIVE component(id) AS (
     SELECT ev.event_id FROM business_event_evidence ev
@@ -267,7 +289,9 @@ export async function refreshLedgerForReceipt(pool, { scopeKey = 'default', rece
   const projection = await loadLedgerProjection(pool, scopeKey, eventIds);
   const scopeId = (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0]?.id;
   const existing = (await pool.query(`SELECT id,source_event_id,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,reason_code,description
-    FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED' ORDER BY id`, [scopeId, eventIds])).rows;
+    FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED'
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=ledger_entries.scope_id AND (s.superseded_ledger_entry_id=ledger_entries.id OR s.replacement_ledger_entry_id=ledger_entries.id))
+    ORDER BY id`, [scopeId, eventIds])).rows;
   const existingByEvent = new Map(existing.map((entry) => [String(entry.source_event_id), entry]));
   const existingEntryIds = existing.map((entry) => Number(entry.id));
   const existingPostings = existingEntryIds.length === 0 ? [] : (await pool.query(`SELECT p.ledger_entry_id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id
@@ -300,6 +324,7 @@ export async function refreshLedgerForReceipt(pool, { scopeKey = 'default', rece
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await assertNoProtectedLedgerEntries(client, scopeKey, eventIds);
     await client.query(`DELETE FROM reconciliation_results WHERE run_id IN (
       SELECT DISTINCT f.run_id FROM certification_facts f
       WHERE f.ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=ANY($2::bigint[]) AND origin='SYSTEM_DERIVED')

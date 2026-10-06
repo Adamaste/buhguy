@@ -1,3 +1,5 @@
+import { certificationSourceStateKey } from './certification.js';
+
 export const ACCOUNTING_COVERAGE_MODEL = 'accounting-coverage-gate-v1';
 export const COVERAGE_OUTCOMES = Object.freeze([
   'ACCOUNTED_PURCHASE', 'PREPAYMENT_COMPONENT', 'FULFILLMENT_COMPONENT',
@@ -142,11 +144,21 @@ export async function loadCoverageRows(pool, { scopeKey = 'default', from = null
     ORDER BY r.id`, params)).rows;
   const ids = receipts.map((row) => Number(row.id));
   if (!ids.length) return [];
+  const currentSourceStateKey = await certificationSourceStateKey(pool, Number(scope.id));
   const events = (await pool.query(`SELECT ev.receipt_id AS "receiptId", e.id AS "eventId", e.event_type AS "eventType", e.resolution_status AS "resolutionStatus", e.rule_code AS "ruleCode", e.rule_version AS "ruleVersion", le.id AS "ledgerEntryId", le.derivation_status AS "derivationStatus", le.reason_code AS "ledgerReason"
-    FROM business_event_evidence ev JOIN business_events e ON e.id=ev.event_id LEFT JOIN LATERAL (SELECT le.* FROM ledger_entries le WHERE le.source_event_id=e.id ORDER BY le.created_at DESC, le.id DESC LIMIT 1) le ON true
+    FROM business_event_evidence ev JOIN business_events e ON e.id=ev.event_id LEFT JOIN LATERAL (SELECT le.* FROM ledger_entries le WHERE le.source_event_id=e.id
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=le.scope_id AND s.superseded_ledger_entry_id=le.id)
+      ORDER BY le.created_at DESC, le.id DESC LIMIT 1) le ON true
     WHERE e.scope_id=$1 AND ev.receipt_id=ANY($2::bigint[]) ORDER BY ev.receipt_id,e.id`, [scope.id, ids])).rows;
-  const certifications = (await pool.query(`SELECT f.business_event_id AS "businessEventId", f.metric_code AS "metricCode", f.status, f.reason_code AS "reasonCode"
-    FROM certification_facts f WHERE f.scope_id=$1 AND f.business_event_id IN (SELECT DISTINCT ev.event_id FROM business_event_evidence ev WHERE ev.receipt_id=ANY($2::bigint[]))`, [scope.id, ids])).rows;
+  const certifications = (await pool.query(`SELECT f.business_event_id AS "businessEventId", f.metric_code AS "metricCode", f.status, f.reason_code AS "reasonCode", f.source_state_key AS "sourceStateKey"
+    FROM certification_facts f
+    WHERE f.scope_id=$1
+      AND f.business_event_id IN (SELECT DISTINCT ev.event_id FROM business_event_evidence ev WHERE ev.receipt_id=ANY($2::bigint[]))
+      AND f.source_state_key=$3
+      AND (f.ledger_entry_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ledger_entry_supersessions s
+        WHERE s.scope_id=f.scope_id AND s.superseded_ledger_entry_id=f.ledger_entry_id
+      ))`, [scope.id, ids, currentSourceStateKey])).rows;
   const analytics = (await pool.query(`SELECT receipt_id AS "receiptId" FROM analytics_purchases WHERE receipt_id=ANY($1::bigint[]) AND status='CERTIFIED'`, [ids])).rows;
   const eventMap = new Map(); for (const event of events) eventMap.set(String(event.receiptId), [...(eventMap.get(String(event.receiptId)) ?? []), event]);
   const certMap = new Map(); for (const item of certifications) certMap.set(String(item.businessEventId), [...(certMap.get(String(item.businessEventId)) ?? []), item]);
