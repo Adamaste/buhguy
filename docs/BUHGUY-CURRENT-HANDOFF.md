@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-06
-- Current implementation baseline: `7419e6524ad07f2ed540368011ad96ff81995fe9` (PR #105 squash-merged; matched-purchase-persistence-contract-v1 is reviewed and merged as a design-only contract)
+- Current implementation baseline: `949c1f57e093626748545098e80004b76eb24103` (PR #107 squash-merged; matched-purchase persistence schema foundation is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, and matched-purchase-enrichment-projection-v1 stages are merged. Bank movement remains the sole monetary funding fact; a matched receipt enriches one purchase and never creates a second cash flow. The matched-purchase persistence design gate is closed by PR #105. The next narrow stage is schema foundation implementation for the four reviewed persistence gaps; it must remain migration/tests-only until a separate reviewed write-path stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, and matched-purchase persistence schema foundation stages are merged. Bank movement remains the sole monetary funding fact; a matched receipt enriches one purchase and never creates a second cash flow. The schema foundation has PostgreSQL constraint coverage, but no matched-purchase writer exists. The next narrow stage is ACTIVE-ledger runtime semantics, including fail-closed or supersession-aware refresh behavior.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `matched purchase persistence schema foundation`. Implement the reviewed schema and constraints as a migration with PostgreSQL tests only. Do not add a matched-purchase write path, production deployment, replay, backfill, or production mutation in this stage.
+- Next action: `matched purchase active-ledger runtime semantics`. Certification, reconciliation, and analytics reads must use ACTIVE entries only; superseded entries remain immutable history. Do not add a matched-purchase persistence writer, production deployment, replay, backfill, or production mutation in this stage.
 
 ## Bank business-event candidate projection v1
 
@@ -162,10 +162,10 @@ The minimal persistence design must address four reviewed gaps:
    replacing `FISCAL_PAYMENT_CLEARING` with concrete bank funding.
 4. `financial_account` identity has no reviewed persisted ledger-account mapping.
 
-The persistence contract/schema design is reviewed and closed by PR #105. The
-next stage is `matched purchase persistence schema foundation`: implement the
-reviewed schema and constraints as a migration with PostgreSQL tests, without a
-matched-purchase write path, replay, backfill, or deployment.
+The persistence contract/schema design was reviewed and closed by PR #105.
+The schema foundation was implemented and merged by PR #107 as migration 018
+with PostgreSQL constraint coverage. No matched-purchase writer, deployment,
+replay, backfill, or production mutation was performed.
 
 ## Matched purchase persistence contract v1 closeout
 
@@ -177,11 +177,34 @@ append-only ledger refinement/supersession, active-ledger certification state,
 and deterministic financial-account ledger mapping.
 
 No migration, code, runtime write path, deployment, replay, backfill, or
-production mutation was performed. The next stage is the narrow
-`matched purchase persistence schema foundation`: implement the reviewed
-schema and constraints as a migration and add PostgreSQL tests. It must not
-implement matched-purchase writes, production deployment, replay, backfill, or
-production mutation yet.
+production mutation was performed for the design stage. Migration 018 now
+provides the reviewed schema foundation; its PostgreSQL constraint coverage
+passed. The next stage is `matched purchase active-ledger runtime semantics`.
+
+## Matched purchase persistence schema foundation closeout
+
+PR #107 was squash-merged into master
+`949c1f57e093626748545098e80004b76eb24103`. Migration 018 establishes the
+reviewed one-to-one bank-receipt match, separate business-event bank evidence,
+financial-account to ledger-account mapping, additive bank source links, and
+append-only ledger supersession constraints.
+
+No deployment, replay, backfill, runtime matched-purchase writer, or production
+mutation occurred. The next stage is `matched purchase active-ledger runtime
+semantics`:
+
+- certification, reconciliation, and analytics ledger reads must select only
+  ACTIVE entries;
+- superseded entries, postings, and source links remain immutable history;
+- `sourceState`/`source_state_key` must change when supersession state changes;
+- superseded `FISCAL_PAYMENT_CLEARING` must not contribute
+  `FISCAL_NEW_MONEY` or acquisition totals;
+- destructive ledger refresh/rebuild must fail closed or become
+  supersession-aware, so it cannot delete/reforge protected history or
+  resurrect a second active fiscal-clearing entry.
+
+This stage does not add a matched-purchase persistence writer, deployment,
+replay, backfill, or production mutation.
 
 
 ## T-Bank ordinary purchase validation baseline
@@ -2191,12 +2214,13 @@ bank-ledger, and `bank-receipt-matching-v1` slices are complete and remain
 non-mutating.
 
 The immediate next action is
-`matched purchase persistence schema foundation`.
-The non-mutating matched-purchase enrichment projection and its reviewed
-persistence contract are merged. Implement only the reviewed schema and
-constraints as a migration with PostgreSQL tests; do not implement a
-matched-purchase write path, production deployment, replay, backfill, or
-production mutation in this stage.
+`matched purchase active-ledger runtime semantics`.
+The non-mutating matched-purchase enrichment projection, reviewed persistence
+contract, and migration 018 schema foundation are merged. The next code slice
+must make certification, reconciliation, and analytics reads ACTIVE-ledger
+aware and make destructive refresh/rebuild fail closed or supersession-aware.
+It must not implement a matched-purchase persistence writer, production
+deployment, replay, backfill, or production mutation.
 
 Controlled real operations are allowed only when the user independently
 chooses to perform them. The controlled purchase campaign is closed; do not
@@ -2205,15 +2229,16 @@ audited with a clean Android/backend baseline and full notification-lifecycle
 correlation when relevant.
 
 Bank-to-receipt candidate matching and matched-purchase enrichment are merged
-as non-mutating evidence/projection layers, and the persistence contract is
-reviewed and merged without writes. Account identity may be used only when
-explicitly resolved; bank-account OWNER evidence is not payer/beneficiary
-proof; and `INTERNAL_TRANSFER` still requires independently proven two-sided
-own-account evidence. The next slice is schema foundation implementation with
-PostgreSQL tests, without fabricating a second monetary event. No matched-
-purchase write path, production deployment, replay, backfill, or production
-reconciliation decision is implied by this closeout. Fresh provider E2E waits
-remain opportunistic and do not block development.
+as non-mutating evidence/projection layers, and migration 018 now provides the
+reviewed persistence schema foundation without writes. Account identity may be
+used only when explicitly resolved; bank-account OWNER evidence is not
+payer/beneficiary proof; and `INTERNAL_TRANSFER` still requires independently
+proven two-sided own-account evidence. The next slice is ACTIVE-ledger runtime
+semantics: readers must exclude superseded entries and refresh/rebuild paths
+must protect immutable refinement history. No matched-purchase writer,
+production deployment, replay, backfill, or production reconciliation
+decision is implied by this closeout. Fresh provider E2E waits remain
+opportunistic and do not block development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
