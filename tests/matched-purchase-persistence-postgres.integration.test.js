@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import pg from 'pg';
+import { loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -34,6 +35,12 @@ integration('matched purchase writer persists one atomic, replayable bank-funded
     await client.query('COMMIT');
 
     const writerOptions = { scopeKey: 'writer-v1-scope', internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
+    const matching = await loadBankReceiptMatching(pool, writerOptions);
+    assert.equal(matching.matches.length, 1, JSON.stringify({
+      summary: matching.summary,
+      bankStatuses: matching.bankStatuses,
+      receiptStatuses: matching.receiptStatuses,
+    }));
     const result = await persistMatchedPurchase(pool, writerOptions);
     const replay = await persistMatchedPurchase(pool, writerOptions);
     assert.equal(result.matchId, replay.matchId);
