@@ -16,16 +16,16 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-05
-- Current implementation baseline: `6d218ad67ab1fb49a4b2cfc3e49b5d683c0682b0` (PR #99 merged; bank-ledger-projection-v1 is merged as a non-mutating in-memory projection)
+- Last updated: 2026-10-06
+- Current implementation baseline: `bec6fe8b8f0746993f82fd83c205ff96c1eb9f94` (PR #101 squash-merged; bank-receipt-matching-v1 is merged as a deterministic non-mutating evidence matcher)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank-business-event-candidate-projection-v1, bank-internal-transfer-matching-v1, and bank-ledger-projection-v1 are merged and preserve fail-closed semantics. Internal transfer recognition requires two independently proven opposite-direction TRANSFER candidates with concrete distinct accounts, exact amount/currency, same scope, bounded event time, and one explicit common OWNER; one-sided or ambiguous transfers remain unchanged. Bank ledger projection is closed without ledger persistence. Sber v6 purchase normalization is production-proven for the exact reusable family, and Alfa lifecycle canonicalization v1 remains a separate bounded projection. Yandex Pay outgoing v2 is merged as an additive specialization and is not an unresolved grammar item, but it has not been deployed. T-Bank outgoing and ordinary purchase validation remain insufficient for runtime promotion. Direct Yandex Pay and Yandex Pro purchase E2Es are closed and proven. VTB and Ozon paid-notification purchase validation are skipped by the user's current decision; do not request paid activation unless that decision changes.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, and bank-receipt-matching v1 stages are merged. Receipt matching now links only exact eligible bank-backed PURCHASE movements to strict electronic-settlement fiscal receipts under the same scope and explicit bank-account OWNER gate, with one-to-one fail-closed ambiguity and no second cash-flow posting. The remaining design blocker is the persistence/enrichment boundary: define how a proven bank+receipt relationship enriches the existing purchase/business-event representation without duplicating ledger entries or rewriting existing standalone receipt history.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `bank-to-receipt matching audit/design`. The next slice must remain a separate deterministic non-mutating audit/design over validated bank-ledger projections and receipt-side evidence. It must preserve one bank movement as the sole cash flow, avoid duplicate ledger entries, and leave ambiguous or ineligible relationships unresolved. No receipt matching persistence, production E2E, or schema change is implied.
+- Next action: `matched purchase enrichment/persistence boundary audit/design`. Audit the existing business-event, standalone-purchase, ledger, and reconciliation persistence contracts and design the smallest deterministic next slice that can represent a proven bank+receipt purchase relationship without creating a second monetary movement. Start non-mutating; do not add a schema migration or production write path until that boundary is reviewed.
 
 ## Bank business-event candidate projection v1
 
@@ -92,7 +92,46 @@ retaining the incoming time in provenance.
 
 No business-event persistence, ledger persistence, receipt matching, database
 mutation, production wiring, migration, replay, backfill, or deployment was
-added. The next separate stage is `bank-to-receipt matching audit/design`.
+added. The subsequent bank-to-receipt matching stage is now implemented below;
+ledger persistence remains unimplemented.
+
+## Bank-to-receipt matching v1
+
+PR #101 was squash-merged into master `bec6fe8b8f0746993f82fd83c205ff96c1eb9f94`.
+`bank-receipt-matching-v1` is a deterministic, fail-closed, non-mutating
+matcher over the authoritative bank-ledger projection and normalized fiscal
+receipt evidence.
+
+Only projected bank `PURCHASE` entries with a concrete financial account and
+explicit same-scope `OWNER` evidence are eligible. This OWNER relation proves
+bank-account ownership only; it is not payer proof. Eligible receipts are
+strict `fiscal-normalizer-v1` READY electronic full-settlement evidence:
+sale/OUT, reconciled components, exact positive `ecash_total_sum`, explicit
+zero cash/prepaid/credit/provision, complete item-fact coverage with payment
+type 4 for every item, known currency, a single resolved accounting scope, and
+the current non-correction state. Cross-scope, mixed/cash/prepayment/credit,
+return/refund, correction, incomplete, or ambiguous evidence fails closed.
+
+Matching requires exact scope, amount, currency, and an explicit bounded
+inclusive event-time window. The matcher builds the complete bipartite graph:
+isolated one-to-one compatible components match; zero-edge eligible nodes stay
+UNMATCHED; competing connected components are AMBIGUOUS with no greedy or
+nearest-time selection. The receipt amount basis is exact
+`ecash_total_sum`; money is not compared with floating-point tolerance.
+
+The bank movement remains the sole cash-flow fact. A match emits only an
+evidence relationship and statuses; it creates no second ledger entry,
+posting, business event, migration, reconciliation mutation, replay, backfill,
+or deployment. Existing `STANDALONE_PURCHASE_V1` receipt-only history is not
+rewritten. Multi-item receipt coverage and full receipt-scope evidence are
+preserved by the SELECT-only loader, and `fns_source_person.OBSERVED_BY` is
+not used as payer evidence.
+
+PR #101 exact-head CI run `37368023085` ultimately passed the test job,
+PostgreSQL integration gate, full suite, and Android job after GitHub-hosted
+runner cancellations/delays; `android-signed` was correctly skipped for the
+pull_request event.
+
 
 ## T-Bank ordinary purchase validation baseline
 
@@ -2096,13 +2135,19 @@ Do not state that Samsung Freecess caused the missed bank callback unless new ev
 
 The Person 1 account-identity readiness audit is complete for development and
 the active phase is `RECONCILIATION_DEVELOPMENT`. The Alfa lifecycle
-canonicalization slice, the `bank-business-event-candidate-projection-v1`
-and `bank-internal-transfer-matching-v1` slices, and the
-`bank-ledger-projection-v1` slice are complete and remain non-mutating.
+canonicalization, bank business-event candidate, two-sided internal-transfer,
+bank-ledger, and `bank-receipt-matching-v1` slices are complete and remain
+non-mutating.
+
 The immediate next action is the separate
-`bank-to-receipt matching audit/design` slice, returning to
-the main `bank cash flow -> business events -> two-sided internal transfers ->
-ledger -> receipt matching` sequence.
+`matched purchase enrichment/persistence boundary audit/design` slice.
+Inspect the existing business-event graph, `STANDALONE_PURCHASE_V1`, ledger,
+certification, and reconciliation persistence contracts and define how a
+proven bank-backed purchase plus matched receipt should become one enriched
+economic purchase without a second cash-flow posting, duplicate ledger entry,
+or silent history rewrite. Prefer a deterministic non-mutating projection
+first; no schema migration or production persistence is authorized merely by
+this handoff.
 
 Controlled real operations are allowed only when the user independently
 chooses to perform them. The controlled purchase campaign is closed; do not
@@ -2110,13 +2155,15 @@ manufacture additional operations. Future natural provider events may be
 audited with a clean Android/backend baseline and full notification-lifecycle
 correlation when relevant.
 
-Bank-to-receipt candidate matching remains a later reconciliation slice; it is
-not abandoned. Account identity may be used only when explicitly resolved;
-source ownership is not payer/beneficiary proof; and `INTERNAL_TRANSFER`
-requires independently proven two-sided own-account evidence. No production
-parser deployment, persistence, business-event creation, ledger posting, or
-reconciliation decision is implied by this closeout. Fresh provider E2E waits
-remain opportunistic and do not block development.
+Bank-to-receipt candidate matching is now merged as a non-mutating evidence
+relationship layer. Account identity may be used only when explicitly
+resolved; bank-account OWNER evidence is not payer/beneficiary proof; and
+`INTERNAL_TRANSFER` still requires independently proven two-sided own-account
+evidence. The next slice must decide the enrichment/persistence boundary
+without fabricating a second monetary event. No production parser deployment,
+persistence, business-event creation, ledger write, replay, backfill, or
+production reconciliation decision is implied by this closeout. Fresh provider
+E2E waits remain opportunistic and do not block development.
 
 Raw notification text, real amounts, names, recipients, account/card
 identifiers, and source-event identifiers must remain out of Git. The stale
