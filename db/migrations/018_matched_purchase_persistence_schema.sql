@@ -21,7 +21,7 @@ CREATE TABLE bank_receipt_matches (
   bank_journal_key CHAR(64) NOT NULL CHECK (bank_journal_key ~ '^[0-9a-f]{64}$'),
   receipt_candidate_key CHAR(64) NOT NULL CHECK (receipt_candidate_key ~ '^[0-9a-f]{64}$'),
   receipt_normalization_version TEXT NOT NULL CHECK (length(btrim(receipt_normalization_version)) > 0),
-  normalized_content_sha256 CHAR(64) NOT NULL CHECK (normalized_content_sha256 ~ '^[0-9a-f]{64}$'),
+  receipt_normalized_content_sha256 CHAR(64) NOT NULL CHECK (receipt_normalized_content_sha256 ~ '^[0-9a-f]{64}$'),
   amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
   currency CHAR(3) NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
   bank_occurred_at TIMESTAMPTZ NOT NULL,
@@ -45,11 +45,13 @@ CREATE TABLE business_event_bank_evidence (
   scope_id BIGINT NOT NULL REFERENCES accounting_scopes(id) ON DELETE RESTRICT,
   business_event_id BIGINT NOT NULL,
   bank_receipt_match_id BIGINT NOT NULL,
+  enrichment_key CHAR(64) NOT NULL CHECK (enrichment_key ~ '^[0-9a-f]{64}$'),
   evidence_role TEXT NOT NULL CHECK (evidence_role = 'BANK_PURCHASE_MATCH'),
   rule_version TEXT NOT NULL CHECK (length(btrim(rule_version)) > 0),
   semantic_key CHAR(64) NOT NULL UNIQUE CHECK (semantic_key ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (scope_id, bank_receipt_match_id),
+  UNIQUE (scope_id, business_event_id, bank_receipt_match_id),
   FOREIGN KEY (scope_id, business_event_id)
     REFERENCES business_events(scope_id, id)
     ON DELETE RESTRICT,
@@ -81,6 +83,10 @@ ALTER TABLE ledger_source_links
   ADD COLUMN bank_receipt_match_id BIGINT REFERENCES bank_receipt_matches(id) ON DELETE RESTRICT,
   ADD COLUMN bank_transaction_id BIGINT REFERENCES bank_transactions(id) ON DELETE RESTRICT;
 
+ALTER TABLE ledger_source_links
+  ADD CONSTRAINT ledger_source_links_bank_pair_check
+  CHECK (bank_receipt_match_id IS NULL OR bank_transaction_id IS NOT NULL);
+
 CREATE INDEX ledger_source_links_bank_match_idx
   ON ledger_source_links(bank_receipt_match_id)
   WHERE bank_receipt_match_id IS NOT NULL;
@@ -94,7 +100,9 @@ CREATE TABLE ledger_entry_supersessions (
   scope_id BIGINT NOT NULL REFERENCES accounting_scopes(id) ON DELETE RESTRICT,
   superseded_ledger_entry_id BIGINT NOT NULL,
   replacement_ledger_entry_id BIGINT NOT NULL,
-  supersession_key CHAR(64) NOT NULL UNIQUE CHECK (supersession_key ~ '^[0-9a-f]{64}$'),
+  business_event_id BIGINT NOT NULL,
+  enrichment_key CHAR(64) NOT NULL CHECK (enrichment_key ~ '^[0-9a-f]{64}$'),
+  semantic_key CHAR(64) NOT NULL UNIQUE CHECK (semantic_key ~ '^[0-9a-f]{64}$'),
   reason_code TEXT NOT NULL CHECK (length(btrim(reason_code)) > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (superseded_ledger_entry_id <> replacement_ledger_entry_id),
@@ -105,5 +113,8 @@ CREATE TABLE ledger_entry_supersessions (
     ON DELETE RESTRICT,
   FOREIGN KEY (scope_id, replacement_ledger_entry_id)
     REFERENCES ledger_entries(scope_id, id)
+    ON DELETE RESTRICT,
+  FOREIGN KEY (scope_id, business_event_id)
+    REFERENCES business_events(scope_id, id)
     ON DELETE RESTRICT
 );
