@@ -62,6 +62,7 @@ const postgresFiles = [
   'tests/bank-account-resolution-postgres.integration.test.js',
   'tests/historical-bank-account-resolution-postgres.integration.test.js',
   'tests/chatgpt-accounting-semantic-layer-postgres.integration.test.js',
+  'tests/matched-purchase-persistence-schema-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(

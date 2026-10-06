@@ -18,6 +18,7 @@ const integrationFiles = [
   'tests/bank-cash-flow-projection-postgres.integration.test.js',
   'tests/balanced-bank-journal-projection-postgres.integration.test.js',
   'tests/payment-instrument-identity-postgres.integration.test.js',
+  'tests/matched-purchase-persistence-schema-postgres.integration.test.js',
   'tests/runtime-schema-postgres.integration.test.js',
   'tests/return-refund-postgres.integration.test.js',
 ];
