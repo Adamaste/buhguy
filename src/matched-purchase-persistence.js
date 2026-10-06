@@ -93,12 +93,13 @@ async function persistPurchase(client, scope, fields, enrichment) {
     return { event: existing, evidenceId: Number(evidence.id) };
   }
   const identity = enrichment.purchaseIdentity.identityKey;
-  const eventResult = await client.query(`INSERT INTO business_graph_rules(rule_code,rule_version,description) VALUES('STANDALONE_PURCHASE_V1','standalone-purchase-v1','Matched bank purchase') ON CONFLICT DO NOTHING;
-    INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
+  await client.query(`INSERT INTO business_graph_rules(rule_code,rule_version,description)
+    VALUES('STANDALONE_PURCHASE_V1','standalone-purchase-v1','Matched bank purchase') ON CONFLICT DO NOTHING`);
+  const eventResult = await client.query(`INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
     VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','business-event-graph-v1','STANDALONE_PURCHASE_V1','standalone-purchase-v1',$2,$3,$4,'Matched purchase funded by bank movement')
     ON CONFLICT(scope_id,semantic_key,graph_model_version,rule_code,rule_version,origin) DO UPDATE SET description=business_events.description
     RETURNING *`, [scope.id, identity, fields.amount, fields.currency]);
-  const event = eventResult.rows[eventResult.rows.length - 1];
+  const event = eventResult.rows[0];
   if (!event) fail('PURCHASE_PERSISTENCE_CONFLICT');
   const evidenceKey = hash({ eventId: Number(event.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, role: 'PURCHASE_EVIDENCE' });
   const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE','SYSTEM_DERIVED','business-event-graph-v1','STANDALONE_PURCHASE_V1','standalone-purchase-v1',$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING id`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey]);
