@@ -79,6 +79,7 @@ CREATE TABLE bank_receipt_matches (
   ownership_provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (scope_id, id),
+  UNIQUE (receipt_id),
   FOREIGN KEY (scope_id, financial_account_id)
     REFERENCES financial_accounts(scope_id, id),
   CHECK (currency ~ '^[A-Z]{3}$')
@@ -92,9 +93,12 @@ provenance, not a payer or beneficiary assertion. No raw payload, source event
 text, secret, or account/card reference value is stored by this relationship.
 
 One bank transaction may not be used to create multiple active purchase
-matches. A rejected or contradictory replay is retained as a failed decision
-outside this immutable match row, or returned without mutation according to the
-future operational error contract.
+matches, and one receipt may not be matched to multiple bank transactions.
+The unique constraints on both `bank_transaction_id` and `receipt_id` enforce
+this one-to-one relationship in v1, independent of caller retry order. A
+rejected or contradictory replay is retained as a failed decision outside this
+immutable match row, or returned without mutation according to the future
+operational error contract.
 
 ## Separate business-event bank evidence
 
@@ -187,6 +191,30 @@ identity, and currency tuple. Existing financial-account currency remains the
 source of truth; provider, source, and OWNER context do not establish payer or
 beneficiary semantics.
 
+### Deterministic account creation and replay
+
+When a mapped ledger account does not yet exist, the future persistence
+transaction must derive its catalog code from persisted identity only:
+
+```text
+FINANCIAL_ACCOUNT:<financial_account_id>
+```
+
+The code is provider-independent, contains no account/card reference or
+notification data, and is unique within the accounting scope under the
+existing `ledger_accounts(scope_id, account_code)` constraint. Its description
+may be a stable generic label rather than a provider name. Replay must look up
+and reuse the exact `(scope_id, account_code, financial_account_id,
+account_currency)` mapping; it must not allocate a new code or silently change
+an existing mapping.
+
+If the existing code is bound to another financial account, has a non-`ASSET`
+type, has a different currency, belongs to another scope, or otherwise
+disagrees with the persisted mapping, the operation fails closed. Account
+creation and mapping validation happen under the same deterministic lock as
+the replacement ledger entry, and no account identity is inferred from
+provider, source, OWNER, or notification context.
+
 ## Ledger source provenance
 
 Extend `ledger_source_links` minimally with nullable bank provenance while
@@ -226,6 +254,7 @@ CREATE TABLE ledger_entry_supersessions (
   semantic_key CHAR(64) NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (scope_id, superseded_ledger_entry_id),
+  UNIQUE (scope_id, replacement_ledger_entry_id),
   CHECK (superseded_ledger_entry_id <> replacement_ledger_entry_id),
   FOREIGN KEY (scope_id, superseded_ledger_entry_id)
     REFERENCES ledger_entries(scope_id, id),
@@ -238,14 +267,56 @@ CREATE TABLE ledger_entry_supersessions (
 
 `REFINE_EXISTING_FISCAL_FUNDING` creates one replacement active entry and one
 explicit supersession relation, not two active monetary entries. Future chains
-may be allowed only under an explicit reviewed policy; the initial transaction
-must reject cycles, self-supersession, multiple direct replacements, scope or
-business-event disagreement, and replacement ambiguity.
+are deterministic directed chains only: one superseded entry has at most one
+direct replacement, and one replacement entry has at most one direct
+predecessor. The unique constraint on `replacement_ledger_entry_id` forbids
+fan-in/DAG semantics in v1. A future chain may be extended only by an explicit
+reviewed operation that preserves these cardinalities. The transaction must
+reject cycles, self-supersession, multiple direct replacements, fan-in,
+scope/event disagreement, and replacement ambiguity. Cycle detection must use
+a recursive reachability check under the same lock before insertion; a simple
+foreign key cannot prove acyclicity.
 
 Readers must define an active ledger entry as one with no outgoing
 `ledger_entry_supersessions` row. Every ledger, certification, analytics, and
 reconciliation reader must apply that predicate and must not count a
 superseded `FISCAL_PAYMENT_CLEARING` entry.
+
+### Supersession-safe refresh and rebuild
+
+The existing destructive bounded paths, including
+`refreshLedgerForReceipt()` and `rebuildLedger({ replace: true })`, must not be
+used unchanged after matched-purchase refinement exists. They must neither
+delete, mutate, nor recreate any ledger entry, posting, or source link that
+participates in a bank-funded refinement or in a
+`ledger_entry_supersessions` relation. The superseded standalone fiscal entry,
+its postings, and its source links remain immutable audit history.
+
+A generic refresh must either fail closed when it encounters such a protected
+entry or become explicitly supersession-aware and append-only. It must never
+resurrect a second active `FISCAL_PAYMENT_CLEARING` entry, detach a
+supersession, or replace a bank-funded entry in place. Any future refinement
+must create/reuse its content-addressed replacement and relation through the
+dedicated atomic transaction below.
+
+### Active-ledger certification source state
+
+Certification, reconciliation, and analytics inputs must select only active
+entries: an entry is active when no outgoing supersession relation exists.
+Postings and source links are loaded only through those active entries. A
+superseded `FISCAL_PAYMENT_CLEARING` entry contributes neither `FISCAL_NEW_MONEY`
+nor acquisition totals, even though its immutable row and postings remain
+queryable as history.
+
+The deterministic `sourceStateKey`/`source_state_key` must include a canonical,
+sorted snapshot of the active-ledger view and supersession state, not merely
+counts of historical `ledger_entries` and `ledger_postings`. At minimum it
+includes scope, model version, active entry semantic identities/statuses,
+active posting identities and exact amounts, active source-link identities,
+and each supersession relation's semantic key and endpoints. Inserting the
+supersession relation therefore changes the source state even when no
+historical ledger row is modified. Certification runs and facts are keyed to
+that new state; stale runs cannot be reused as current active-ledger results.
 
 ## Future replacement entry and certification semantics
 
