@@ -180,6 +180,18 @@ function exactBankFundedLedgerShape(entry, match) {
     && credit?.account?.type === 'CODE' && credit.account.code === `FINANCIAL_ACCOUNT:${match.bank.financialAccountId}`;
 }
 
+function exactBankFundingSourceLink(entry, match) {
+  const links = Array.isArray(entry?.sourceLinks) ? entry.sourceLinks.filter((link) => link.link_role === 'MATCHED_PURCHASE_BANK_FUNDING') : [];
+  if (links.length !== 1) return false;
+  const link = links[0];
+  return Number(link.business_event_id) === Number(valueOf(entry, 'source_event_id', 'sourceEventId', 'business_event_id', 'businessEventId'))
+    && Number(link.bank_receipt_match_id) > 0
+    && String(link.match_key ?? '').toLowerCase() === match.matchKey
+    && Number(link.bank_transaction_id) === Number(match.bank.bankTransactionId)
+    && Number(link.receipt_id) === Number(match.receipt.receiptId)
+    && link.normalization_version === match.receipt.normalizationVersion;
+}
+
 function relevantLedgerEntries(ledgerEntries, event) {
   const id = event ? eventId(event) : null;
   return (Array.isArray(ledgerEntries) ? ledgerEntries : []).filter((entry) => {
@@ -210,7 +222,7 @@ export function projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents
   if (!purchase.disposition) return blocked(normalizedMatch, purchase.reasonCode);
   if (purchase.disposition === PURCHASE_IDENTITY_DISPOSITIONS.AMBIGUOUS) return blocked(normalizedMatch, purchase.reasonCode, { purchaseIdentity: { disposition: purchase.disposition } });
   const relevant = relevantLedgerEntries(existingLedgerEntries, purchase.event);
-  const bankFunded = relevant.filter((entry) => exactBankFundedLedgerShape(entry, normalizedMatch));
+  const bankFunded = relevant.filter((entry) => exactBankFundedLedgerShape(entry, normalizedMatch) && exactBankFundingSourceLink(entry, normalizedMatch));
   if (relevant.length > 1 || (relevant.length === 1 && !exactFiscalLedgerShape(relevant[0], normalizedMatch) && !exactBankFundedLedgerShape(relevant[0], normalizedMatch))) {
     return blocked(normalizedMatch, 'LEDGER_CONFLICT', {
       purchaseIdentity: { disposition: purchase.disposition, eventId: purchase.event ? eventId(purchase.event) : null },

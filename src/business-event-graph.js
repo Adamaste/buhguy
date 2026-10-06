@@ -30,6 +30,10 @@ function keyFor(kind, input) {
   return fiscalContentFingerprint({ providedSemanticKey: input.semanticKey ?? null, kind, scopeKey: input.scopeKey, eventId: input.eventId, sourceEventId: input.sourceEventId, targetEventId: input.targetEventId, eventType: input.eventType, relationType: input.relationType, evidenceRole: input.evidenceRole, receiptId: input.receiptId, receiptItemId: input.receiptItemId, normalizationVersion: input.normalizationVersion, targetEventSemanticKey: input.targetEventSemanticKey, sourceReceiptId: input.sourceReceiptId, sourceReceiptItemId: input.sourceReceiptItemId, allocatedQuantity: input.allocatedQuantity ?? null, allocatedAmount: input.allocatedAmount ?? null, currency: input.currency ?? null, allocationRole: input.allocationRole ?? null, graphModelVersion: input.graphModelVersion, ruleCode: input.ruleCode, ruleVersion: input.ruleVersion, origin: input.origin, resolutionStatus: input.resolutionStatus });
 }
 
+export function businessEventEvidenceSemanticKey(input) {
+  return keyFor('evidence', input);
+}
+
 function statusFrom(row) { return row ? { ...row, id: Number(row.id), scope_id: Number(row.scope_id) } : null; }
 
 export class BusinessEventGraphRepository {
@@ -71,7 +75,7 @@ export class BusinessEventGraphRepository {
   async createEvidenceLink(input) {
     validateProvenance(input, { requireResolutionStatus: false }); requireValue(input.eventId, 'eventId'); requireValue(input.normalizationVersion, 'normalizationVersion');
     if (input.receiptId === undefined && input.receiptItemId === undefined) throw new Error('receiptId or receiptItemId is required');
-    const semanticKey = keyFor('evidence', input);
+    const semanticKey = businessEventEvidenceSemanticKey(input);
     const result = await this.pool.query(`INSERT INTO business_event_evidence(event_id,receipt_id,receipt_item_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT(semantic_key) DO NOTHING
