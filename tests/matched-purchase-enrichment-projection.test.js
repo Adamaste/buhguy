@@ -69,6 +69,22 @@ test('fails closed for competing, contradictory, or malformed state', () => {
   assert.equal(projectMatchedPurchaseEnrichment({ match: match(), existingPurchaseEvents: [event()], existingPurchaseEvidence: [evidence()], existingLedgerEntries: [fiscalLedger({ postings: [] })] }).reasonCode, 'LEDGER_CONFLICT');
   assert.equal(projectMatchedPurchaseEnrichment({ match: match(), existingPurchaseEvents: [event()], existingPurchaseEvidence: [evidence()], existingLedgerEntries: [fiscalLedger(), fiscalLedger({ id: 42 })] }).reasonCode, 'LEDGER_CONFLICT');
   assert.equal(projectMatchedPurchaseEnrichment({ match: { ...match(), matchStatus: 'UNMATCHED' } }).projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.BLOCKED);
+  for (const forged of [
+    { modelVersion: 'stale-matcher-v0' },
+    { bank: { ...match().bank, journalKey: 'not-a-hash' } },
+    { receipt: { ...match().receipt, receiptCandidateKey: 'not-a-hash' } },
+    { bank: { ...match().bank, candidateKey: undefined } },
+  ]) assert.equal(projectMatchedPurchaseEnrichment({ match: { ...match(), ...forged } }).reasonCode, 'MATCH_CONTRACT_INVALID');
+});
+
+test('ledger conflict always exposes the matching ledger disposition', () => {
+  const result = projectMatchedPurchaseEnrichment({
+    match: match(), existingPurchaseEvents: [event()], existingPurchaseEvidence: [evidence()],
+    existingLedgerEntries: [fiscalLedger({ postings: [] })],
+  });
+  assert.equal(result.projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.BLOCKED);
+  assert.equal(result.reasonCode, 'LEDGER_CONFLICT');
+  assert.equal(result.ledgerDisposition, LEDGER_DISPOSITIONS.LEDGER_CONFLICT);
 });
 
 test('preserves both times, ownership boundary, exact money, and no second ledger entry', () => {
@@ -102,4 +118,33 @@ test('loader calls matching once and only issues SELECT reads', async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls.every((sql) => /^\s*SELECT/i.test(sql)), true);
   assert.equal(calls.some((sql) => /INSERT|UPDATE|DELETE/i.test(sql)), false);
+});
+
+test('loader deduplicates evidence rows and exposes cross-scope purchase state', async () => {
+  const queries = [];
+  let includeCrossScope = false;
+  const pool = { query: async (sql) => {
+    queries.push(sql);
+    if (/FROM business_events/i.test(sql)) return { rows: includeCrossScope ? [event(), event({ id: 32, scope_key: 'scope-b' })] : [event()] };
+    if (/FROM business_event_evidence/i.test(sql)) return { rows: includeCrossScope ? [evidence(), evidence({ id: 2, event_id: 32 })] : [evidence(), evidence({ id: 2 })] };
+    if (/FROM ledger_entries/i.test(sql)) return { rows: [] };
+    throw new Error(`unexpected query: ${sql}`);
+  } };
+  const result = await loadMatchedPurchaseEnrichment(pool, {
+    matchKey: 'a'.repeat(64),
+    matchingLoader: async () => ({ matches: [match()] }),
+  });
+  assert.equal(result.purchaseIdentity.disposition, PURCHASE_IDENTITY_DISPOSITIONS.REUSE_EXISTING_PURCHASE);
+  assert.equal(queries.length, 3);
+  assert.match(queries[0], /DISTINCT ON \(e\.id\)/i);
+  assert.match(queries[0], /EXISTS/i);
+  assert.doesNotMatch(queries[0], /scope_key=\$1/i);
+
+  includeCrossScope = true;
+  const crossScope = await loadMatchedPurchaseEnrichment(pool, {
+    matchKey: 'a'.repeat(64),
+    matchingLoader: async () => ({ matches: [match()] }),
+  });
+  assert.equal(crossScope.projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.BLOCKED);
+  assert.equal(crossScope.reasonCode, 'MULTIPLE_ACTIVE_PURCHASE_EVENTS');
 });

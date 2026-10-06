@@ -92,15 +92,20 @@ function blocked(match, reasonCode, details = {}) {
 }
 
 function normalizeMatch(match) {
-  if (!match || match.matchStatus !== BANK_RECEIPT_MATCHING_STATUSES.MATCHED
+  if (!match || match.modelVersion !== 'bank-receipt-matching-v1'
+    || match.matchStatus !== BANK_RECEIPT_MATCHING_STATUSES.MATCHED
     || match.relationshipType !== 'RECEIPT_EVIDENCE_FOR_BANK_PURCHASE'
     || typeof match.matchKey !== 'string' || !SHA256.test(match.matchKey)
     || typeof match.scopeKey !== 'string' || !match.scopeKey.trim()
     || money(match.amount) !== match.amount || currency(match.currency) !== match.currency
     || !match.bank || !positiveInteger(match.bank.bankTransactionId)
     || !positiveInteger(match.bank.financialAccountId)
+    || !SHA256.test(match.bank.ledgerKey ?? '')
+    || !SHA256.test(match.bank.candidateKey ?? '')
+    || !SHA256.test(match.bank.journalKey ?? '')
     || !isoTime(match.bank.occurredAt)
     || !match.receipt || !positiveInteger(match.receipt.receiptId)
+    || !SHA256.test(match.receipt.receiptCandidateKey ?? '')
     || money(match.receipt.amount) !== match.amount || currency(match.receipt.currency) !== match.currency
     || !isoTime(match.receipt.dateTime)
     || typeof match.receipt.normalizationVersion !== 'string'
@@ -194,7 +199,10 @@ export function projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents
   if (purchase.disposition === PURCHASE_IDENTITY_DISPOSITIONS.AMBIGUOUS) return blocked(normalizedMatch, purchase.reasonCode, { purchaseIdentity: { disposition: purchase.disposition } });
   const relevant = relevantLedgerEntries(existingLedgerEntries, purchase.event);
   if (relevant.length > 1 || (relevant.length === 1 && !exactFiscalLedgerShape(relevant[0], normalizedMatch))) {
-    return blocked(normalizedMatch, 'LEDGER_CONFLICT', { purchaseIdentity: { disposition: purchase.disposition, eventId: purchase.event ? eventId(purchase.event) : null } });
+    return blocked(normalizedMatch, 'LEDGER_CONFLICT', {
+      purchaseIdentity: { disposition: purchase.disposition, eventId: purchase.event ? eventId(purchase.event) : null },
+      ledgerDisposition: LEDGER_DISPOSITIONS.LEDGER_CONFLICT,
+    });
   }
   const ledgerDisposition = relevant.length === 1
     ? LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING
@@ -248,7 +256,7 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
   const match = options.matchKey ? matches.find((item) => item.matchKey === options.matchKey) : matches.length === 1 ? matches[0] : null;
   if (!match) return blocked({ matchKey: options.matchKey ?? null }, matches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
   const receiptId = match.receipt.receiptId;
-  const eventRows = (await pool.query(`SELECT e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id JOIN business_event_evidence ev ON ev.event_id=e.id WHERE s.scope_key=$1 AND ev.receipt_id=$2 ORDER BY e.id`, [match.scopeKey, receiptId])).rows;
+  const eventRows = (await pool.query(`SELECT DISTINCT ON (e.id) e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id WHERE EXISTS (SELECT 1 FROM business_event_evidence ev WHERE ev.event_id=e.id AND ev.receipt_id=$1) ORDER BY e.id`, [receiptId])).rows;
   const ids = eventIdList(eventRows);
   if (!ids.length) return projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents: [], existingPurchaseEvidence: [], existingLedgerEntries: [] });
   const evidenceRows = (await pool.query('SELECT * FROM business_event_evidence WHERE event_id = ANY($1::bigint[]) ORDER BY id', [ids])).rows;
