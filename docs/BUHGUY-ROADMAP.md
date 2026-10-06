@@ -331,8 +331,10 @@ proven events into the ledger, and then use bank-to-receipt matching as
 additional independent purchase evidence. The non-mutating bank cash-flow,
 balanced-journal, business-event-candidate, bank-ledger, bank-to-receipt
 matching, and matched-purchase-enrichment projections are implemented. The
-next stage is matched purchase persistence contract/schema design; business-
-event, ledger, and reconciliation persistence remain unimplemented.
+matched-purchase persistence contract is reviewed and merged as a design-only
+stage. The next stage is matched purchase persistence schema foundation:
+implement the reviewed migration and PostgreSQL tests, while business-event,
+ledger, and reconciliation write paths remain unimplemented.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
