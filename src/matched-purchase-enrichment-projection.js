@@ -246,9 +246,6 @@ export function projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents
   const enrichmentKey = fingerprint({
     modelVersion: MATCHED_PURCHASE_ENRICHMENT_VERSION,
     match: normalizedMatch,
-    purchaseIdentity,
-    ledgerDisposition,
-    existingLedgerFingerprint: relevant.map((entry) => fingerprint(entry)).sort(),
     targetLedgerPlan: plan,
   });
   return {

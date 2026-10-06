@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { loadBankReceiptMatching } from './bank-receipt-matching.js';
 import { loadMatchedPurchaseEnrichment, MATCHED_PURCHASE_ENRICHMENT_VERSION, LEDGER_DISPOSITIONS, MATCHED_PURCHASE_ENRICHMENT_STATUSES } from './matched-purchase-enrichment-projection.js';
 import { refreshCertificationForEvents } from './certification.js';
+import { GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
+import { STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION } from './standalone-purchase.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -87,22 +89,25 @@ async function persistMatch(client, scope, fields) {
 async function persistPurchase(client, scope, fields, enrichment) {
   if (enrichment.purchaseIdentity.disposition === 'REUSE_EXISTING_PURCHASE') {
     const existing = (await client.query('SELECT * FROM business_events WHERE id=$1 AND scope_id=$2 FOR UPDATE', [enrichment.purchaseIdentity.eventId, scope.id])).rows[0];
-    if (!existing || existing.event_type !== 'PURCHASE' || existing.resolution_status !== 'CONFIRMED' || String(existing.amount) !== fields.amount || existing.currency !== fields.currency) fail('PURCHASE_PERSISTENCE_CONFLICT');
-    const evidence = (await client.query(`SELECT id FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND normalization_version=$3 FOR UPDATE`, [existing.id, fields.receiptId, fields.receiptNormalizationVersion])).rows[0];
-    if (!evidence) fail('PURCHASE_RECEIPT_EVIDENCE_MISSING');
-    return { event: existing, evidenceId: Number(evidence.id) };
+    if (!existing || existing.event_type !== 'PURCHASE' || existing.resolution_status !== 'CONFIRMED'
+      || existing.origin !== SYSTEM_DERIVED || existing.graph_model_version !== GRAPH_MODEL_VERSION
+      || existing.rule_code !== STANDALONE_PURCHASE_RULE || existing.rule_version !== STANDALONE_PURCHASE_VERSION
+      || String(existing.amount) !== fields.amount || existing.currency !== fields.currency) fail('PURCHASE_PERSISTENCE_CONFLICT');
+    const evidence = (await client.query(`SELECT id,origin,graph_model_version,rule_code,rule_version,evidence_role FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND normalization_version=$3 ORDER BY id`, [existing.id, fields.receiptId, fields.receiptNormalizationVersion])).rows;
+    if (evidence.length !== 1 || evidence[0].origin !== SYSTEM_DERIVED || evidence[0].graph_model_version !== GRAPH_MODEL_VERSION || evidence[0].rule_code !== STANDALONE_PURCHASE_RULE || evidence[0].rule_version !== STANDALONE_PURCHASE_VERSION || evidence[0].evidence_role !== 'PURCHASE_EVIDENCE') fail('PURCHASE_PERSISTENCE_CONFLICT');
+    return { event: existing, evidenceId: Number(evidence[0].id) };
   }
   const identity = enrichment.purchaseIdentity.identityKey;
   await client.query(`INSERT INTO business_graph_rules(rule_code,rule_version,description)
-    VALUES('STANDALONE_PURCHASE_V1','standalone-purchase-v1','Matched bank purchase') ON CONFLICT DO NOTHING`);
+    VALUES($1,$2,'Matched bank purchase') ON CONFLICT DO NOTHING`, [STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
   const eventResult = await client.query(`INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
-    VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','business-event-graph-v1','STANDALONE_PURCHASE_V1','standalone-purchase-v1',$2,$3,$4,'Matched purchase funded by bank movement')
+    VALUES($1,'PURCHASE','CONFIRMED',$5,$6,$7,$8,$2,$3,$4,'Matched purchase funded by bank movement')
     ON CONFLICT(scope_id,semantic_key,graph_model_version,rule_code,rule_version,origin) DO UPDATE SET description=business_events.description
-    RETURNING *`, [scope.id, identity, fields.amount, fields.currency]);
+    RETURNING *`, [scope.id, identity, fields.amount, fields.currency, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
   const event = eventResult.rows[0];
   if (!event) fail('PURCHASE_PERSISTENCE_CONFLICT');
   const evidenceKey = hash({ eventId: Number(event.id), receiptId: fields.receiptId, normalizationVersion: fields.receiptNormalizationVersion, role: 'PURCHASE_EVIDENCE' });
-  const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE','SYSTEM_DERIVED','business-event-graph-v1','STANDALONE_PURCHASE_V1','standalone-purchase-v1',$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING id`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey]);
+  const evidence = await client.query(`INSERT INTO business_event_evidence(event_id,receipt_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key) VALUES($1,$2,$3,'PURCHASE_EVIDENCE',$5,$6,$7,$8,$4) ON CONFLICT(semantic_key) DO UPDATE SET semantic_key=EXCLUDED.semantic_key RETURNING id`, [event.id, fields.receiptId, fields.receiptNormalizationVersion, evidenceKey, SYSTEM_DERIVED, GRAPH_MODEL_VERSION, STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION]);
   return { event, evidenceId: Number(evidence.rows[0].id) };
 }
 
@@ -112,7 +117,7 @@ async function persistBankEvidence(client, scope, fields, enrichment, eventId, m
   const result = await client.query(`INSERT INTO business_event_bank_evidence(scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key) VALUES($1,$2,$3,$4,'BANK_PURCHASE_MATCH',$5,$6) ON CONFLICT(scope_id,bank_receipt_match_id) DO NOTHING RETURNING id`, [scope.id, eventId, matchId, enrichmentKey, MATCHED_PURCHASE_ENRICHMENT_VERSION, semanticKey]);
   if (result.rowCount) return Number(result.rows[0].id);
   const existing = (await client.query('SELECT id,scope_id,business_event_id,bank_receipt_match_id,enrichment_key,evidence_role,rule_version,semantic_key FROM business_event_bank_evidence WHERE scope_id=$1 AND bank_receipt_match_id=$2 FOR UPDATE', [scope.id, matchId])).rows[0];
-  if (!existing || Number(existing.business_event_id) !== Number(eventId) || Number(existing.bank_receipt_match_id) !== Number(matchId) || existing.evidence_role !== 'BANK_PURCHASE_MATCH' || existing.rule_version !== MATCHED_PURCHASE_ENRICHMENT_VERSION || existing.semantic_key !== semanticKey) fail('BANK_EVIDENCE_CONFLICT');
+  if (!existing || Number(existing.business_event_id) !== Number(eventId) || Number(existing.bank_receipt_match_id) !== Number(matchId) || existing.enrichment_key !== enrichmentKey || existing.evidence_role !== 'BANK_PURCHASE_MATCH' || existing.rule_version !== MATCHED_PURCHASE_ENRICHMENT_VERSION || existing.semantic_key !== semanticKey) fail('BANK_EVIDENCE_CONFLICT');
   return Number(existing.id);
 }
 
@@ -127,24 +132,40 @@ async function mappedAccount(client, scope, fields) {
 async function catalogAccount(client, scope, code) {
   let row = (await client.query('SELECT * FROM ledger_accounts WHERE scope_id=$1 AND account_code=$2 FOR UPDATE', [scope.id, code])).rows[0];
   if (!row) row = (await client.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description) VALUES($1,$2,'CONTROL',$3) RETURNING *`, [scope.id, code, code])).rows[0];
+  if (row.account_code !== code || row.account_type !== 'CONTROL' || Number(row.scope_id) !== Number(scope.id)
+    || row.financial_account_id !== null || row.account_currency !== null) fail('LEDGER_CONTROL_ACCOUNT_CONFLICT');
   return row;
 }
 
 async function persistLedger(client, scope, fields, enrichment, eventId, evidenceId, matchId, mapped) {
   const debit = await catalogAccount(client, scope, 'UNCLASSIFIED_ACQUISITION');
   const semanticKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, eventId, matchKey: fields.matchKey, bankTransactionId: fields.bankTransactionId, financialAccountId: fields.financialAccountId, amount: fields.amount, currency: fields.currency });
-  let entry = (await client.query(`SELECT * FROM ledger_entries WHERE scope_id=$1 AND semantic_key=$2 AND derivation_rule=$3 AND derivation_version='v1' AND origin='SYSTEM_DERIVED' FOR UPDATE`, [scope.id, semanticKey, MATCHED_PURCHASE_BANK_LEDGER_RULE])).rows[0];
+  const existingEntries = (await client.query(`SELECT * FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2 AND derivation_rule=$3 AND origin=$4 FOR UPDATE`, [scope.id, eventId, MATCHED_PURCHASE_BANK_LEDGER_RULE, SYSTEM_DERIVED])).rows;
+  if (existingEntries.some((candidate) => candidate.semantic_key !== semanticKey)) fail('LEDGER_CONFLICT');
+  if (existingEntries.length > 1) fail('LEDGER_CONFLICT');
+  let entry = existingEntries[0];
   if (!entry) entry = (await client.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description) VALUES($1,$2,$3,$4,$5,$6,'v1','READY','FUNDING_UNRECONCILED','SYSTEM_DERIVED','MATCHED_PURCHASE_BANK_FUNDING','Bank-funded matched purchase') RETURNING *`, [scope.id, eventId, fields.currency, fields.bankOccurredAt, semanticKey, MATCHED_PURCHASE_BANK_LEDGER_RULE])).rows[0];
-  if (Number(entry.scope_id) !== Number(scope.id) || Number(entry.source_event_id) !== Number(eventId) || entry.currency !== fields.currency || new Date(entry.event_at).toISOString() !== fields.bankOccurredAt) fail('LEDGER_CONFLICT');
+  if (Number(entry.scope_id) !== Number(scope.id) || Number(entry.source_event_id) !== Number(eventId) || entry.currency !== fields.currency
+    || entry.semantic_key !== semanticKey || entry.derivation_rule !== MATCHED_PURCHASE_BANK_LEDGER_RULE || entry.derivation_version !== 'v1'
+    || entry.derivation_status !== 'READY' || entry.certification_status !== 'FUNDING_UNRECONCILED' || entry.origin !== SYSTEM_DERIVED
+    || entry.reason_code !== 'MATCHED_PURCHASE_BANK_FUNDING' || new Date(entry.event_at).toISOString() !== fields.bankOccurredAt) fail('LEDGER_CONFLICT');
   const existingPostings = (await client.query('SELECT p.*,a.account_code FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id WHERE p.ledger_entry_id=$1 ORDER BY p.id', [entry.id])).rows;
   if (!existingPostings.length) {
     await client.query('INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_receipt_id) VALUES($1,$2,$3,$4,0,$5),($1,$6,$3,0,$4,$5)', [entry.id, debit.id, fields.currency, fields.amount, fields.receiptId, mapped.id]);
   } else if (!same(existingPostings.map((p) => [p.account_code, String(p.debit), String(p.credit), p.currency]).sort(), [['FINANCIAL_ACCOUNT:' + fields.financialAccountId, '0.00', fields.amount, fields.currency], ['UNCLASSIFIED_ACQUISITION', fields.amount, '0.00', fields.currency]].sort())) fail('LEDGER_CONFLICT');
   const linkKey = hash({ modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, entryId: Number(entry.id), matchId, bankTransactionId: fields.bankTransactionId, eventId, evidenceId, receiptId: fields.receiptId });
+  const relatedLinks = (await client.query("SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 AND link_role='MATCHED_PURCHASE_BANK_FUNDING' FOR UPDATE", [entry.id])).rows;
+  if (relatedLinks.length > 1 || (relatedLinks.length === 1 && (Number(relatedLinks[0].business_event_id) !== Number(eventId)
+    || Number(relatedLinks[0].graph_evidence_id) !== Number(evidenceId) || Number(relatedLinks[0].receipt_id) !== Number(fields.receiptId)
+    || relatedLinks[0].normalization_version !== fields.receiptNormalizationVersion || Number(relatedLinks[0].bank_receipt_match_id) !== Number(matchId)
+    || Number(relatedLinks[0].bank_transaction_id) !== Number(fields.bankTransactionId) || relatedLinks[0].semantic_key !== linkKey))) fail('LEDGER_SOURCE_LINK_CONFLICT');
   const linkResult = await client.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,receipt_id,normalization_version,link_role,semantic_key,bank_receipt_match_id,bank_transaction_id) VALUES($1,$2,$3,$4,$5,'MATCHED_PURCHASE_BANK_FUNDING',$6,$7,$8) ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [entry.id, eventId, evidenceId, fields.receiptId, fields.receiptNormalizationVersion, linkKey, matchId, fields.bankTransactionId]);
   if (!linkResult.rowCount) {
     const link = (await client.query('SELECT * FROM ledger_source_links WHERE semantic_key=$1 FOR UPDATE', [linkKey])).rows[0];
-    if (!link || Number(link.ledger_entry_id) !== Number(entry.id) || Number(link.bank_receipt_match_id) !== Number(matchId)) fail('LEDGER_SOURCE_LINK_CONFLICT');
+    if (!link || Number(link.ledger_entry_id) !== Number(entry.id) || Number(link.business_event_id) !== Number(eventId)
+      || Number(link.graph_evidence_id) !== Number(evidenceId) || Number(link.receipt_id) !== Number(fields.receiptId)
+      || link.normalization_version !== fields.receiptNormalizationVersion || link.link_role !== 'MATCHED_PURCHASE_BANK_FUNDING'
+      || Number(link.bank_receipt_match_id) !== Number(matchId) || Number(link.bank_transaction_id) !== Number(fields.bankTransactionId)) fail('LEDGER_SOURCE_LINK_CONFLICT');
   }
   return { entry };
 }
@@ -163,8 +184,7 @@ async function appendSupersession(client, scope, oldEntryId, replacementEntryId,
   return (await client.query(`INSERT INTO ledger_entry_supersessions(scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code) VALUES($1,$2,$3,$4,$5,$6,'MATCHED_PURCHASE_REFINEMENT') RETURNING *`, [scope.id, oldEntryId, replacementEntryId, eventId, enrichmentKey, semanticKey])).rows[0];
 }
 
-export async function persistMatchedPurchase(pool, options = {}) {
-  const matchingLoader = options.matchingLoader ?? loadBankReceiptMatching;
+async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader = loadBankReceiptMatching) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -187,7 +207,7 @@ export async function persistMatchedPurchase(pool, options = {}) {
     if (options.failAfter === 'purchase') fail('INJECTED_WRITER_FAILURE');
     const bankEvidenceId = await persistBankEvidence(client, scope, fields, enrichment, Number(purchase.event.id), Number(matchRow.id));
     const mapped = await mappedAccount(client, scope, fields);
-    const ledger = await persistLedger(client, scope, fields, enrichment, Number(purchase.event.id), bankEvidenceId, Number(matchRow.id), mapped);
+    const ledger = await persistLedger(client, scope, fields, enrichment, Number(purchase.event.id), purchase.evidenceId, Number(matchRow.id), mapped);
     if (options.failAfter === 'ledger') fail('INJECTED_WRITER_FAILURE');
     if (enrichment.ledgerDisposition === LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING) {
       const old = (await client.query(`SELECT e.id FROM ledger_entries e WHERE e.scope_id=$1 AND e.source_event_id=$2 AND e.derivation_rule='LEDGER_STANDALONE_PURCHASE_V1' AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id) FOR UPDATE`, [scope.id, Number(purchase.event.id)])).rows;
@@ -196,9 +216,20 @@ export async function persistMatchedPurchase(pool, options = {}) {
     }
     const certification = await refreshCertificationForEvents(client, { scopeKey: selected.scopeKey, eventIds: [Number(purchase.event.id)], client });
     if (options.failAfter === 'certification') fail('INJECTED_WRITER_FAILURE');
+    const active = (await client.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1 AND e.source_event_id=$2 AND e.origin=$3 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [scope.id, Number(purchase.event.id), SYSTEM_DERIVED])).rows[0].count;
+    if (Number(active) !== 1) fail('LEDGER_CONFLICT');
     await client.query('COMMIT');
     return { modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, matchId: Number(matchRow.id), eventId: Number(purchase.event.id), bankEvidenceId, ledgerEntryId: Number(ledger.entry.id), certification, enrichmentKey: enrichment.enrichmentKey };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; } finally { client.release(); }
+}
+
+export async function persistMatchedPurchase(pool, options = {}) {
+  return persistMatchedPurchaseInternal(pool, options, loadBankReceiptMatching);
+}
+
+export async function persistMatchedPurchaseForTest(pool, options = {}) {
+  if (typeof options.matchingLoader !== 'function') fail('TEST_MATCHING_LOADER_REQUIRED');
+  return persistMatchedPurchaseInternal(pool, options, options.matchingLoader);
 }
 
 export const persistMatchedPurchaseAtomic = persistMatchedPurchase;
