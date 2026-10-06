@@ -26,9 +26,9 @@ integration('matched purchase writer persists one atomic, replayable bank-funded
 
     const match = {
       modelVersion: 'bank-receipt-matching-v1', matchStatus: 'MATCHED', relationshipType: 'RECEIPT_EVIDENCE_FOR_BANK_PURCHASE',
-      matchKey: hash('e'), scopeKey: 'writer-v1-scope', amount: '12.34', currency: 'RUB', reasonCode: 'ONE_TO_ONE_EXACT',
-      bank: { ledgerKey: hash('f'), candidateKey: hash('g'), journalKey: hash('h'), bankTransactionId: txId, financialAccountId: accountId, occurredAt: txRow.occurred_at.toISOString() },
-      receipt: { receiptCandidateKey: hash('i'), receiptId, normalizationVersion: 'fiscal-normalizer-v1', normalizedContentSha256: hash('d'), dateTime: receiptRow.date_time.toISOString(), amount: '12.34', currency: 'RUB' },
+      matchKey: hash('1'), scopeKey: 'writer-v1-scope', amount: '12.34', currency: 'RUB', reasonCode: 'ONE_TO_ONE_EXACT',
+      bank: { ledgerKey: hash('2'), candidateKey: hash('3'), journalKey: hash('4'), bankTransactionId: txId, financialAccountId: accountId, occurredAt: txRow.occurred_at.toISOString() },
+      receipt: { receiptCandidateKey: hash('5'), receiptId, normalizationVersion: 'fiscal-normalizer-v1', normalizedContentSha256: hash('d'), dateTime: receiptRow.date_time.toISOString(), amount: '12.34', currency: 'RUB' },
     };
     const result = await persistMatchedPurchase(pool, { scopeKey: 'writer-v1-scope', matchKey: match.matchKey, matchingLoader: async () => ({ matches: [match] }) });
     const replay = await persistMatchedPurchase(pool, { scopeKey: 'writer-v1-scope', matchKey: match.matchKey, matchingLoader: async () => ({ matches: [match] }) });
