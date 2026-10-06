@@ -21,6 +21,7 @@ const integrationFiles = [
   'tests/matched-purchase-persistence-schema-postgres.integration.test.js',
   'tests/active-ledger-semantics-postgres.integration.test.js',
   'tests/matched-purchase-persistence-postgres.integration.test.js',
+  'tests/matched-purchase-orchestration-postgres.integration.test.js',
   'tests/runtime-schema-postgres.integration.test.js',
   'tests/return-refund-postgres.integration.test.js',
 ];

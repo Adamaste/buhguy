@@ -20,6 +20,7 @@ import { analyticsSummary, analyticsBlocked, analyticsTrace, assertSupportedMetr
 import { standalonePurchaseCensus, persistStandalonePurchases } from './standalone-purchase.js';
 import { accountingCoverageReport, compareCoverageReports } from './accounting-coverage.js';
 import { runAccountingCatchup } from './accounting-pipeline.js';
+import { previewMatchedPurchaseOrchestration } from './matched-purchase-orchestration.js';
 import { effectiveAccountingScopeKey, runAccountingCatchupsForSources, runSourceSyncCycle } from './source-sync-cycle.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
@@ -76,6 +77,28 @@ function summarizeAccountingCatchup(result) {
 function toNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export async function runMatchedPurchaseOrchestrationCommand(args, { pool, write = printJson, preview = previewMatchedPurchaseOrchestration } = {}) {
+  if (args._[0] !== 'preview') throw new ReceiptCollectorError('Matched-purchase command supports only preview');
+  if (args.persist || args.execute || args.apply || args.write || args._.some((value) => ['persist', 'execute', 'apply', 'write'].includes(value))) {
+    throw new ReceiptCollectorError('Matched-purchase preview is read-only; mutation is not supported');
+  }
+  if (typeof args['scope-key'] !== 'string' || !args['scope-key'].trim()) throw new ReceiptCollectorError('Matched-purchase preview requires --scope-key');
+  const internalTransferMaxTimeDeltaMs = Number(args['internal-transfer-window-ms']);
+  const receiptMaxTimeDeltaMs = Number(args['receipt-window-ms']);
+  if (!Number.isSafeInteger(internalTransferMaxTimeDeltaMs) || internalTransferMaxTimeDeltaMs <= 0) throw new ReceiptCollectorError('Matched-purchase preview requires a finite positive --internal-transfer-window-ms');
+  if (!Number.isSafeInteger(receiptMaxTimeDeltaMs) || receiptMaxTimeDeltaMs <= 0) throw new ReceiptCollectorError('Matched-purchase preview requires a finite positive --receipt-window-ms');
+  const result = await preview(pool, {
+    scopeKey: args['scope-key'],
+    from: args.from ?? null,
+    to: args.to ?? null,
+    matchKey: args['match-key'] ?? null,
+    internalTransferMaxTimeDeltaMs,
+    receiptMaxTimeDeltaMs,
+  });
+  write(result);
+  return result.readiness === 'REVIEW_REQUIRED' ? 2 : 0;
 }
 
 export async function runBankDeviceCommand(args, { pool, write = printJson } = {}) {
@@ -336,7 +359,7 @@ export async function main(argv = process.argv.slice(2), {
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     printJson({
-      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|bank-device|bank-source|bank-account>',
+      usage: 'receipt-collector <login|auth|list|show|sync|normalize|graph|analytics|coverage|matched-purchase|bank-device|bank-source|bank-account>',
       examples: [
         'receipt-collector login',
         'receipt-collector list',
@@ -654,6 +677,14 @@ export async function main(argv = process.argv.slice(2), {
     try {
       await assertSchemaCurrent(pool);
       return await runBankDeviceCommand(args, { pool });
+    } finally { await pool.end(); }
+  }
+
+  if (command === 'matched-purchase') {
+    const pool = createPool();
+    try {
+      await assertSchemaCurrent(pool);
+      return await runMatchedPurchaseOrchestrationCommand(args, { pool });
     } finally { await pool.end(); }
   }
 
