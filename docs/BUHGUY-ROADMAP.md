@@ -332,14 +332,20 @@ additional independent purchase evidence. The non-mutating bank cash-flow,
 balanced-journal, business-event-candidate, bank-ledger, bank-to-receipt
 matching, and matched-purchase-enrichment projections are implemented. The
 matched-purchase persistence contract is reviewed and merged as a design-only
-stage, and the schema foundation is now implemented by migration 018 with
-PostgreSQL constraint coverage. Business-event and matched-purchase write paths
-remain unimplemented. The next stage is matched purchase active-ledger runtime
-semantics: certification, reconciliation, and analytics reads must select only
-ACTIVE entries, superseded history must remain immutable, source state must
-change when supersession state changes, and destructive refresh/rebuild paths
-must fail closed or become supersession-aware. No matched-purchase writer or
-production mutation is implied.
+stage, the schema foundation is implemented by migration 018 with PostgreSQL
+constraint coverage, and ACTIVE-ledger runtime semantics are implemented:
+certification, reconciliation, and analytics reads select only ACTIVE entries;
+superseded history remains immutable; source state changes when supersession
+state changes; stale certification facts are not reused; and destructive
+refresh/rebuild paths fail closed for protected history. Business-event and
+matched-purchase write paths remain unimplemented. The next stage is the atomic
+matched-purchase persistence writer. It must revalidate authoritative state,
+persist or reuse the one bank-receipt match and PURCHASE, persist bank evidence,
+apply deterministic financial-account ledger mapping, create or reuse one
+bank-funded ACTIVE ledger entry, append supersession when refining fiscal
+clearing, refresh certification using ACTIVE semantics, and remain deterministic
+and idempotent. Disagreement or ambiguity must fail closed. No deployment,
+replay, backfill, or production mutation is implied.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
