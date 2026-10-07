@@ -119,11 +119,11 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       scope_id,return_event_id,purchase_event_id,relationship_status,semantic_key,supersedes_relationship_id)
     VALUES($1,$2,$3,'LINKED',$4,$5) RETURNING id`,
   [scope.id, returnEvent.id, initial.business_event_id, key, supersedes])).rows[0];
-  const returnA = await returnRelationship('1'.repeat(64));
+  const returnA = await returnRelationship('a'.repeat(64));
   await pool.query(`UPDATE spending_return_relationships SET relationship_status='SUPERSEDED' WHERE id=$1`, [returnA.id]);
-  const returnB = await returnRelationship('2'.repeat(64), returnA.id);
+  const returnB = await returnRelationship('b'.repeat(64), returnA.id);
   await pool.query(`UPDATE spending_return_relationships SET relationship_status='SUPERSEDED' WHERE id=$1`, [returnB.id]);
-  const returnC = await returnRelationship('3'.repeat(64), returnB.id);
+  const returnC = await returnRelationship('c'.repeat(64), returnB.id);
   const activeReturn = (await pool.query(`SELECT relationship_status,related_purchase_id
     FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, snapshotKey])).rows[0];
   assert.equal(activeReturn.relationship_status, 'LINKED');
