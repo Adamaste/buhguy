@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import { loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { persistMatchedPurchase, persistMatchedPurchaseForTest } from '../src/matched-purchase-persistence.js';
+import { loadMatchedPurchaseEnrichment, LEDGER_DISPOSITIONS } from '../src/matched-purchase-enrichment-projection.js';
 import { businessEventEvidenceSemanticKey, BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from '../src/business-event-graph.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { rebuildLedger, refreshLedgerForReceipt } from '../src/ledger.js';
@@ -14,7 +15,7 @@ const hash = (letter) => letter.repeat(64);
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 let fixtureSequence = 0;
 
-async function createFixture(pool, prefix, { standalone = false, amount = '12.34' } = {}) {
+async function createFixture(pool, prefix, { standalone = false, amount = '12.34', receiptCurrency = 'RUB' } = {}) {
   const suffix = `${process.pid}-${Date.now()}-${fixtureSequence += 1}`;
   const scopeKey = `${prefix}-scope-${suffix}`;
   const receiptKey = `${prefix}-receipt-${suffix}`;
@@ -34,7 +35,7 @@ async function createFixture(pool, prefix, { standalone = false, amount = '12.34
     const tx = (await client.query("INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,event_type,normalization_status,normalization_version,evidence_quality) VALUES($1,NOW(),$2,'RUB','DEBIT','PURCHASE','READY','fixture','EXACT') RETURNING id,occurred_at", [observationId, amount])).rows[0];
     const txId = Number(tx.id);
     await client.query("INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason) VALUES($1,$2,'EXACT','fixture','fixture')", [txId, accountId]);
-    const receipt = (await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type) VALUES($1,NOW(),'fixture',$2,'RUB',1) RETURNING id,date_time", [receiptKey, amount])).rows[0];
+    const receipt = (await client.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type) VALUES($1,NOW(),'fixture',$2,$3,1) RETURNING id,date_time", [receiptKey, amount, receiptCurrency])).rows[0];
     const receiptId = Number(receipt.id);
     const fnsSourceId = Number((await client.query('INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref,device_ref) VALUES($1,$2,$3,\'fixture\',\'fixture\') RETURNING id', [scopeId, fnsKey, prefix])).rows[0].id);
     await client.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2)', [fnsSourceId, personId]);
@@ -149,6 +150,113 @@ integration('real standalone purchase is refined append-only and replays through
     assert.deepEqual((await pool.query('SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows, oldLinks);
     const evidence = (await pool.query("SELECT * FROM business_event_evidence WHERE event_id=$1 AND receipt_id=$2 AND evidence_role='PURCHASE_EVIDENCE'", [fixture.eventId, fixture.receiptId])).rows[0];
     assert.equal(evidence.semantic_key, businessEventEvidenceSemanticKey({ scopeKey: fixture.scopeKey, eventId: fixture.eventId, receiptId: fixture.receiptId, normalizationVersion: 'fiscal-normalizer-v1', evidenceRole: 'PURCHASE_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: 'STANDALONE_PURCHASE_V1', ruleVersion: 'standalone-purchase-v1', resolutionStatus: 'CONFIRMED', currency: 'RUB' }));
+  } finally { await pool.end(); }
+});
+
+integration('FNS source contract derives RUB for writer revalidation without changing receipt currency', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'derived-rub', { receiptCurrency: null });
+    const options = await writerOptions(fixture);
+    const matching = await loadBankReceiptMatching(pool, options);
+    assert.equal(matching.matches.length, 1);
+    assert.equal(matching.matches[0].currency, 'RUB');
+    assert.equal(matching.matches[0].receiptCurrencyResolution.basis, 'FNS_SOURCE_CONTRACT');
+    const result = await persistMatchedPurchase(pool, options);
+    const receipt = (await pool.query('SELECT currency FROM receipts WHERE id=$1', [fixture.receiptId])).rows[0];
+    assert.equal(receipt.currency, null);
+    assert.equal((await pool.query('SELECT currency FROM bank_receipt_matches WHERE id=$1', [result.matchId])).rows[0].currency, 'RUB');
+  } finally { await pool.end(); }
+});
+
+integration('FNS-derived RUB refines a real standalone purchase through the public writer', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'derived-rub-refine', { standalone: true, receiptCurrency: null });
+    const options = await writerOptions(fixture);
+    const matching = await loadBankReceiptMatching(pool, options);
+    assert.equal(matching.matches.length, 1);
+    assert.equal(matching.matches[0].receiptCurrencyResolution.basis, 'FNS_SOURCE_CONTRACT');
+    const enrichment = await loadMatchedPurchaseEnrichment(pool, {
+      ...options,
+      matchKey: matching.matches[0].matchKey,
+      matchingLoader: async () => matching,
+    });
+    assert.equal(enrichment.ledgerDisposition, LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING);
+    const oldEntry = (await pool.query("SELECT * FROM ledger_entries WHERE scope_id=$1 AND derivation_rule='LEDGER_STANDALONE_PURCHASE_V1'", [fixture.scopeId])).rows[0];
+    const oldPostings = (await pool.query('SELECT * FROM ledger_postings WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows;
+    const oldLinks = (await pool.query('SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows;
+    const result = await persistMatchedPurchase(pool, options);
+    assert.equal(result.eventId, fixture.eventId);
+    assert.equal((await pool.query('SELECT currency FROM receipts WHERE id=$1', [fixture.receiptId])).rows[0].currency, null);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
+    const supersession = (await pool.query('SELECT * FROM ledger_entry_supersessions WHERE scope_id=$1', [fixture.scopeId])).rows;
+    assert.equal(supersession.length, 1);
+    assert.equal(Number(supersession[0].superseded_ledger_entry_id), Number(oldEntry.id));
+    assert.equal(Number(supersession[0].replacement_ledger_entry_id), Number(result.ledgerEntryId));
+    assert.deepEqual((await pool.query('SELECT * FROM ledger_entries WHERE id=$1', [oldEntry.id])).rows, [oldEntry]);
+    assert.deepEqual((await pool.query('SELECT * FROM ledger_postings WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows, oldPostings);
+    assert.deepEqual((await pool.query('SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows, oldLinks);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_entries e
+      WHERE e.scope_id=$1 AND e.source_event_id=$2 AND e.origin='SYSTEM_DERIVED'
+        AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId, fixture.eventId])).rows[0].count, 1);
+    const newPostings = (await pool.query(`SELECT p.*, a.account_code FROM ledger_postings p
+      JOIN ledger_accounts a ON a.id=p.account_id WHERE p.ledger_entry_id=$1 ORDER BY p.id`, [result.ledgerEntryId])).rows;
+    assert.deepEqual(newPostings.map((row) => ({ accountCode: row.account_code, currency: row.currency, debit: String(row.debit), credit: String(row.credit), sourceReceiptId: Number(row.source_receipt_id) })).sort((a, b) => a.accountCode.localeCompare(b.accountCode)), [
+      { accountCode: 'FINANCIAL_ACCOUNT:' + fixture.accountId, currency: 'RUB', debit: '0.00', credit: '12.34', sourceReceiptId: fixture.receiptId },
+      { accountCode: 'UNCLASSIFIED_ACQUISITION', currency: 'RUB', debit: '12.34', credit: '0.00', sourceReceiptId: fixture.receiptId },
+    ].sort((a, b) => a.accountCode.localeCompare(b.accountCode)));
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM certification_facts WHERE ledger_entry_id=$1", [oldEntry.id])).rows[0].count, 0);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM certification_facts WHERE ledger_entry_id=$1 AND metric_code='FISCAL_NEW_MONEY'", [result.ledgerEntryId])).rows[0].count, 0);
+    const replay = await persistMatchedPurchase(pool, options);
+    assert.equal(replay.matchId, result.matchId);
+    assert.equal(replay.eventId, result.eventId);
+    assert.equal(replay.ledgerEntryId, result.ledgerEntryId);
+    assert.equal(replay.enrichmentKey, result.enrichmentKey);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE scope_id=$1 AND derivation_rule='LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1'", [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_entry_supersessions WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_postings p JOIN ledger_entries e ON e.id=p.ledger_entry_id WHERE e.scope_id=$1 AND e.derivation_rule=\'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1\'', [fixture.scopeId])).rows[0].count, 2);
+  } finally { await pool.end(); }
+});
+
+integration('writer fails closed when FNS currency proof disappears before locked revalidation', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'derived-rub-proof-race', { receiptCurrency: null });
+    const options = await writerOptions(fixture);
+    const before = await snapshotScope(pool, fixture.scopeId);
+    let calls = 0;
+    await assert.rejects(() => persistMatchedPurchaseForTest(pool, {
+      ...options,
+      matchingLoader: async (client, loaderOptions) => {
+        const result = await loadBankReceiptMatching(client, loaderOptions);
+        calls += 1;
+        if (calls === 1) await pool.query('DELETE FROM receipt_source_observations WHERE receipt_id=$1', [fixture.receiptId]);
+        return result;
+      },
+    }), (error) => error.code === 'AUTHORITATIVE_MATCH_CHANGED' || error.code === 'AUTHORITATIVE_INPUT_CHANGED');
+    assert.equal(await snapshotScope(pool, fixture.scopeId), before);
+  } finally { await pool.end(); }
+});
+
+integration('public writer rejects unproven and non-RUB receipt currency without mutation', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const unproven = await createFixture(pool, 'currency-unproven', { receiptCurrency: null });
+    await pool.query('DELETE FROM receipt_source_observations WHERE receipt_id=$1', [unproven.receiptId]);
+    const unprovenBefore = await snapshotScope(pool, unproven.scopeId);
+    const unprovenOptions = await writerOptions(unproven);
+    await assert.rejects(() => persistMatchedPurchase(pool, unprovenOptions), (error) => error.code === 'MATCH_NOT_FOUND');
+    assert.equal(await snapshotScope(pool, unproven.scopeId), unprovenBefore);
+
+    const nonRub = await createFixture(pool, 'currency-non-rub', { receiptCurrency: 'USD' });
+    const nonRubBefore = await snapshotScope(pool, nonRub.scopeId);
+    const nonRubOptions = await writerOptions(nonRub);
+    await assert.rejects(() => persistMatchedPurchase(pool, nonRubOptions), (error) => error.code === 'MATCH_NOT_FOUND');
+    assert.equal(await snapshotScope(pool, nonRub.scopeId), nonRubBefore);
   } finally { await pool.end(); }
 });
 
