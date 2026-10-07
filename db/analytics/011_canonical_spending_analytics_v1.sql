@@ -225,7 +225,7 @@ WITH purchase_stats AS (
 ), explicit_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, a.person_id, p.currency,
-         a.amount AS person_gross, 0::NUMERIC(18,2), a.allocation_status
+         a.amount AS person_gross, 0::NUMERIC(18,2) AS person_returns, a.allocation_status
   FROM canonical_spending_purchases_v1 p
   JOIN spending_person_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
