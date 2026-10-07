@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-07
-- Current implementation baseline: `21ba5218ba5b1c33ba624fdd7f7a5da37f3cc6d5` (PR #116 squash-merged; FNS receipt currency contract v1 is merged)
+- Current implementation baseline: `9ed53a33cc6db47b18a204c8fe47355aed182871` (PR #117 squash-merged; FNS receipt currency closeout is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, and FNS receipt currency contract v1 stages are merged. Migration 018 is now applied in production as a schema-only rollout; the new persistence tables are empty and historical business/accounting rows are unchanged. Certification, reconciliation, and analytics consume ACTIVE ledger state; superseded history remains immutable and stale certification source states are not reused as current coverage. The next narrow stage is a production read-only FNS currency eligibility recheck; no writer execution, orchestration preview, replay, backfill, deployment, or further production mutation is authorized by that stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, and FNS receipt currency contract v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; the new persistence tables are empty and historical business/accounting rows are unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. The next blocker is bank account identity coverage: 32 authoritative PURCHASE/DEBIT rows have no concrete financial account, so matching-window work is not yet justified. No identity provisioning, writer execution, orchestration preview, replay, backfill, deployment, or further production mutation is authorized by this stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `production read-only FNS currency eligibility recheck`. Use an isolated exact-master checkout and a repeatable-read, read-only production transaction to verify source-derived RUB eligibility and unchanged persistence state. Do not invoke orchestration or the writer, and do not deploy, replay, backfill, or mutate production.
+- Next action: `production bank account identity provisioning review`. Use an isolated exact-master checkout and a repeatable-read, read-only production transaction to review identity evidence and safe provisioning options. Do not create accounts, relations, references, bindings, transaction resolutions, orchestration previews, or writer executions; do not deploy, replay, backfill, or mutate production.
 
 ## Bank business-event candidate projection v1
 
@@ -329,6 +329,23 @@ No migration, normalization rebuild, replay, backfill, deployment, bank
 identity change, or production mutation occurred. The next operational step
 is a production read-only FNS currency eligibility recheck; it must not invoke
 orchestration or `persistMatchedPurchase`.
+
+## Production FNS currency eligibility recheck closeout
+
+The exact-master read-only recheck completed in a repeatable-read transaction.
+The Person 1 scope contained 2763 receipts; the previously identified 1845
+receipts that failed only the currency predicate now derive `RUB` under
+`fns-receipt-currency-v1`, so `RECEIPTS_STILL_FAILING_CURRENCY=0` and
+`ELIGIBLE_RECEIPTS_AFTER_CURRENCY_CONTRACT=1845`. Canonical
+`receipts.currency` values and all persistence-table state were unchanged; the
+transaction was rolled back and no production data was mutated.
+
+The same review found 32 authoritative `PURCHASE / DEBIT` bank rows without a
+concrete `financialAccountId`. Existing account identity evidence is therefore
+not sufficient to begin matching-window work. The next stage is the read-only
+`production bank account identity provisioning review`; it must not infer
+ownership from provider/source identity or execute any account, reference,
+binding, or transaction-resolution mutation.
 
 ## T-Bank ordinary purchase validation baseline
 
