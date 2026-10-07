@@ -19,13 +19,13 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-07
 - Current implementation baseline: `90664d76e9087ca68bfe63eb761f62683d86e2dd` (PR #118 squash-merged; FNS eligibility closeout is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, and production receipt-window policy v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The next stage is a controlled production read-only matched-purchase orchestration preview; no writer execution, replay, backfill, deployment, or further identity mutation is authorized by that stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, and the controlled read-only production orchestration preview are complete. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The next stage is controlled first matched-purchase persistence canary design; no writer execution, replay, backfill, deployment, or further identity mutation is authorized by that stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `controlled production read-only matched-purchase orchestration preview`. Use `receiptMaxTimeDeltaMs=300000` and revalidate the conservative `internalTransferMaxTimeDeltaMs=5000` parameter against 3600000 ms first; do not invoke the writer, deploy, replay, backfill, or mutate production.
+- Next action: `controlled first matched-purchase persistence canary design`. The read-only preview is complete, but no writer execution, automatic trigger, deployment, replay, backfill, accounting catch-up, or production mutation is authorized yet.
 
 ## Matched-Purchase Production Window Policy v1
 
@@ -47,6 +47,34 @@ The internal-transfer window is not frozen as policy because production has
 no proven internal-transfer pair. The 5000 ms value may be used only as a
 conservative parameter for the current read-only preview after revalidating
 purchase and edge-set invariance against 3600000 ms.
+
+## Controlled Production Read-Only Matched-Purchase Preview
+
+Using exact master `0fbd96cdb2676b49e29d76d9b897c63b0a437306`, schema 018, and
+Person 1 scope `default/id1`, the authoritative preview was run twice in
+fresh `REPEATABLE READ READ ONLY` transactions. The bounded population was 32
+eligible PURCHASE/DEBIT bank rows. With `receiptMaxTimeDeltaMs=300000`, the
+internal-transfer invariance recheck produced the same 12 match identities
+at both 5000 ms and 3600000 ms; all 12 were isolated exact amount/currency
+pairs.
+
+Both previews were `READY` with 12 `PERSIST_REQUIRED` decisions, zero
+`NOOP_ALREADY_PERSISTED`, zero `BLOCKED`, zero ambiguity, zero
+`LEDGER_CONFLICT`, and zero review-required decisions. All 12 decisions were
+`REFINE_EXISTING_FISCAL_FUNDING`; no FUTURE_SINGLE or bank-funding reuse path
+was selected. The repeated preview produced identical decisions and stable
+match/enrichment/orchestration identities.
+
+Before/after persistence snapshots were identical in both transactions:
+`bank_receipt_matches=0`, `business_event_bank_evidence=0`,
+`ledger_entry_supersessions=0`, `ledger_source_links=2006`,
+`business_events=2063`, and `ledger_entries=2063`. The writer was not
+invoked. No orchestration result was persisted, and no deployment, replay,
+backfill, accounting catch-up, or production mutation occurred.
+
+The next stage is `controlled first matched-purchase persistence canary
+design`: define the reviewed operational canary and its safeguards before
+any writer execution is considered.
 
 ## Bank business-event candidate projection v1
 
