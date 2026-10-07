@@ -115,7 +115,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   assert.equal((await pool.query(`SELECT count(*)::int AS count FROM spending_category_allocations
     WHERE id IN ($1,$2)`, [allocationA.id, allocationB.id])).rows[0].count, 2);
 
-  const historyKey = 'h'.repeat(64);
+  const historyKey = '1'.repeat(64);
   const historyRun = (await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at)
     VALUES($1,$2,$3,'READY',NOW()) RETURNING id`, [scope.id, initial.model_version, historyKey])).rows[0];
   await pool.query(`INSERT INTO certification_facts(
