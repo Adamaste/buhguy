@@ -155,10 +155,14 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     const historyPersonRows = (await pool.query(`SELECT person_id,person_gross::text,allocation_status
       FROM canonical_spending_person_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, historyKey])).rows;
     assert.deepEqual(historyPersonRows, [{ person_id: personForHistory.id, person_gross: initial.amount, allocation_status: 'ALLOCATED' }]);
+    const orphanPersonA = (await pool.query(`INSERT INTO spending_person_allocations(
+        scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,amount,currency,allocation_status,provenance_key,semantic_key)
+      VALUES($1,$2,$3,'PURCHASE',$4,$5,'RUB','DISPUTED',$6,$7) RETURNING id`,
+    [scope.id, historyRun.id, historyKey, initial.business_event_id, initial.amount, 'e'.repeat(64), 'f'.repeat(64)])).rows[0];
     await expectConstraint(`INSERT INTO spending_person_allocations(
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key,supersedes_allocation_id)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6,$7,$8)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, personForHistory.id, 'e'.repeat(64), 'f'.repeat(64), historyPersonA.id], ['23503']);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, personForHistory.id, '0'.repeat(64), '1'.repeat(64), orphanPersonA.id], ['23503']);
   }
 
   const returnRelationship = async (key, supersedes = null) => (await pool.query(`INSERT INTO spending_return_relationships(
