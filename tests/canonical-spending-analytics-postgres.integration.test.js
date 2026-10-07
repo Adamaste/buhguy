@@ -154,7 +154,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   const validDecision = (await pool.query(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key)
     VALUES($1,(SELECT id FROM spending_taxonomies LIMIT 1),'PURCHASE',$2,$3,'CLASSIFIED','MANUAL','v1',$4,$5) RETURNING id`,
-  [scope.id, initial.business_event_id, categoryId, 'w'.repeat(64), 'x'.repeat(64)])).rows[0];
+  [scope.id, initial.business_event_id, categoryId, 'd'.repeat(64), 'e'.repeat(64)])).rows[0];
   const decisionClient = await pool.connect();
   try {
     await decisionClient.query('BEGIN');
