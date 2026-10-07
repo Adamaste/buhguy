@@ -34,14 +34,18 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     WHERE f.scope_id=$1 AND f.metric_code='CONFIRMED_ACQUISITION_VALUE' AND f.status='CERTIFIED'
     ORDER BY f.id LIMIT 1`, [scope.id])).rows[0];
   assert.ok(initial);
-  const receipt = (await pool.query(`SELECT rso.receipt_id
-    FROM receipt_source_observations rso
-    ORDER BY rso.id LIMIT 1`)).rows[0];
+  const receipt = (await pool.query(`SELECT receipt_id
+    FROM business_event_evidence
+    WHERE event_id=$1 AND receipt_id IS NOT NULL
+    ORDER BY id LIMIT 1`, [initial.business_event_id])).rows[0];
   assert.ok(receipt);
 
   const secondPerson = (await pool.query(`INSERT INTO persons(scope_id,person_key,display_name)
     VALUES($1,'analytics-fanout-person','Analytics Fanout Person') RETURNING id`, [scope.id])).rows[0];
   const source = (await pool.query("SELECT id FROM fns_sources WHERE scope_id=$1 ORDER BY id LIMIT 1", [scope.id])).rows[0];
+  await pool.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
+    VALUES($1,$2,'canonical-spending-fanout-source')
+    ON CONFLICT DO NOTHING`, [receipt.receipt_id, source.id]);
   await pool.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2)', [source.id, secondPerson.id]);
   const provenance = await pool.query(`SELECT count(*)::int AS rows, count(DISTINCT p.person_id)::int AS persons
     FROM receipt_source_observations o JOIN fns_source_person p ON p.fns_source_id=o.fns_source_id
