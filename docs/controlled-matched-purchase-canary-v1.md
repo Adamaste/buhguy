@@ -104,3 +104,19 @@ replay/backfill unrelated history.
 
 The canary is one operation, one writer transaction, one selected match. No
 additional canary or remaining eleven matches are authorized by this document.
+
+## Postmortem status
+
+The first writer call succeeded through core persistence and the authorized
+replay returned the same match, event, bank-evidence, ledger-entry, and
+enrichment identities. The replay did not create a second matched-purchase
+semantic row or ledger funding entry. However, it reused the same
+certification run while `refreshCertificationForEvents` rebuilt its full
+certification fact/result snapshot, so the byte-level persistence snapshot was
+not identical. The canary is therefore `CORE_PERSISTENCE_PASS,
+REPLAY_CERTIFICATION_IDEMPOTENCY_BLOCKED`, not a fully green canary.
+
+Production has the reviewed `NULLS NOT DISTINCT` reconciliation-run index;
+this is not migration-007 content drift. Do not invoke the writer again until
+the certification-refresh/idempotency behavior is separately reviewed. The
+remaining eleven matches are not authorized.
