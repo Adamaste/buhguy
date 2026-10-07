@@ -414,7 +414,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7)`,
-  [scope.id, foreignRun.id, 'f'.repeat(64), initial.business_event_id, taxonomyId, categoryId, 'd'.repeat(64)], ['23503']);
+  [scope.id, foreignRun.id, 'f'.repeat(64), initial.business_event_id, taxonomyId, categoryId, 'e2'.repeat(32)], ['23503']);
 
   const foreignTaxonomy = (await pool.query(`INSERT INTO spending_taxonomies(taxonomy_version,status)
     VALUES('analytics-foreign-taxonomy','ACTIVE') RETURNING id`)).rows[0];
