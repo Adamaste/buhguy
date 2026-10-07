@@ -45,6 +45,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS spending_classification_supersedes_unique
   ON spending_classification_decisions(supersedes_decision_id)
   WHERE supersedes_decision_id IS NOT NULL;
 
+ALTER TABLE spending_classification_decisions
+  ADD CONSTRAINT spending_classification_chain_identity_unique
+  UNIQUE (scope_id, taxonomy_id, subject_type, subject_id, id);
+
+ALTER TABLE spending_classification_decisions
+  ADD CONSTRAINT spending_classification_chain_scope_fk
+  FOREIGN KEY (scope_id, taxonomy_id, subject_type, subject_id, supersedes_decision_id)
+  REFERENCES spending_classification_decisions(scope_id, taxonomy_id, subject_type, subject_id, id)
+  ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS spending_classification_root_unique
+  ON spending_classification_decisions(scope_id, taxonomy_id, subject_type, subject_id)
+  WHERE supersedes_decision_id IS NULL;
+
 CREATE TABLE IF NOT EXISTS spending_return_relationships (
   id BIGSERIAL PRIMARY KEY,
   scope_id BIGINT NOT NULL REFERENCES accounting_scopes(id) ON DELETE RESTRICT,
@@ -65,13 +79,23 @@ CREATE TABLE IF NOT EXISTS spending_return_relationships (
 CREATE INDEX IF NOT EXISTS spending_return_relationship_scope_idx
   ON spending_return_relationships(scope_id, return_event_id, relationship_status);
 
-CREATE UNIQUE INDEX IF NOT EXISTS spending_return_relationship_active_unique
-  ON spending_return_relationships(scope_id, return_event_id)
-  WHERE relationship_status <> 'SUPERSEDED';
-
 CREATE UNIQUE INDEX IF NOT EXISTS spending_return_relationship_supersedes_unique
   ON spending_return_relationships(supersedes_relationship_id)
   WHERE supersedes_relationship_id IS NOT NULL;
+
+ALTER TABLE spending_return_relationships
+  ADD CONSTRAINT spending_return_chain_identity_unique
+  UNIQUE (scope_id, return_event_id, id);
+
+ALTER TABLE spending_return_relationships
+  ADD CONSTRAINT spending_return_chain_scope_fk
+  FOREIGN KEY (scope_id, return_event_id, supersedes_relationship_id)
+  REFERENCES spending_return_relationships(scope_id, return_event_id, id)
+  ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS spending_return_relationship_root_unique
+  ON spending_return_relationships(scope_id, return_event_id)
+  WHERE supersedes_relationship_id IS NULL;
 
 CREATE TABLE IF NOT EXISTS spending_category_allocations (
   id BIGSERIAL PRIMARY KEY,
@@ -81,6 +105,7 @@ CREATE TABLE IF NOT EXISTS spending_category_allocations (
   allocation_kind TEXT NOT NULL CHECK (allocation_kind IN ('PURCHASE', 'RETURN')),
   subject_event_id BIGINT NOT NULL,
   receipt_item_id BIGINT,
+  taxonomy_id BIGINT NOT NULL,
   category_id BIGINT NOT NULL,
   amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
   currency CHAR(3) NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
@@ -91,7 +116,7 @@ CREATE TABLE IF NOT EXISTS spending_category_allocations (
   CHECK (supersedes_allocation_id IS NULL OR supersedes_allocation_id <> id),
   FOREIGN KEY (scope_id, subject_event_id) REFERENCES business_events(scope_id, id) ON DELETE RESTRICT,
   FOREIGN KEY (receipt_item_id) REFERENCES receipt_items(id) ON DELETE RESTRICT,
-  FOREIGN KEY (category_id) REFERENCES spending_categories(id) ON DELETE RESTRICT
+  FOREIGN KEY (taxonomy_id, category_id) REFERENCES spending_categories(taxonomy_id, id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS spending_category_allocations_snapshot_idx
@@ -100,6 +125,16 @@ CREATE INDEX IF NOT EXISTS spending_category_allocations_snapshot_idx
 CREATE UNIQUE INDEX IF NOT EXISTS spending_category_allocations_supersedes_unique
   ON spending_category_allocations(supersedes_allocation_id)
   WHERE supersedes_allocation_id IS NOT NULL;
+
+ALTER TABLE spending_category_allocations
+  ADD CONSTRAINT spending_category_chain_identity_unique
+  UNIQUE (scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, id);
+
+ALTER TABLE spending_category_allocations
+  ADD CONSTRAINT spending_category_chain_scope_fk
+  FOREIGN KEY (scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, supersedes_allocation_id)
+  REFERENCES spending_category_allocations(scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, id)
+  ON DELETE RESTRICT;
 
 ALTER TABLE persons ADD CONSTRAINT persons_scope_id_id_unique UNIQUE (scope_id, id);
 
@@ -130,6 +165,16 @@ CREATE INDEX IF NOT EXISTS spending_person_allocations_snapshot_idx
 CREATE UNIQUE INDEX IF NOT EXISTS spending_person_allocations_supersedes_unique
   ON spending_person_allocations(supersedes_allocation_id)
   WHERE supersedes_allocation_id IS NOT NULL;
+
+ALTER TABLE spending_person_allocations
+  ADD CONSTRAINT spending_person_chain_identity_unique
+  UNIQUE (scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, id);
+
+ALTER TABLE spending_person_allocations
+  ADD CONSTRAINT spending_person_chain_scope_fk
+  FOREIGN KEY (scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, supersedes_allocation_id)
+  REFERENCES spending_person_allocations(scope_id, certification_run_id, source_state_key, allocation_kind, subject_event_id, id)
+  ON DELETE RESTRICT;
 
 ALTER TABLE reconciliation_runs
   ADD CONSTRAINT reconciliation_runs_scope_id_id_state_unique

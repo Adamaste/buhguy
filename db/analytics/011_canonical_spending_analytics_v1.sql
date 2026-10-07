@@ -89,26 +89,38 @@ LEFT JOIN LATERAL (
 ) item_totals ON TRUE;
 
 CREATE OR REPLACE VIEW canonical_spending_category_allocations_v1 AS
-WITH purchase_stats AS (
+WITH active_taxonomy AS (
+  SELECT id AS taxonomy_id, taxonomy_version FROM spending_taxonomies
+  WHERE status='ACTIVE' ORDER BY id LIMIT 1
+), active_category_allocations AS (
+  SELECT a.* FROM spending_category_allocations a
+  WHERE NOT EXISTS (
+    SELECT 1 FROM spending_category_allocations successor
+    WHERE successor.scope_id=a.scope_id
+      AND successor.certification_run_id=a.certification_run_id
+      AND successor.source_state_key=a.source_state_key
+      AND successor.allocation_kind=a.allocation_kind
+      AND successor.subject_event_id=a.subject_event_id
+      AND successor.supersedes_allocation_id=a.id
+  )
+), purchase_stats AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency, p.amount,
-         COALESCE(SUM(a.amount) FILTER (
-           WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                             WHERE s.scope_id=a.scope_id
-                               AND s.supersedes_allocation_id=a.id)
-         ), 0)::NUMERIC(18,2) AS allocated,
+         MIN(a.taxonomy_id) AS allocation_taxonomy_id,
+         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
-           OR a.source_state_key <> p.source_state_key), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                             WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)), 0) > p.amount AS conflict,
+           OR a.source_state_key <> p.source_state_key
+           OR (SELECT COUNT(DISTINCT x.taxonomy_id) FROM active_category_allocations x
+               WHERE x.scope_id=p.scope_id AND x.certification_run_id=p.certification_run_id
+                 AND x.source_state_key=p.source_state_key AND x.allocation_kind='PURCHASE'
+                 AND x.subject_event_id=p.purchase_id) > 1), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
-  LEFT JOIN spending_category_allocations a
+  LEFT JOIN active_category_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key
    AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
@@ -116,23 +128,21 @@ WITH purchase_stats AS (
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id AS subject_event_id, r.currency, r.return_amount,
-         COALESCE(SUM(a.amount) FILTER (
-           WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                             WHERE s.scope_id=a.scope_id
-                               AND s.supersedes_allocation_id=a.id)
-         ), 0)::NUMERIC(18,2) AS allocated,
+         MIN(a.taxonomy_id) AS allocation_taxonomy_id,
+         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.currency <> r.currency
            OR a.scope_id <> r.scope_id
            OR a.certification_run_id <> r.certification_run_id
-           OR a.source_state_key <> r.source_state_key), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                             WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)), 0) > r.return_amount AS conflict,
+           OR a.source_state_key <> r.source_state_key
+           OR (SELECT COUNT(DISTINCT x.taxonomy_id) FROM active_category_allocations x
+               WHERE x.scope_id=r.scope_id AND x.certification_run_id=r.certification_run_id
+                 AND x.source_state_key=r.source_state_key AND x.allocation_kind='RETURN'
+                 AND x.subject_event_id=r.return_id) > 1), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > r.return_amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
-  LEFT JOIN spending_category_allocations a
+  LEFT JOIN active_category_allocations a
     ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
    AND a.source_state_key=r.source_state_key
    AND a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
@@ -140,53 +150,57 @@ WITH purchase_stats AS (
 ), explicit_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency,
-         c.category_code, a.amount AS category_gross,
+         a.taxonomy_id, t.taxonomy_version, c.category_code, a.amount AS category_gross,
          0::NUMERIC(18,2) AS category_returns, a.allocation_status
   FROM canonical_spending_purchases_v1 p
-  JOIN spending_category_allocations a
+  JOIN active_category_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key AND a.allocation_kind='PURCHASE'
    AND a.subject_event_id=p.purchase_id AND a.allocation_status='ALLOCATED'
-   AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                   WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)
   JOIN purchase_stats ps
     ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
    AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id
    AND NOT ps.conflict
-  JOIN spending_categories c ON c.id=a.category_id
+  JOIN spending_categories c ON c.taxonomy_id=a.taxonomy_id AND c.id=a.category_id
+  JOIN spending_taxonomies t ON t.id=a.taxonomy_id
   UNION ALL
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
-         r.return_id, r.currency, c.category_code,
+         r.return_id, r.currency, a.taxonomy_id, t.taxonomy_version, c.category_code,
          0::NUMERIC(18,2), a.amount, a.allocation_status
   FROM canonical_spending_returns_v1 r
-  JOIN spending_category_allocations a
+  JOIN active_category_allocations a
     ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
    AND a.source_state_key=r.source_state_key AND a.allocation_kind='RETURN'
    AND a.subject_event_id=r.return_id AND a.allocation_status='ALLOCATED'
-   AND NOT EXISTS (SELECT 1 FROM spending_category_allocations s
-                   WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)
   JOIN return_stats rs
     ON rs.scope_id=r.scope_id AND rs.certification_run_id=r.certification_run_id
    AND rs.source_state_key=r.source_state_key AND rs.subject_event_id=r.return_id
    AND NOT rs.conflict
-  JOIN spending_categories c ON c.id=a.category_id
+  JOIN spending_categories c ON c.taxonomy_id=a.taxonomy_id AND c.id=a.category_id
+  JOIN spending_taxonomies t ON t.id=a.taxonomy_id
 ), fallback_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
-         p.purchase_id, p.currency, 'UNCLASSIFIED',
+         p.purchase_id, p.currency, COALESCE(s.allocation_taxonomy_id, at.taxonomy_id),
+         st.taxonomy_version, 'UNCLASSIFIED',
          CASE WHEN s.conflict THEN p.amount ELSE p.amount-s.allocated END,
          0::NUMERIC(18,2), CASE WHEN s.conflict THEN 'REVIEW_REQUIRED' ELSE 'UNCLASSIFIED' END
   FROM purchase_stats s JOIN canonical_spending_purchases_v1 p
     ON p.scope_id=s.scope_id AND p.certification_run_id=s.certification_run_id
    AND p.source_state_key=s.source_state_key AND p.purchase_id=s.subject_event_id
+  CROSS JOIN active_taxonomy at
+  JOIN spending_taxonomies st ON st.id=COALESCE(s.allocation_taxonomy_id, at.taxonomy_id)
   WHERE s.conflict OR NOT s.has_rows OR s.allocated < s.amount
   UNION ALL
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
-         r.return_id, r.currency, 'UNRESOLVED_RETURN',
+         r.return_id, r.currency, COALESCE(s.allocation_taxonomy_id, at.taxonomy_id),
+         st.taxonomy_version, 'UNRESOLVED_RETURN',
          0::NUMERIC(18,2), CASE WHEN s.conflict THEN s.return_amount ELSE s.return_amount-s.allocated END,
          CASE WHEN s.conflict THEN 'REVIEW_REQUIRED' ELSE 'REVIEW_REQUIRED' END
   FROM return_stats s JOIN canonical_spending_returns_v1 r
     ON r.scope_id=s.scope_id AND r.certification_run_id=s.certification_run_id
    AND r.source_state_key=s.source_state_key AND r.return_id=s.subject_event_id
+  CROSS JOIN active_taxonomy at
+  JOIN spending_taxonomies st ON st.id=COALESCE(s.allocation_taxonomy_id, at.taxonomy_id)
   WHERE s.conflict OR NOT s.has_rows OR s.allocated < s.return_amount
 )
 SELECT * FROM explicit_rows
@@ -194,26 +208,30 @@ UNION ALL
 SELECT * FROM fallback_rows;
 
 CREATE OR REPLACE VIEW canonical_spending_person_allocations_v1 AS
-WITH purchase_stats AS (
+WITH active_person_allocations AS (
+  SELECT a.* FROM spending_person_allocations a
+  WHERE NOT EXISTS (
+    SELECT 1 FROM spending_person_allocations successor
+    WHERE successor.scope_id=a.scope_id
+      AND successor.certification_run_id=a.certification_run_id
+      AND successor.source_state_key=a.source_state_key
+      AND successor.allocation_kind=a.allocation_kind
+      AND successor.subject_event_id=a.subject_event_id
+      AND successor.supersedes_allocation_id=a.id
+  )
+), purchase_stats AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency, p.amount,
-         COALESCE(SUM(a.amount) FILTER (
-           WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                             WHERE s.scope_id=a.scope_id
-                               AND s.supersedes_allocation_id=a.id)
-         ), 0)::NUMERIC(18,2) AS allocated,
+         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
            OR a.source_state_key <> p.source_state_key), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                             WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)), 0) > p.amount AS conflict,
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
-  LEFT JOIN spending_person_allocations a
+  LEFT JOIN active_person_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key
    AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
@@ -221,23 +239,16 @@ WITH purchase_stats AS (
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id AS subject_event_id, r.currency, r.return_amount,
-         COALESCE(SUM(a.amount) FILTER (
-           WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                             WHERE s.scope_id=a.scope_id
-                               AND s.supersedes_allocation_id=a.id)
-         ), 0)::NUMERIC(18,2) AS allocated,
+         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.currency <> r.currency
            OR a.scope_id <> r.scope_id
            OR a.certification_run_id <> r.certification_run_id
            OR a.source_state_key <> r.source_state_key), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'
-             AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                             WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)), 0) > r.return_amount AS conflict,
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > r.return_amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
-  LEFT JOIN spending_person_allocations a
+  LEFT JOIN active_person_allocations a
     ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
    AND a.source_state_key=r.source_state_key
    AND a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
@@ -247,12 +258,10 @@ WITH purchase_stats AS (
          p.purchase_id AS subject_event_id, a.person_id, p.currency,
          a.amount AS person_gross, 0::NUMERIC(18,2) AS person_returns, a.allocation_status
   FROM canonical_spending_purchases_v1 p
-  JOIN spending_person_allocations a
+  JOIN active_person_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key AND a.allocation_kind='PURCHASE'
    AND a.subject_event_id=p.purchase_id AND a.allocation_status='ALLOCATED'
-   AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                   WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)
   JOIN purchase_stats ps
     ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
    AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id
@@ -262,12 +271,10 @@ WITH purchase_stats AS (
          r.return_id, a.person_id, r.currency,
          0::NUMERIC(18,2), a.amount, a.allocation_status
   FROM canonical_spending_returns_v1 r
-  JOIN spending_person_allocations a
+  JOIN active_person_allocations a
     ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
    AND a.source_state_key=r.source_state_key AND a.allocation_kind='RETURN'
    AND a.subject_event_id=r.return_id AND a.allocation_status='ALLOCATED'
-   AND NOT EXISTS (SELECT 1 FROM spending_person_allocations s
-                   WHERE s.scope_id=a.scope_id AND s.supersedes_allocation_id=a.id)
   JOIN return_stats rs
     ON rs.scope_id=r.scope_id AND rs.certification_run_id=r.certification_run_id
    AND rs.source_state_key=r.source_state_key AND rs.subject_event_id=r.return_id
@@ -313,12 +320,12 @@ FROM monetary
 GROUP BY scope_id, certification_run_id, certification_model_version, source_state_key, currency;
 
 CREATE OR REPLACE VIEW canonical_spending_category_summary_v1 AS
-SELECT scope_id, certification_run_id, source_state_key, currency, category_code,
+SELECT scope_id, certification_run_id, source_state_key, currency, taxonomy_id, taxonomy_version, category_code,
        SUM(category_gross)::NUMERIC(18,2) AS gross_spend,
        SUM(category_returns)::NUMERIC(18,2) AS confirmed_returns,
        (SUM(category_gross)-SUM(category_returns))::NUMERIC(18,2) AS net_spend
 FROM canonical_spending_category_allocations_v1
-GROUP BY scope_id, certification_run_id, source_state_key, currency, category_code;
+GROUP BY scope_id, certification_run_id, source_state_key, currency, taxonomy_id, taxonomy_version, category_code;
 
 CREATE OR REPLACE VIEW canonical_spending_person_summary_v1 AS
 SELECT scope_id, certification_run_id, source_state_key, currency, person_id,

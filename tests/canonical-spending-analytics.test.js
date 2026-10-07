@@ -10,6 +10,13 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(migration, /decision_source TEXT NOT NULL CHECK/);
   assert.match(migration, /source_state_key CHAR\(64\)/);
   assert.match(migration, /supersedes_allocation_id\)\s*WHERE supersedes_allocation_id IS NOT NULL/);
+  assert.match(migration, /spending_return_relationship_root_unique/);
+  assert.match(migration, /spending_classification_root_unique/);
+  assert.match(migration, /spending_category_chain_scope_fk/);
+  assert.match(migration, /spending_person_chain_scope_fk/);
+  assert.match(migration, /taxonomy_id BIGINT NOT NULL/);
+  assert.match(migration, /FOREIGN KEY \(taxonomy_id, category_id\)/);
+  assert.doesNotMatch(migration, /spending_return_relationship_active_unique/);
   assert.match(migration, /FOREIGN KEY \(scope_id, person_id\) REFERENCES persons\(scope_id, id\)/);
   assert.match(migration, /FOREIGN KEY \(taxonomy_id, parent_category_id\)/);
   assert.match(migration, /FOREIGN KEY \(scope_id, certification_run_id, source_state_key\)/);
@@ -24,6 +31,8 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(analytics, /r\.status='READY'/);
   assert.match(analytics, /f\.source_state_key=r\.source_state_key/);
   assert.match(analytics, /NOT EXISTS \(\s*SELECT 1\s*FROM spending_.*successor/s);
+  assert.match(analytics, /active_category_allocations/);
+  assert.match(analytics, /active_person_allocations/);
   assert.match(analytics, /proof\.id=p\.graph_evidence_id/);
   assert.match(analytics, /REVIEW_REQUIRED/);
   assert.match(analytics, /Never SUM chatgpt_accounting\.user_receipts as spending/i);
