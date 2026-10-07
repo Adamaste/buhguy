@@ -104,11 +104,15 @@ async function loadSnapshotOnClient(client, { scopeKey = 'default' } = {}) {
     reason_code: result.reasonCode,
     semantic_key: result.semanticKey,
   }));
-  if (facts.some((fact) => Number(fact.scope_id) !== Number(scope.id) || fact.source_state_key !== sourceStateKey || Number(fact.run_id) !== Number(run.id))
-    || results.some((result) => Number(result.run_id) !== Number(run.id))
-    || JSON.stringify(canonicalRows(facts, FACT_FIELDS)) !== JSON.stringify(canonicalRows(expectedFacts, FACT_FIELDS))
-    || JSON.stringify(canonicalRows(results, RESULT_FIELDS)) !== JSON.stringify(canonicalRows(expectedResults, RESULT_FIELDS))) {
-    return failure(CURRENT_SPENDING_SNAPSHOT_FAILURES.CORRUPT_SNAPSHOT, { scopeKey, sourceStateKey, runId: Number(run.id) });
+  const factsHaveForeignIdentity = facts.some((fact) => Number(fact.scope_id) !== Number(scope.id) || fact.source_state_key !== sourceStateKey || Number(fact.run_id) !== Number(run.id));
+  const resultsHaveForeignIdentity = results.some((result) => Number(result.run_id) !== Number(run.id));
+  const factsMatch = JSON.stringify(canonicalRows(facts, FACT_FIELDS)) === JSON.stringify(canonicalRows(expectedFacts, FACT_FIELDS));
+  const resultsMatch = JSON.stringify(canonicalRows(results, RESULT_FIELDS)) === JSON.stringify(canonicalRows(expectedResults, RESULT_FIELDS));
+  if (factsHaveForeignIdentity || resultsHaveForeignIdentity || !factsMatch || !resultsMatch) {
+    return failure(CURRENT_SPENDING_SNAPSHOT_FAILURES.CORRUPT_SNAPSHOT, {
+      scopeKey, sourceStateKey, runId: Number(run.id),
+      integrity: { factCount: facts.length, expectedFactCount: expectedFacts.length, resultCount: results.length, expectedResultCount: expectedResults.length, factsHaveForeignIdentity, resultsHaveForeignIdentity, factsMatch, resultsMatch },
+    });
   }
 
   const currencies = (await client.query(`SELECT DISTINCT currency FROM certification_facts
