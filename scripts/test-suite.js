@@ -38,6 +38,7 @@ const unitFiles = [
   'tests/bank-receipt-matching.test.js',
   'tests/matched-purchase-enrichment-projection.test.js',
   'tests/matched-purchase-orchestration.test.js',
+  'tests/fns-receipt-currency.test.js',
   'tests/yandex-bank-normalization.test.js',
   'tests/alfa-bank-normalization.test.js',
   'tests/alfa-lifecycle-canonicalization.test.js',
@@ -67,6 +68,7 @@ const postgresFiles = [
   'tests/matched-purchase-persistence-schema-postgres.integration.test.js',
   'tests/matched-purchase-persistence-postgres.integration.test.js',
   'tests/matched-purchase-orchestration-postgres.integration.test.js',
+  'tests/fns-receipt-currency-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(

@@ -23,7 +23,7 @@ test('return target can converge through existing purchase evidence', () => asse
 test('identity and operation guards fail closed', () => {
   assert.equal(standaloneEligibility(row({ operationType: 2 })).category, 'OTHER_UNSUPPORTED');
   assert.equal(standaloneEligibility(row({ currency: 'USD' })).category, 'OTHER_UNSUPPORTED');
-  assert.equal(standaloneEligibility(row({ currency: null })).category, 'ELIGIBLE_STANDALONE');
+  assert.equal(standaloneEligibility(row({ currency: null, fnsSourceProven: true })).category, 'ELIGIBLE_STANDALONE');
   assert.equal(STANDALONE_PURCHASE_RULE, 'STANDALONE_PURCHASE_V1');
   assert.equal(STANDALONE_PURCHASE_VERSION, 'standalone-purchase-v1');
 });
