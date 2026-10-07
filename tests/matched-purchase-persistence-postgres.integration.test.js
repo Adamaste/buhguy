@@ -71,6 +71,7 @@ async function snapshotScope(pool, scopeId) {
     supersessions: ['SELECT * FROM ledger_entry_supersessions WHERE scope_id=$1 ORDER BY id', [scopeId]],
     runs: ['SELECT * FROM reconciliation_runs WHERE scope_id=$1 ORDER BY id', [scopeId]],
     facts: ['SELECT f.* FROM certification_facts f WHERE f.scope_id=$1 ORDER BY f.id', [scopeId]],
+    results: ['SELECT r.* FROM reconciliation_results r JOIN reconciliation_runs rr ON rr.id=r.run_id WHERE rr.scope_id=$1 ORDER BY r.id', [scopeId]],
   };
   const result = {};
   for (const [name, [sql, params]] of Object.entries(queries)) result[name] = (await pool.query(sql, params)).rows;
@@ -187,6 +188,7 @@ integration('FNS-derived RUB refines a real standalone purchase through the publ
     const oldPostings = (await pool.query('SELECT * FROM ledger_postings WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows;
     const oldLinks = (await pool.query('SELECT * FROM ledger_source_links WHERE ledger_entry_id=$1 ORDER BY id', [oldEntry.id])).rows;
     const result = await persistMatchedPurchase(pool, options);
+    const firstSnapshot = await snapshotScope(pool, fixture.scopeId);
     assert.equal(result.eventId, fixture.eventId);
     assert.equal((await pool.query('SELECT currency FROM receipts WHERE id=$1', [fixture.receiptId])).rows[0].currency, null);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
@@ -214,6 +216,8 @@ integration('FNS-derived RUB refines a real standalone purchase through the publ
     assert.equal(replay.eventId, result.eventId);
     assert.equal(replay.ledgerEntryId, result.ledgerEntryId);
     assert.equal(replay.enrichmentKey, result.enrichmentKey);
+    assert.equal(replay.bankEvidenceId, result.bankEvidenceId);
+    assert.equal(await snapshotScope(pool, fixture.scopeId), firstSnapshot);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE scope_id=$1 AND derivation_rule='LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1'", [fixture.scopeId])).rows[0].count, 1);

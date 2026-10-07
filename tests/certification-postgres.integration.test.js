@@ -45,3 +45,50 @@ test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe',
     assert.ok(Number(proof.rows[0].count) >= first.facts.length);
   } finally { await pool.end(); }
 });
+
+test('same-source-state refresh is a byte-identical NOOP and corrupted snapshots fail closed', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const snapshot = async (runId) => ({
+    run: (await pool.query('SELECT * FROM reconciliation_runs WHERE id=$1', [runId])).rows,
+    facts: (await pool.query('SELECT * FROM certification_facts WHERE run_id=$1 ORDER BY id', [runId])).rows,
+    results: (await pool.query('SELECT * FROM reconciliation_results WHERE run_id=$1 ORDER BY id', [runId])).rows,
+  });
+  try {
+    const first = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
+    assert.ok(first.runId);
+    assert.ok(first.sourceStateKey);
+    const beforeRepeat = await snapshot(first.runId);
+    const repeated = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
+    assert.equal(repeated.runId, first.runId);
+    assert.equal(repeated.sourceStateKey, first.sourceStateKey);
+    assert.deepEqual(await snapshot(repeated.runId), beforeRepeat);
+
+    const scopeKey = `cert-refresh-state-${process.pid}-${Date.now()}`;
+    const scopeId = Number((await pool.query('INSERT INTO accounting_scopes(scope_key,label) VALUES($1,$2) RETURNING id', [scopeKey, scopeKey])).rows[0].id);
+    const oldRun = await snapshot(first.runId);
+    const receiptId = Number((await pool.query("INSERT INTO receipts(fns_id,source,total_sum,currency) VALUES($1,'cert-refresh-test',0,'RUB') RETURNING id", [`cert-refresh-receipt-${process.pid}-${Date.now()}`])).rows[0].id);
+    await pool.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [receiptId, JSON.stringify({ test: 'source-state-change' })]);
+    const changed = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
+    assert.notEqual(changed.runId, first.runId);
+    assert.notEqual(changed.sourceStateKey, first.sourceStateKey);
+    assert.deepEqual(await snapshot(first.runId), oldRun);
+    await pool.query('DELETE FROM receipt_raw WHERE receipt_id=$1', [receiptId]);
+    await pool.query('DELETE FROM receipts WHERE id=$1', [receiptId]);
+    await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [scopeId]);
+
+    const current = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
+    const fact = (await pool.query('SELECT * FROM certification_facts WHERE run_id=$1 ORDER BY id LIMIT 1', [current.runId])).rows[0];
+    assert.ok(fact, 'fixture must produce a certification fact');
+    await pool.query('DELETE FROM certification_facts WHERE id=$1', [fact.id]);
+    const missingSnapshot = await snapshot(current.runId);
+    await assert.rejects(() => refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] }), (error) => error.code === 'CERTIFICATION_CONFLICT');
+    assert.deepEqual(await snapshot(current.runId), missingSnapshot);
+
+    const replacement = (await pool.query('SELECT * FROM certification_facts WHERE run_id=$1 ORDER BY id LIMIT 1', [current.runId])).rows[0];
+    assert.ok(replacement, 'fixture must retain a fact for conflict regression');
+    await pool.query('UPDATE certification_facts SET amount=amount+1 WHERE id=$1', [replacement.id]);
+    const conflictingSnapshot = await snapshot(current.runId);
+    await assert.rejects(() => refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] }), (error) => error.code === 'CERTIFICATION_CONFLICT');
+    assert.deepEqual(await snapshot(current.runId), conflictingSnapshot);
+  } finally { await pool.end(); }
+});

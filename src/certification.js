@@ -70,8 +70,37 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
   return { scope, entries, postings, links };
 }
 
-async function ensureRun(client, scopeId, sourceStateKey) {
-  return (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at) VALUES($1,$2,$3,'READY',NOW()) ON CONFLICT(scope_id,model_version,source_state_key,period_from,period_to) DO UPDATE SET status='READY',finished_at=NOW() RETURNING id`, [scopeId, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
+const certificationConflict = (message) => Object.assign(new Error(message), { code: 'CERTIFICATION_CONFLICT' });
+
+const canonicalValue = (value) => {
+  if (value instanceof Date) return value.toISOString();
+  if (value === null || value === undefined) return null;
+  return String(value);
+};
+
+const canonicalRows = (rows, fields) => rows
+  .map((row) => fields.reduce((result, field) => ({ ...result, [field]: canonicalValue(row[field]) }), {}))
+  .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+
+const FACT_FIELDS = ['run_id', 'scope_id', 'subject_type', 'subject_id', 'metric_code', 'dimension', 'status', 'amount', 'currency', 'event_at', 'reason_code', 'rule_code', 'rule_version', 'ledger_entry_id', 'business_event_id', 'graph_evidence_id', 'semantic_key', 'source_state_key'];
+const RESULT_FIELDS = ['run_id', 'metric_code', 'status', 'amount', 'currency', 'count_items', 'reason_code', 'semantic_key'];
+
+function expectedResults(facts, runId) {
+  return aggregateFacts(facts).map((result) => {
+    const row = {
+      metric_code: result.metricCode,
+      status: result.status,
+      amount: result.amount,
+      currency: result.currency,
+      count_items: result.countItems,
+      reason_code: result.reasonCode,
+    };
+    return {
+      ...row,
+      run_id: runId,
+      semantic_key: fiscalContentFingerprint({ ...row, runId }),
+    };
+  });
 }
 
 async function insertFacts(client, runId, facts) {
@@ -80,23 +109,60 @@ async function insertFacts(client, runId, facts) {
 
 export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [], client: transactionClient = null } = {}) {
   if (!eventIds.length) return { bounded: true, eventIds: [], facts: 0 };
-  const queryable = transactionClient ?? pool;
-  const { scope } = await loadInputs(queryable, scopeKey);
-  const sourceStateKey = await sourceState(queryable, scope.id);
-  const completeInput = await loadInputs(queryable, scopeKey);
-  const facts = deriveCertificationFacts({ ...completeInput, sourceStateKey });
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
     if (ownsTransaction) await client.query('BEGIN');
-    const run = await ensureRun(client, scope.id, sourceStateKey);
+    const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+    if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
+    const sourceStateKey = await sourceState(client, scope.id);
+    const completeInput = await loadInputs(client, scopeKey);
+    const facts = deriveCertificationFacts({ ...completeInput, sourceStateKey });
+    const existing = (await client.query(`SELECT * FROM reconciliation_runs
+      WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+        AND period_from IS NULL AND period_to IS NULL
+      FOR UPDATE`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
+    if (existing) {
+      if (existing.status !== 'READY') throw certificationConflict(`Certification run ${existing.id} is not READY`);
+      const persistedFacts = (await client.query(`SELECT run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE run_id=$1`, [existing.id])).rows;
+      const persistedResults = (await client.query(`SELECT run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key FROM reconciliation_results WHERE run_id=$1`, [existing.id])).rows;
+      const expectedFactRows = facts.map((fact) => ({
+        run_id: existing.id,
+        scope_id: fact.scopeId,
+        subject_type: fact.subjectType,
+        subject_id: fact.subjectId,
+        metric_code: fact.metricCode,
+        dimension: fact.dimension,
+        status: fact.status,
+        amount: fact.amount,
+        currency: fact.currency,
+        event_at: fact.eventAt,
+        reason_code: fact.reasonCode,
+        rule_code: fact.ruleCode,
+        rule_version: fact.ruleVersion,
+        ledger_entry_id: fact.ledgerEntryId,
+        business_event_id: fact.businessEventId,
+        graph_evidence_id: fact.graphEvidenceId,
+        semantic_key: fact.semanticKey,
+        source_state_key: fact.sourceStateKey,
+      }));
+      const expectedResultRows = expectedResults(facts, existing.id);
+      if (existing.status !== 'READY'
+        || JSON.stringify(canonicalRows(persistedFacts, FACT_FIELDS)) !== JSON.stringify(canonicalRows(expectedFactRows, FACT_FIELDS))
+        || JSON.stringify(canonicalRows(persistedResults, RESULT_FIELDS)) !== JSON.stringify(canonicalRows(expectedResultRows, RESULT_FIELDS))) {
+        throw certificationConflict(`Certification snapshot ${existing.id} does not match source state ${sourceStateKey}`);
+      }
+      if (ownsTransaction) await client.query('COMMIT');
+      return { bounded: true, eventIds, facts: facts.length, runId: Number(existing.id), sourceStateKey, reused: true, refreshed: false };
+    }
+    const run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at) VALUES($1,$2,$3,'READY',NOW()) RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
     await client.query('DELETE FROM certification_facts WHERE run_id=$1', [run.id]);
     await insertFacts(client, run.id, facts);
     await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
     const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;
     for (const result of aggregates) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metric_code, result.status, result.amount, result.currency, result.count_items, result.reason_code, fiscalContentFingerprint({ ...result, runId: Number(run.id) })]);
     if (ownsTransaction) await client.query('COMMIT');
-    return { bounded: true, eventIds, facts: facts.length, runId: Number(run.id) };
+    return { bounded: true, eventIds, facts: facts.length, runId: Number(run.id), sourceStateKey, reused: false, refreshed: true };
   } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
 }
 
