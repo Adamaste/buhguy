@@ -224,16 +224,25 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     await conflictClient.query(`INSERT INTO spending_category_allocations(
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,'RUB','ALLOCATED',$7)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, initial.amount, '7'.repeat(64)]);
-    await conflictClient.query(`INSERT INTO spending_category_allocations(
-        scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
-      VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'USD','ALLOCATED',$6)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, '8'.repeat(64)]);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, money(minorUnits(chosenPurchase[0].amount) + 1n), '7'.repeat(64)]);
     const conflictRows = (await conflictClient.query(`SELECT category_code,category_gross::text,allocation_status
       FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
     assert.deepEqual(conflictRows, [{ category_code: 'UNCLASSIFIED', category_gross: chosenPurchase[0].amount, allocation_status: 'REVIEW_REQUIRED' }]);
     await conflictClient.query('ROLLBACK');
   } finally { conflictClient.release(); }
+
+  const currencyClient = await pool.connect();
+  try {
+    await currencyClient.query('BEGIN');
+    await currencyClient.query(`INSERT INTO spending_category_allocations(
+        scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
+      VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'USD','ALLOCATED',$6)`,
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, '8'.repeat(64)]);
+    const currencyRows = (await currencyClient.query(`SELECT category_code,category_gross::text,allocation_status
+      FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
+    assert.deepEqual(currencyRows, [{ category_code: 'UNCLASSIFIED', category_gross: chosenPurchase[0].amount, allocation_status: 'REVIEW_REQUIRED' }]);
+    await currencyClient.query('ROLLBACK');
+  } finally { currencyClient.release(); }
 
   const people = (await pool.query(`SELECT id FROM persons WHERE scope_id=$1 ORDER BY id LIMIT 2`, [scope.id])).rows;
   if (people.length === 2) {
@@ -252,6 +261,34 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       assert.equal(personRows.gross, chosenPurchase[0].amount);
       await personClient.query('ROLLBACK');
     } finally { personClient.release(); }
+  }
+  if (people.length > 0) {
+    const personConflictClient = await pool.connect();
+    try {
+      await personConflictClient.query('BEGIN');
+      await personConflictClient.query(`INSERT INTO spending_person_allocations(
+          scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key)
+        VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,'RUB','ALLOCATED',$7,$8)`,
+      [scope.id, secondRun.id, snapshotKey, initial.business_event_id, people[0].id,
+        money(minorUnits(chosenPurchase[0].amount) + 1n), '3'.repeat(64), '4'.repeat(64)]);
+      const overRows = (await personConflictClient.query(`SELECT person_id,person_gross::text,allocation_status
+        FROM canonical_spending_person_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
+      assert.deepEqual(overRows, [{ person_id: null, person_gross: chosenPurchase[0].amount, allocation_status: 'REVIEW_REQUIRED' }]);
+      await personConflictClient.query('ROLLBACK');
+    } finally { personConflictClient.release(); }
+
+    const personCurrencyClient = await pool.connect();
+    try {
+      await personCurrencyClient.query('BEGIN');
+      await personCurrencyClient.query(`INSERT INTO spending_person_allocations(
+          scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key)
+        VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'USD','ALLOCATED',$6,$7)`,
+      [scope.id, secondRun.id, snapshotKey, initial.business_event_id, people[0].id, '5'.repeat(64), '6'.repeat(64)]);
+      const currencyRows = (await personCurrencyClient.query(`SELECT person_id,person_gross::text,allocation_status
+        FROM canonical_spending_person_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
+      assert.deepEqual(currencyRows, [{ person_id: null, person_gross: chosenPurchase[0].amount, allocation_status: 'REVIEW_REQUIRED' }]);
+      await personCurrencyClient.query('ROLLBACK');
+    } finally { personCurrencyClient.release(); }
   }
 
   await expectConstraint(`INSERT INTO spending_category_allocations(
@@ -305,10 +342,16 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     VALUES('analytics-foreign-scope','Analytics foreign scope') RETURNING id`)).rows[0];
   const foreignPerson = (await pool.query(`INSERT INTO persons(scope_id,person_key,display_name)
     VALUES($1,'analytics-foreign-person','Foreign Person') RETURNING id`, [foreignScope.id])).rows[0];
+  const foreignRun = (await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at)
+    VALUES($1,$2,$3,'READY',NOW()) RETURNING id`, [foreignScope.id, initial.model_version, 'f'.repeat(64)])).rows[0];
   await expectConstraint(`INSERT INTO spending_person_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6,$7)`,
   [scope.id, secondRun.id, snapshotKey, initial.business_event_id, foreignPerson.id, '3'.repeat(64), '4'.repeat(64)], ['23503']);
+  await expectConstraint(`INSERT INTO spending_category_allocations(
+      scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
+    VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6)`,
+  [scope.id, foreignRun.id, 'f'.repeat(64), initial.business_event_id, categoryId, 'd'.repeat(64)], ['23503']);
 
   const foreignTaxonomy = (await pool.query(`INSERT INTO spending_taxonomies(taxonomy_version,status)
     VALUES('analytics-foreign-taxonomy','ACTIVE') RETURNING id`)).rows[0];
