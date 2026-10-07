@@ -102,7 +102,8 @@ WITH purchase_stats AS (
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
-           OR a.source_state_key <> p.source_state_key), FALSE) AS conflict,
+           OR a.source_state_key <> p.source_state_key), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN spending_category_allocations a
@@ -123,7 +124,8 @@ WITH purchase_stats AS (
            OR a.currency <> r.currency
            OR a.scope_id <> r.scope_id
            OR a.certification_run_id <> r.certification_run_id
-           OR a.source_state_key <> r.source_state_key), FALSE) AS conflict,
+           OR a.source_state_key <> r.source_state_key), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > r.return_amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
   LEFT JOIN spending_category_allocations a
@@ -201,7 +203,8 @@ WITH purchase_stats AS (
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
-           OR a.source_state_key <> p.source_state_key), FALSE) AS conflict,
+           OR a.source_state_key <> p.source_state_key), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN spending_person_allocations a
@@ -222,7 +225,8 @@ WITH purchase_stats AS (
            OR a.currency <> r.currency
            OR a.scope_id <> r.scope_id
            OR a.certification_run_id <> r.certification_run_id
-           OR a.source_state_key <> r.source_state_key), FALSE) AS conflict,
+           OR a.source_state_key <> r.source_state_key), FALSE)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > r.return_amount AS conflict,
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
   LEFT JOIN spending_person_allocations a
