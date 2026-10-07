@@ -54,6 +54,8 @@ test('same-source-state refresh is a byte-identical NOOP and corrupted snapshots
     results: (await pool.query('SELECT * FROM reconciliation_results WHERE run_id=$1 ORDER BY id', [runId])).rows,
   });
   try {
+    const baselineReceiptId = Number((await pool.query("INSERT INTO receipts(fns_id,source,total_sum,currency) VALUES($1,'cert-refresh-baseline',0,'RUB') RETURNING id", [`cert-refresh-baseline-${process.pid}-${Date.now()}`])).rows[0].id);
+    await pool.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [baselineReceiptId, JSON.stringify({ test: 'baseline-source-state' })]);
     const first = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
     assert.ok(first.runId);
     assert.ok(first.sourceStateKey);
