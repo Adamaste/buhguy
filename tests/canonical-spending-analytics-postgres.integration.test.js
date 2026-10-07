@@ -7,8 +7,12 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
 let pool;
 const minorUnits = (value) => {
-  const [whole, fraction = '00'] = String(value).split('.');
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+  const text = String(value);
+  const negative = text.startsWith('-');
+  const absolute = negative ? text.slice(1) : text;
+  const [whole, fraction = '00'] = absolute.split('.');
+  const units = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+  return negative ? -units : units;
 };
 const money = (minor) => {
   const sign = minor < 0n ? '-' : '';
