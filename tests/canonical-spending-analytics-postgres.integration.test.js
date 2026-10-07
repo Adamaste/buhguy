@@ -399,7 +399,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   await expectConstraint(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key,supersedes_decision_id)
     VALUES($1,(SELECT id FROM spending_taxonomies WHERE taxonomy_version='household-spending-taxonomy-v1'),'PURCHASE',$2,$3,'CLASSIFIED','MANUAL','v1',$4,$5,$6)`,
-  [scope.id, initial.business_event_id + 1, categoryId, 'a2'.repeat(32), 'b2'.repeat(32), validDecision.id], ['23503']);
+  [scope.id, initial.business_event_id + 1, categoryId, 'a2'.repeat(32), 'b2'.repeat(32), finalDecision.id], ['23503']);
 
   const foreignScope = (await pool.query(`INSERT INTO accounting_scopes(scope_key,label)
     VALUES('analytics-foreign-scope','Analytics foreign scope') RETURNING id`)).rows[0];
