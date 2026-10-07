@@ -9,6 +9,10 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(migration, /NUMERIC\(18,2\)/);
   assert.match(migration, /decision_source TEXT NOT NULL CHECK/);
   assert.match(migration, /source_state_key CHAR\(64\)/);
+  assert.match(migration, /supersedes_allocation_id\)\s*WHERE supersedes_allocation_id IS NOT NULL/);
+  assert.match(migration, /FOREIGN KEY \(scope_id, person_id\) REFERENCES persons\(scope_id, id\)/);
+  assert.match(migration, /FOREIGN KEY \(taxonomy_id, parent_category_id\)/);
+  assert.match(migration, /FOREIGN KEY \(scope_id, certification_run_id, source_state_key\)/);
   assert.match(migration, /ON DELETE RESTRICT/);
   assert.match(analytics, /canonical_spending_purchases_v1/);
   assert.match(analytics, /canonical_spending_returns_v1/);
@@ -17,6 +21,11 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(analytics, /GROUP BY p\.scope_id, p\.certification_run_id/);
   assert.match(analytics, /UNCLASSIFIED/);
   assert.match(analytics, /UNRESOLVED_RETURN/);
+  assert.match(analytics, /r\.status='READY'/);
+  assert.match(analytics, /f\.source_state_key=r\.source_state_key/);
+  assert.match(analytics, /NOT EXISTS \(\s*SELECT 1\s*FROM spending_.*successor/s);
+  assert.match(analytics, /proof\.id=p\.graph_evidence_id/);
+  assert.match(analytics, /REVIEW_REQUIRED/);
   assert.match(analytics, /Never SUM chatgpt_accounting\.user_receipts as spending/i);
   assert.doesNotMatch(analytics, /FROM\s+chatgpt_accounting\.user_receipts/i);
   assert.doesNotMatch(migration, /^\s*(DROP|DELETE)\b/im);
