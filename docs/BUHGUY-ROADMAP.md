@@ -353,13 +353,13 @@ authoritative-loader read-only preview with explicit windows, deterministic
 decisions, stable orchestration identity, stale match-key fail-closed
 handling, PostgreSQL READ ONLY/snapshot proof, and safe summary
 observability. It has no writer execution path and no sync or
-accounting-catchup wiring. Production receipt-window policy v1 is now
-reviewed: use an inclusive 300000 ms receipt window, while the internal-
-transfer window remains unresolved and must be revalidated separately. The
-next stage is a controlled production read-only matched-purchase orchestration
-preview using an explicit read-only DB path. Do not invoke the writer, deploy
-a trigger, replay, backfill, or mutate production. Ambiguity remains
-fail-closed.
+accounting-catchup wiring. Production receipt-window policy v1 is reviewed
+and the controlled production read-only orchestration preview has completed:
+the reviewed 300000 ms receipt policy and the separate internal-window
+invariance check produced deterministic, non-mutating results. The next
+stage is controlled first matched-purchase persistence canary design. Do not
+invoke the writer, deploy a trigger, replay, backfill, or mutate production.
+Ambiguity remains fail-closed.
 
 The canonical money-accounting rule is that each proven monetary operation
 ultimately maps to one balanced two-sided journal entry: total debit equals
