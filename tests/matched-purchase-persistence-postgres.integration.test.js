@@ -7,6 +7,7 @@ import { persistMatchedPurchase, persistMatchedPurchaseForTest } from '../src/ma
 import { loadMatchedPurchaseEnrichment, LEDGER_DISPOSITIONS } from '../src/matched-purchase-enrichment-projection.js';
 import { businessEventEvidenceSemanticKey, BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from '../src/business-event-graph.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
+import { certificationSourceStateKey, CERTIFICATION_MODEL_VERSION } from '../src/certification.js';
 import { rebuildLedger, refreshLedgerForReceipt } from '../src/ledger.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -272,13 +273,55 @@ integration('public authoritative writer is concurrent-safe and stable with unre
     const [first, second] = await Promise.all([persistMatchedPurchase(pool, options), persistMatchedPurchase(pool, options)]);
     assert.equal(first.matchId, second.matchId);
     assert.equal(first.eventId, second.eventId);
+    assert.equal(first.bankEvidenceId, second.bankEvidenceId);
     assert.equal(first.ledgerEntryId, second.ledgerEntryId);
     assert.equal(first.enrichmentKey, second.enrichmentKey);
+
+    const concurrentSourceStateKey = await certificationSourceStateKey(pool, fixture.scopeId);
+    const certificationRuns = (await pool.query(`SELECT * FROM reconciliation_runs
+      WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+        AND period_from IS NULL AND period_to IS NULL`, [fixture.scopeId, CERTIFICATION_MODEL_VERSION, concurrentSourceStateKey])).rows;
+    assert.equal(certificationRuns.length, 1);
+    assert.equal(certificationRuns[0].status, 'READY');
+    const certificationRun = certificationRuns[0];
+    const certificationSnapshot = async (runId) => ({
+      run: (await pool.query('SELECT * FROM reconciliation_runs WHERE id=$1', [runId])).rows,
+      facts: (await pool.query('SELECT * FROM certification_facts WHERE run_id=$1 ORDER BY id', [runId])).rows,
+      results: (await pool.query('SELECT * FROM reconciliation_results WHERE run_id=$1 ORDER BY id', [runId])).rows,
+    });
+    const beforeReplay = await certificationSnapshot(certificationRun.id);
+
+    const sameStateReplay = await persistMatchedPurchase(pool, options);
+    assert.equal(sameStateReplay.matchId, first.matchId);
+    assert.equal(sameStateReplay.eventId, first.eventId);
+    assert.equal(sameStateReplay.bankEvidenceId, first.bankEvidenceId);
+    assert.equal(sameStateReplay.ledgerEntryId, first.ledgerEntryId);
+    assert.equal(sameStateReplay.enrichmentKey, first.enrichmentKey);
+    assert.equal(await certificationSourceStateKey(pool, fixture.scopeId), concurrentSourceStateKey);
+    assert.deepEqual(await certificationSnapshot(certificationRun.id), beforeReplay);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM reconciliation_runs
+      WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+        AND period_from IS NULL AND period_to IS NULL`, [fixture.scopeId, CERTIFICATION_MODEL_VERSION, concurrentSourceStateKey])).rows[0].count, 1);
+
     const graph = new BusinessEventGraphRepository(pool);
     await graph.createEvidenceLink({ eventId: first.eventId, receiptId: fixture.receiptId, normalizationVersion: 'fiscal-normalizer-v1', evidenceRole: 'UNRELATED_REVIEW_EVIDENCE', origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: 'STANDALONE_PURCHASE_V1', ruleVersion: 'standalone-purchase-v1' });
     const replay = await persistMatchedPurchase(pool, options);
+    const changedSourceStateKey = await certificationSourceStateKey(pool, fixture.scopeId);
     assert.equal(replay.eventId, first.eventId);
     assert.equal(replay.enrichmentKey, first.enrichmentKey);
+    assert.notEqual(changedSourceStateKey, concurrentSourceStateKey);
+    const changedSourceStateRuns = (await pool.query(`SELECT * FROM reconciliation_runs
+      WHERE scope_id=$1 AND model_version=$2 AND period_from IS NULL AND period_to IS NULL
+      ORDER BY id`, [fixture.scopeId, CERTIFICATION_MODEL_VERSION])).rows;
+    assert.equal(changedSourceStateRuns.length, 2);
+    assert.equal(changedSourceStateRuns[0].source_state_key, concurrentSourceStateKey);
+    assert.equal(changedSourceStateRuns[1].source_state_key, changedSourceStateKey);
+    assert.equal(changedSourceStateRuns[0].status, 'READY');
+    assert.equal(changedSourceStateRuns[1].status, 'READY');
+    assert.deepEqual(await certificationSnapshot(certificationRun.id), beforeReplay);
+    const changedSnapshot = await certificationSnapshot(changedSourceStateRuns[1].id);
+    assert.equal(changedSnapshot.facts.length > 0, true);
+    assert.equal(changedSnapshot.results.length > 0, true);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE scope_id=$1', [fixture.scopeId])).rows[0].count, 1);
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE scope_id=$1 AND derivation_rule='LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1'", [fixture.scopeId])).rows[0].count, 1);
