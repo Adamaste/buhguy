@@ -357,8 +357,10 @@ accounting-catchup wiring. Production receipt-window policy v1 is reviewed
 and the controlled production read-only orchestration preview has completed:
 the reviewed 300000 ms receipt policy and the separate internal-window
 invariance check produced deterministic, non-mutating results. The next
-stage is controlled first matched-purchase persistence canary design. Do not
-invoke the writer, deploy a trigger, replay, backfill, or mutate production.
+stage is controlled first matched-purchase persistence canary execution. One
+selected pair is documented in the reviewed canary runbook. Do not invoke the
+writer, deploy a trigger, replay, backfill, or mutate production until that
+execution is separately approved.
 Ambiguity remains fail-closed.
 
 The canonical money-accounting rule is that each proven monetary operation
