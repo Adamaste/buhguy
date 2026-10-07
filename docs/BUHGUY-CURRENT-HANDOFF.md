@@ -27,6 +27,32 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
 - Next action: `controlled first matched-purchase persistence canary execution`. The exact-master read-only preview is complete and the single selected canary is documented in `docs/controlled-matched-purchase-canary-v1.md`; no automatic trigger, deployment, replay, backfill, accounting catch-up, or production mutation is authorized until the canary execution gate is separately approved.
 
+## Matched-purchase canary postmortem
+
+The first production canary core persistence succeeded for bank transaction
+`164`, receipt `15857`, and purchase event `297272`. Match `1` and bank
+evidence `1` were persisted; the existing purchase was reused; the new
+bank-funded ledger entry `4168251` superseded standalone entry `3158966`
+append-only; its two postings balance at `2200.00 RUB`; exactly one ACTIVE
+SYSTEM_DERIVED entry remains; and no double funding was observed. Canonical
+receipt currency remains NULL, and the other eleven preview matches remain
+unpersisted.
+
+The first writer certification refresh and the authorized idempotent replay
+were correlated to reconciliation run `3835` with the same source-state key
+`2828053dfaf5cd4bf0950cfe13446c70be30749b568da724a07bedaa57179bf3`.
+The production `NULLS NOT DISTINCT` uniqueness index is present, so this was
+not migration-007 schema drift. The replay reused the same semantic run but
+the refresh deleted and recreated its full-scope certification facts/results,
+so the byte-level state snapshot was not identical even though matched-
+purchase semantic identities were stable. This is a replay certification
+refresh side effect, not a green canary result.
+
+No further writer call is authorized. The next stage is a narrow
+certification-refresh/idempotency fix review; the remaining eleven matches
+stay blocked pending that review. No deployment, replay/backfill, accounting
+catch-up, or restoration was performed.
+
 ## Matched-Purchase Production Window Policy v1
 
 The matching-window sensitivity review is closed by
