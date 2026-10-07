@@ -1,13 +1,13 @@
 # Controlled Matched-Purchase Canary v1
 
-This runbook authorizes preparation for exactly one future canary execution.
-It does not execute the writer, deploy code, replay history, backfill data, or
-change production.
+This runbook records the controlled execution of exactly one matched-purchase
+canary. It does not authorize additional matches, a runtime deployment,
+historical replay, or backfill.
 
 ## Preconditions
 
-- Run the exact master implementation `4dfea0c5159541d668c5ab1a008dd22f09943de7`.
-- Confirm master CI `37604435364` is green, including PostgreSQL integration,
+- Run the exact master implementation `84e9f3e107633def1efdd6888c51614fd1230df4`.
+- Confirm master CI `37618422142` is green, including PostgreSQL integration,
   full suite, Android, and signed Android.
 - Require schema migration 018 and the current production identity snapshot.
 - Use Person 1 scope `default` with
@@ -41,15 +41,16 @@ lowest bank transaction id. The selected pair is:
 - orchestration key: `20d297b17b49e9af2894958f7782e8dece84db62b4c343ee01040aba015cb909`
 - receipt currency basis: `FNS_SOURCE_CONTRACT`
 
-The precheck proved no existing bank-receipt match, bank evidence row, or
-supersession for this pair; one active standalone fiscal ledger entry exists,
-its postings are balanced, account 4 is concrete and OWNER-qualified in the
-same scope, and the one-hour matching recheck found no competing edge.
+The historical pre-canary precheck proved no existing bank-receipt match, bank
+evidence row, or supersession for this pair; one active standalone fiscal
+ledger entry existed, its postings were balanced, account 4 was concrete and
+OWNER-qualified in the same scope, and the one-hour matching recheck found no
+competing edge.
 
 ## Required Backup and Pre-write Snapshot
 
-Before any future writer call, create and verify the existing reviewed
-production backup. Record a safe snapshot of the selected scope covering:
+Before the completed writer call, a fresh reviewed production backup was
+created and validated. The selected scope snapshot covered:
 
 - `bank_receipt_matches`
 - `business_event_bank_evidence`
@@ -63,12 +64,14 @@ production backup. Record a safe snapshot of the selected scope covering:
 - `reconciliation_results`
 - relevant business-event evidence and account-resolution rows
 
-The snapshot must contain exact row counts and deterministic hashes, without
+The backup was nonzero, owned by `postgres:postgres`, mode `0600`, passed
+`pg_restore --list`, and had SHA-256
+`3d9c743f1ab573809b8dd68967fe3cfea863fa569e99eccb47337634009f3a5d`.
+Snapshots contained exact row counts and deterministic hashes without
 printing raw payloads, credentials, account/card references, or source-event
-content. Abort if the selected match, enrichment key, orchestration key,
-standalone entry, account identity, or any required precondition differs.
+content.
 
-## One-call Execution and Acceptance
+## Completed One-call Execution and Acceptance
 
 Only after an explicit execution approval, invoke the public authoritative
 writer once for the selected `matchKey`, using the exact reviewed scope and
@@ -82,9 +85,10 @@ entry `3158966`. The old standalone entry, postings, and source links must
 remain byte-for-byte unchanged. Certification must read ACTIVE state and must
 not retain duplicate fiscal funding.
 
-Replay the same public writer call only after the first result is fully
-validated. It must return the same match/event/ledger/enrichment identities and
-create no additional semantic rows, postings, source links, or supersession.
+The post-fix public writer replay returned the same match/event/bank-evidence/
+ledger/enrichment identities. It created no additional semantic rows,
+postings, source links, or supersession. Certification run `3848`, its facts,
+and its results were byte-identical before and after the replay.
 Any disagreement, ambiguity, conflict, changed source state, or non-idempotent
 result is a STOP condition.
 
@@ -102,5 +106,6 @@ pre-write snapshot. Restoration may use only the separately reviewed backup
 and rollback procedure; do not delete or manually repair rows, and do not
 replay/backfill unrelated history.
 
-The canary is one operation, one writer transaction, one selected match. No
-additional canary or remaining eleven matches are authorized by this document.
+The canary was one operation, one writer transaction, and one selected match.
+No additional canary or remaining eleven matches are authorized by this
+document.

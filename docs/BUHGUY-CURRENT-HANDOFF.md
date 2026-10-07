@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-07
-- Current implementation baseline: `4dfea0c5159541d668c5ab1a008dd22f09943de7` (PR #122 squash-merged; matched-purchase writer FNS currency compatibility is merged)
+- Current implementation baseline: `84e9f3e107633def1efdd6888c51614fd1230df4` (PR #125 squash-merged; certification refresh idempotency is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, and the controlled read-only production orchestration preview are complete. PR #122 is merged and master CI `37604435364` passed test/PostgreSQL/full-suite, Android, and signed Android jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The fresh exact-master preview is GREEN and one canary pair is selected for a later controlled execution; no writer execution, replay, backfill, deployment, or further identity mutation is authorized before that execution is separately approved.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, and the first matched-purchase canary are complete. PR #125 is merged and master CI `37618422142` passed all applicable test/PostgreSQL/full-suite, Android, and signed Android jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; broader runtime rollout is a separate task. The next stage is controlled expansion design only; do not persist the remaining eleven matches.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `controlled first matched-purchase persistence canary execution`. The exact-master read-only preview is complete and the single selected canary is documented in `docs/controlled-matched-purchase-canary-v1.md`; no automatic trigger, deployment, replay, backfill, accounting catch-up, or production mutation is authorized until the canary execution gate is separately approved.
+- Next action: `controlled expansion design for remaining 11 matched-purchase candidates`. The first canary is fully GREEN after one exact-master certification snapshot and one byte-identical public-writer replay; do not persist the remaining eleven matches. A broader runtime rollout from `8e18a9d65c933045820b0771afbcdd1c28546956` remains separately reviewed work because it contains unrelated runtime and bank-normalization changes.
 
 ## Matched-purchase canary postmortem
 
@@ -38,20 +38,24 @@ SYSTEM_DERIVED entry remains; and no double funding was observed. Canonical
 receipt currency remains NULL, and the other eleven preview matches remain
 unpersisted.
 
-The first writer certification refresh and the authorized idempotent replay
-were correlated to reconciliation run `3835` with the same source-state key
-`2828053dfaf5cd4bf0950cfe13446c70be30749b568da724a07bedaa57179bf3`.
-The production `NULLS NOT DISTINCT` uniqueness index is present, so this was
-not migration-007 schema drift. The replay reused the same semantic run but
-the refresh deleted and recreated its full-scope certification facts/results,
-so the byte-level state snapshot was not identical even though matched-
-purchase semantic identities were stable. This is a replay certification
-refresh side effect, not a green canary result.
+The post-fix exact-master certification snapshot was materialized for the
+stable source state as READY run `3848` with 5837 facts and 8 results. A
+direct same-state certification refresh returned `reused=true` and
+`refreshed=false`; the run, facts, and results were byte-identical.
 
-No further writer call is authorized. The next stage is a narrow
-certification-refresh/idempotency fix review; the remaining eleven matches
-stay blocked pending that review. No deployment, replay/backfill, accounting
-catch-up, or restoration was performed.
+The one authorized post-fix public writer replay returned the same match,
+event, bank-evidence, active-ledger, and enrichment identities. The complete
+selected matched-purchase and ledger state was byte-identical, with no new
+semantic rows, postings, links, supersession, or double funding. The active
+bank-funded entry remains `4168251`; standalone entry `3158966` remains
+immutable history. The fresh backup was validated before the operation, and
+the sync timer was restored to its original enabled/active state with a
+healthy inactive oneshot service.
+
+This closes the first matched-purchase production canary. The remaining
+eleven matches remain unpersisted. Broader runtime rollout from the active
+`8e18a9d65c933045820b0771afbcdd1c28546956` release is a separate task and is
+not implied by this canary.
 
 ## Matched-Purchase Production Window Policy v1
 
