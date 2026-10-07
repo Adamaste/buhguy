@@ -155,8 +155,8 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
 
   const snapshots = (await pool.query(`SELECT source_state_key,count(*)::int AS count
     FROM canonical_spending_purchases_v1 WHERE scope_id=$1 GROUP BY source_state_key ORDER BY source_state_key`, [scope.id])).rows;
-  assert.equal(snapshots.length, 2);
-  assert.deepEqual(snapshots.map((row) => row.count), [1, 1]);
+  assert.equal(snapshots.length, 3);
+  assert.deepEqual(snapshots.map((row) => row.count), [1, 1, 1]);
   const chosenPurchase = (await pool.query(`SELECT * FROM canonical_spending_purchases_v1
     WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, snapshotKey])).rows;
   assert.equal(chosenPurchase.length, 1);
