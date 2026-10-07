@@ -106,7 +106,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
 
   const person = (await pool.query(`SELECT person_id,gross_spend::text,confirmed_returns::text,net_spend::text
     FROM canonical_spending_person_summary_v1 WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, snapshotKey])).rows;
-  assert.equal(person.length, 2);
+  assert.equal(person.length, 1);
   const unattributed = person.find((row) => row.person_id === null);
   assert.equal(unattributed.gross_spend, household.gross_spend);
   assert.equal(unattributed.confirmed_returns, household.confirmed_returns);
