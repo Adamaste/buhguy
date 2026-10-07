@@ -19,13 +19,34 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-07
 - Current implementation baseline: `90664d76e9087ca68bfe63eb761f62683d86e2dd` (PR #118 squash-merged; FNS eligibility closeout is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, and FNS receipt currency contract v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is now complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The next stage is a production matching-window policy review; no orchestration preview, writer execution, replay, backfill, deployment, or further identity mutation is authorized by that stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, and production receipt-window policy v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The next stage is a controlled production read-only matched-purchase orchestration preview; no writer execution, replay, backfill, deployment, or further identity mutation is authorized by that stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `matched-purchase production matching-window policy review`. Review explicit finite diagnostic windows before any preview; do not run orchestration or the writer, deploy, replay, backfill, or mutate production in that review.
+- Next action: `controlled production read-only matched-purchase orchestration preview`. Use `receiptMaxTimeDeltaMs=300000` and revalidate the conservative `internalTransferMaxTimeDeltaMs=5000` parameter against 3600000 ms first; do not invoke the writer, deploy, replay, backfill, or mutate production.
+
+## Matched-Purchase Production Window Policy v1
+
+The matching-window sensitivity review is closed by
+`docs/matched-purchase-production-window-policy-v1.md`. For production
+receipt matching, `receiptMaxTimeDeltaMs=300000` is the inclusive absolute
+event-time policy. Exact scope, amount, and currency remain mandatory, and
+the complete bipartite matcher remains fail-closed without nearest or greedy
+selection.
+
+The policy covers all 32 eligible Person 1 PURCHASE/DEBIT bank rows. It is
+the smallest tested threshold that captured the stable final set of 12
+isolated one-to-one pairs; 120000 ms omitted one pair, while 300000 through
+3600000 ms added no edges, ambiguity, or pair identity changes. Sber had no
+receipt-compatible pair, which is not a reason to widen the policy. Absence
+of a match remains acceptable.
+
+The internal-transfer window is not frozen as policy because production has
+no proven internal-transfer pair. The 5000 ms value may be used only as a
+conservative parameter for the current read-only preview after revalidating
+purchase and edge-set invariance against 3600000 ms.
 
 ## Bank business-event candidate projection v1
 
