@@ -115,19 +115,37 @@ All persisted and view-level money is exact PostgreSQL `NUMERIC(18,2)` or an
 equivalent decimal string contract. No JS floating-point arithmetic is part of
 the canonical persistence or reconciliation definition.
 
-For one currency and one period:
+For one currency and one period, economic return and cash refund settlement are
+separate facts:
 
-- `gross_spend` is the sum of canonical certified purchase amounts.
-- `confirmed_returns` is the sum of independently certified return amounts,
-  represented as a positive return magnitude linked to a return/refund event.
+- `gross_spend` is the sum of canonical `CONFIRMED_ACQUISITION_VALUE` amounts.
+- `confirmed_returns` is the sum of certified `CONFIRMED_RETURN_VALUE` amounts,
+  represented as positive return magnitudes.
 - `net_spend = gross_spend - confirmed_returns`.
-- an outstanding refund receivable is reported separately and is not deducted
-  until a confirmed return/refund fact exists.
+- `OUTSTANDING_REFUND_RECEIVABLE` means that the economic return is recognized
+  but the cash refund is not yet proven. It is reported separately and does not
+  block subtracting the certified return from net spend.
+- a later proven bank/cash refund settles the receivable/funding side and must
+  not subtract the same economic return a second time.
 
-Every return must have an explicit purchase/refund relationship. A return must
-not be counted both as a negative purchase item and as a return metric unless
-the contract explicitly marks one representation as informational. Bank
+An exact original-purchase or item relationship is not required for a
+certified return to contribute to household gross/return/net arithmetic. It is
+required for precise category or person reassignment. If the relationship is
+missing or ambiguous, household net remains valid while attribution fails
+closed. A return is not represented both as a negative purchase item and as a
+return metric unless one representation is explicitly informational. Bank
 movements remain funding facts and are not re-added to spending totals.
+
+### Canonical return grain
+
+`canonical_spending_returns` contains at most one row per certified economic
+return, with return identity, scope, exact amount/currency, occurred-at,
+certification/provenance, and an optional related purchase/item identity. Its
+relationship status is one of `LINKED`, `UNATTRIBUTED`, or
+`REVIEW_REQUIRED`. No original purchase is inferred from amount, merchant,
+person, receipt source, or nearest time. A partial return subtracts only its
+exact certified amount; it never reverses the full original purchase by
+default.
 
 Required invariants:
 
@@ -138,9 +156,19 @@ Required invariants:
    `UNCLASSIFIED` or `REVIEW_REQUIRED` is included in the visible remainder.
 4. Person allocations sum exactly to the purchase amount only when explicit
    attribution is complete; otherwise the unallocated remainder is visible.
-5. Gross, return, and net values are calculated separately per currency and
+5. For every scope/period/currency, category gross allocations sum to household
+   gross spend, category return allocations sum to certified returns, and
+   category net equals category gross minus category returns. Unresolved return
+   attribution is an explicit `UNATTRIBUTED`/`REVIEW_REQUIRED` return bucket,
+   not an omitted amount.
+6. For every scope/period/currency, person-attributed gross plus an explicit
+   unattributed gross remainder equals household gross; person-attributed
+   returns plus an explicit unattributed return remainder equals certified
+   returns; and person net plus explicit unresolved net remainder equals
+   household net.
+7. Gross, return, and net values are calculated separately per currency and
    never mixed in one total.
-6. The same purchase, return, category allocation, or person allocation is not
+8. The same purchase, return, category allocation, or person allocation is not
    counted twice because of provenance, evidence, or source joins.
 
 ## Proposed semantic views
@@ -152,14 +180,18 @@ The future safe semantic layer should expose:
 - `canonical_spending_person_attribution`: explicit person allocations and
   unresolved remainder;
 - `canonical_spending_categories`: versioned category decisions/allocations;
+- `canonical_spending_returns`: certified economic returns and their optional
+  purchase/item relationship status;
 - `canonical_spending_summary`: period/currency totals for gross returns and
   net spend, with unclassified and review-required amounts visible.
 
 Household totals must query the purchase/summary grain. Person totals must
 query explicit attribution allocations. Category totals must query category
-allocations. No semantic view may join `user_receipts` directly into the
-monetary base without first reducing it to a documented one-row provenance
-relation.
+allocations and return allocations. These views must make household gross/net,
+category gross/returns/net, and person gross/returns/net directly queryable
+without reconstructing return semantics manually. No semantic view may join
+`user_receipts` directly into the monetary base without first reducing it to a
+documented one-row provenance relation; `user_receipts` remains provenance-only.
 
 BlazeSQL should receive only these curated views plus existing safe views. Raw
 notification payloads, receipt raw data, credentials, source-event identifiers,
@@ -172,6 +204,8 @@ This is a design, not a migration. A future schema foundation should include:
 - a versioned taxonomy and category-code relation;
 - append-only item classification decisions with status, provenance, semantic
   identity, and supersession;
+- a canonical economic-return relation with exact amount and explicit
+  linked/unattributed/review-required relationship status;
 - explicit purchase-to-person attribution allocations with exact amounts;
 - explicit item/purchase-to-category allocations with exact amounts;
 - deterministic keys and uniqueness constraints for one active decision per
@@ -202,8 +236,13 @@ writer, certification impact, and operational rollback are reviewed separately.
 The future tests must cover: duplicate-evidence fan-out; person attribution
 ambiguity; multi-item exact decimal reconciliation; category allocation sums;
 unclassified remainder visibility; taxonomy version changes; automated versus
-manual supersession; disputed decisions; return/refund linkage; gross/return/
-net arithmetic; mixed-currency fail-closed behavior; deterministic replay;
+manual supersession; disputed decisions; certified return reducing net before
+cash settlement; settlement not subtracting twice; an unlinked return reducing
+household net while failing closed for category/person attribution; unresolved
+return buckets reconciling exactly; partial-return amount semantics;
+category gross-minus-returns/net reconciliation; person gross-minus-returns/net
+reconciliation; matched purchase plus receipt plus refund without double
+counting; mixed-currency fail-closed behavior; deterministic replay;
 input-order independence; and read-only semantic views.
 
 PostgreSQL tests must prove that the curated views remain SELECT-only, that
