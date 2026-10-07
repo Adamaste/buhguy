@@ -114,9 +114,9 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
 
   const exactDecimal = (await pool.query(`SELECT
       (0.10::numeric(18,2) + 0.20::numeric(18,2) + 0.01::numeric(18,2))::text AS total,
-      (32380.00::numeric(18,2) - 0.10::numeric(18,2))::text AS partial_return`)).rows[0];
+      (0.20::numeric(18,2) - 0.10::numeric(18,2))::text AS partial_return`)).rows[0];
   assert.equal(exactDecimal.total, '0.31');
-  assert.equal(exactDecimal.partial_return, '32379.90');
+  assert.equal(exactDecimal.partial_return, '0.10');
 
   const categoryId = (await pool.query(`SELECT id FROM spending_categories
     WHERE category_code='UNCLASSIFIED' LIMIT 1`)).rows[0].id;
