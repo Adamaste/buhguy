@@ -119,11 +119,11 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       scope_id,return_event_id,purchase_event_id,relationship_status,semantic_key,supersedes_relationship_id)
     VALUES($1,$2,$3,'LINKED',$4,$5) RETURNING id`,
   [scope.id, returnEvent.id, initial.business_event_id, key, supersedes])).rows[0];
-  const returnA = await returnRelationship('t'.repeat(64));
+  const returnA = await returnRelationship('1'.repeat(64));
   await pool.query(`UPDATE spending_return_relationships SET relationship_status='SUPERSEDED' WHERE id=$1`, [returnA.id]);
-  const returnB = await returnRelationship('u'.repeat(64), returnA.id);
+  const returnB = await returnRelationship('2'.repeat(64), returnA.id);
   await pool.query(`UPDATE spending_return_relationships SET relationship_status='SUPERSEDED' WHERE id=$1`, [returnB.id]);
-  const returnC = await returnRelationship('v'.repeat(64), returnB.id);
+  const returnC = await returnRelationship('3'.repeat(64), returnB.id);
   const activeReturn = (await pool.query(`SELECT relationship_status,related_purchase_id
     FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, snapshotKey])).rows[0];
   assert.equal(activeReturn.relationship_status, 'LINKED');
@@ -210,7 +210,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     await allocationClient.query(`INSERT INTO spending_category_allocations(
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, 'g'.repeat(64)]);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, '6'.repeat(64)]);
     const partialRows = (await allocationClient.query(`SELECT category_code,category_gross::text,allocation_status
       FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
     assert.ok(partialRows.some((row) => row.category_code === 'GROCERIES' && row.category_gross === '0.01'));
@@ -224,11 +224,11 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     await conflictClient.query(`INSERT INTO spending_category_allocations(
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,'RUB','ALLOCATED',$7)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, initial.amount, 'h'.repeat(64)]);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, initial.amount, '7'.repeat(64)]);
     await conflictClient.query(`INSERT INTO spending_category_allocations(
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'USD','ALLOCATED',$6)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, 'i'.repeat(64)]);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, groceriesId, '8'.repeat(64)]);
     const conflictRows = (await conflictClient.query(`SELECT category_code,category_gross::text,allocation_status
       FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`, [scope.id, snapshotKey, initial.business_event_id])).rows;
     assert.deepEqual(conflictRows, [{ category_code: 'UNCLASSIFIED', category_gross: chosenPurchase[0].amount, allocation_status: 'REVIEW_REQUIRED' }]);
@@ -244,8 +244,8 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
           scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key)
         VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6,$7),
               ($1,$2,$3,'PURCHASE',$4,$8,$9,'RUB','ALLOCATED',$10,$11)`,
-      [scope.id, secondRun.id, snapshotKey, initial.business_event_id, people[0].id, 'j'.repeat(64), 'k'.repeat(64), people[1].id,
-        money(minorUnits(chosenPurchase[0].amount) - 1n), 'l'.repeat(64), 'm'.repeat(64)]);
+      [scope.id, secondRun.id, snapshotKey, initial.business_event_id, people[0].id, '9'.repeat(64), '0'.repeat(64), people[1].id,
+        money(minorUnits(chosenPurchase[0].amount) - 1n), '1'.repeat(64), '2'.repeat(64)]);
       const personRows = (await personClient.query(`SELECT SUM(person_gross)::text AS gross
         FROM canonical_spending_person_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
       [scope.id, snapshotKey, initial.business_event_id])).rows[0];
@@ -283,23 +283,23 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   const refinedDecision = (await pool.query(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key,supersedes_decision_id)
     VALUES($1,(SELECT id FROM spending_taxonomies LIMIT 1),'PURCHASE',$2,$3,'CLASSIFIED','MANUAL','v1',$4,$5,$6) RETURNING id`,
-  [scope.id, initial.business_event_id, categoryId, 'w'.repeat(64), 'x'.repeat(64), validDecision.id])).rows[0];
+  [scope.id, initial.business_event_id, categoryId, '5'.repeat(64), '6'.repeat(64), validDecision.id])).rows[0];
   await pool.query(`UPDATE spending_classification_decisions SET decision_status='SUPERSEDED' WHERE id=$1`, [refinedDecision.id]);
   const finalDecision = (await pool.query(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key,supersedes_decision_id)
     VALUES($1,(SELECT id FROM spending_taxonomies LIMIT 1),'PURCHASE',$2,$3,'CLASSIFIED','MANUAL','v1',$4,$5,$6) RETURNING id`,
-  [scope.id, initial.business_event_id, categoryId, 'y'.repeat(64), 'z'.repeat(64), refinedDecision.id])).rows[0];
+  [scope.id, initial.business_event_id, categoryId, '7'.repeat(64), '8'.repeat(64), refinedDecision.id])).rows[0];
   assert.equal((await pool.query(`SELECT count(*)::int AS count FROM spending_classification_decisions
     WHERE subject_id=$1 AND decision_status <> 'SUPERSEDED'`, [initial.business_event_id])).rows[0].count, 1);
   assert.ok(finalDecision.id);
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key,supersedes_allocation_id)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6,$7)`,
-  [scope.id, chainRun.id, chainKey, initial.business_event_id, categoryId, 'o'.repeat(64), allocationA.id], ['23505']);
+  [scope.id, chainRun.id, chainKey, initial.business_event_id, categoryId, '4'.repeat(64), allocationA.id], ['23505']);
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6)`,
-  [scope.id, secondRun.id, chainKey, initial.business_event_id, categoryId, 'p'.repeat(64)], ['23503']);
+  [scope.id, secondRun.id, chainKey, initial.business_event_id, categoryId, '5'.repeat(64)], ['23503']);
 
   const foreignScope = (await pool.query(`INSERT INTO accounting_scopes(scope_key,label)
     VALUES('analytics-foreign-scope','Analytics foreign scope') RETURNING id`)).rows[0];
@@ -308,7 +308,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   await expectConstraint(`INSERT INTO spending_person_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,person_id,amount,currency,allocation_status,provenance_key,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6,$7)`,
-  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, foreignPerson.id, 'q'.repeat(64), 'r'.repeat(64)], ['23503']);
+  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, foreignPerson.id, '3'.repeat(64), '4'.repeat(64)], ['23503']);
 
   const foreignTaxonomy = (await pool.query(`INSERT INTO spending_taxonomies(taxonomy_version,status)
     VALUES('analytics-foreign-taxonomy','ACTIVE') RETURNING id`)).rows[0];
@@ -320,7 +320,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,category_id,amount,currency,allocation_status,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,0.01,'RUB','ALLOCATED',$6)`,
-  [scope.id, secondRun.id, chainKey, initial.business_event_id, categoryId, 's'.repeat(64)], ['23503']);
+  [scope.id, secondRun.id, chainKey, initial.business_event_id, categoryId, '9'.repeat(64)], ['23503']);
 
   const decisionClient = await pool.connect();
   try {
