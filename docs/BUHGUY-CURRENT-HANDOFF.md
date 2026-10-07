@@ -19,13 +19,43 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Last updated: 2026-10-07
 - Current implementation baseline: `84e9f3e107633def1efdd6888c51614fd1230df4` (PR #125 squash-merged; certification refresh idempotency is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, and the first matched-purchase canary are complete. PR #125 is merged and master CI `37618422142` passed all applicable test/PostgreSQL/full-suite, Android, and signed Android jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; broader runtime rollout is a separate task. The next stage is controlled expansion design only; do not persist the remaining eleven matches.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, and the first matched-purchase canary are complete. PR #125 is merged and master CI `37618422142` passed all applicable test/PostgreSQL/full-suite, Android, and signed Android jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; broader runtime rollout is a separate task. The fresh exact-master expansion preview found 12 current unpersisted PERSIST_REQUIRED candidates after excluding the persisted canary; no new 1-hour competing edge appeared. The next stage is controlled expansion execution review only; do not persist any candidate yet.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `controlled expansion design for remaining 11 matched-purchase candidates`. The first canary is fully GREEN after one exact-master certification snapshot and one byte-identical public-writer replay; do not persist the remaining eleven matches. A broader runtime rollout from `8e18a9d65c933045820b0771afbcdd1c28546956` remains separately reviewed work because it contains unrelated runtime and bank-normalization changes.
+- Next action: `controlled expansion execution review`. The first canary is fully GREEN after one exact-master certification snapshot and one byte-identical public-writer replay. The latest read-only exact-master preview found 12 current PERSIST_REQUIRED candidates, all structurally LOW risk under the reviewed gates; none is authorized for persistence yet. A broader runtime rollout from `8e18a9d65c933045820b0771afbcdd1c28546956` remains separately reviewed work because it contains unrelated runtime and bank-normalization changes.
+
+## Controlled matched-purchase expansion design v1
+
+The exact-master read-only expansion review used master
+`b0f1e8222bd84a1a8923c1285871ee67d5a8dd67` with
+`internalTransferMaxTimeDeltaMs=5000` and
+`receiptMaxTimeDeltaMs=300000`. Two separate `REPEATABLE READ READ ONLY`
+previews were identical. They found 13 current MATCHED pairs: the persisted
+canary `164/15857` was `NOOP_ALREADY_PERSISTED`, and 12 additional pairs were
+`PERSIST_REQUIRED` with `REFINE_EXISTING_FISCAL_FUNDING`. The canary was
+excluded from the expansion set. No writer was invoked.
+
+The review found no new competing edge when the diagnostic receipt window was
+expanded to 3600000 ms. The 19 currently unmatched eligible PURCHASE/DEBIT
+bank rows had no compatible eligible receipt within one hour; no window bucket
+or ambiguity evidence justifies changing the 300000 ms policy.
+
+All 12 current candidates are classified `LOW` using only proven structural
+facts: isolated at five minutes and one hour, exact FNS-derived RUB, existing
+standalone refinement, concrete same-scope account mapping, no persisted match
+or bank evidence, no supersession/conflict, and deterministic repeated
+preview. This is a risk classification, not probabilistic confidence.
+
+The recommended execution shape is `ONE-BY-ONE`, with batch size 1 and stop
+on the first failure. Each item requires a fresh precheck, one atomic public
+writer call, post-write invariant validation, and a same-item idempotency
+check before any next item is considered. Any source-state change,
+certification disagreement, ambiguity, conflict, non-determinism, or double
+funding is a STOP condition. No automatic rollout, SQL bulk insert, runtime
+trigger, replay, backfill, deployment, or identity mutation is authorized.
 
 ## Matched-purchase canary postmortem
 
