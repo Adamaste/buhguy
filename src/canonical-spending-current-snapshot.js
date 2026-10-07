@@ -146,7 +146,7 @@ async function withCurrentSnapshot(pool, options, reader) {
     }
     const data = await reader(client, resolved.snapshot);
     await client.query('ROLLBACK');
-    return { ...resolved, data };
+    return { ...resolved, ...(data ?? { data }) };
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     throw error;
