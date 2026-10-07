@@ -41,7 +41,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     VALUES($1,'analytics-fanout-person','Analytics Fanout Person') RETURNING id`, [scope.id])).rows[0];
   const source = (await pool.query("SELECT id FROM fns_sources WHERE scope_id=$1 ORDER BY id LIMIT 1", [scope.id])).rows[0];
   await pool.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2)', [source.id, secondPerson.id]);
-  const provenance = await pool.query(`SELECT count(*)::int AS rows, count(DISTINCT p.id)::int AS persons
+  const provenance = await pool.query(`SELECT count(*)::int AS rows, count(DISTINCT p.person_id)::int AS persons
     FROM receipt_source_observations o JOIN fns_source_person p ON p.fns_source_id=o.fns_source_id
     WHERE o.receipt_id=$1`, [receipt.receipt_id]);
   assert.ok(provenance.rows[0].rows >= 2);
