@@ -437,7 +437,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
         scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
       VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7),
             ($1,$2,$3,'PURCHASE',$4,$8,$9,0.01,'RUB','ALLOCATED',$10)`,
-    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, categoryId, 't'.repeat(64), foreignTaxonomy.id, foreignCategory.id, 'w'.repeat(64)]);
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, categoryId, 'a3'.repeat(32), foreignTaxonomy.id, foreignCategory.id, 'b3'.repeat(32)]);
     const taxonomyRows = (await taxonomyClient.query(`SELECT category_code,allocation_status,category_gross::text
       FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
     [scope.id, snapshotKey, initial.business_event_id])).rows;
