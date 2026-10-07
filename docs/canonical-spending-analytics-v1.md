@@ -19,6 +19,34 @@ The PostgreSQL regression gate covers provenance fan-out, snapshot isolation,
 visible unclassified/unattributed remainders, partial returns before cash
 settlement, exact decimal reconciliation, and the foundation constraints.
 
+## Current-snapshot semantic reader v1
+
+The additive `canonical-spending-current-snapshot-v1` reader is a strictly
+read-only semantic consumer of the certification contract. It opens one
+`REPEATABLE READ READ ONLY` transaction, computes the authoritative
+`certificationSourceStateKey` on that same client, and accepts only one
+unbounded `READY` run whose scope, model version, source state, and persisted
+facts/results are complete and coherent with a fresh non-persisting
+certification projection. It never selects the latest READY run heuristically,
+refreshes certification, invokes a writer, or exposes a write path.
+
+The reader exposes current household, half-open monthly, category, person,
+purchase, and return queries. Amounts are returned as decimal strings from
+PostgreSQL `NUMERIC` values. Every query is qualified by the resolved scope,
+certification run, and source-state key. Missing, stale, conflicting, or
+corrupt snapshots fail closed with an explicit safe reason. Safe summary
+logging reports only scope, readiness, source-state/run identity, currency, and
+aggregate result counts; raw receipt, notification, ownership, account, and
+card evidence is not exposed.
+
+Coverage remains intentionally visible: certified economic acquisitions are
+not complete personal spending, bank-only or unmatched purchases may be
+outside certified acquisitions, and person attribution remains explicit or
+unattributed. The reader is not yet exposed to BlazeSQL or production roles;
+performance is bounded by one source-state scan plus indexed scope/run/source
+state predicates and the existing additive views. Production read-only
+validation is a separate next stage.
+
 ## Purpose
 
 Define one canonical, versioned spending contract over already-proven purchase
