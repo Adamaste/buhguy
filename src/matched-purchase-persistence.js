@@ -4,6 +4,7 @@ import { loadMatchedPurchaseEnrichment, MATCHED_PURCHASE_ENRICHMENT_VERSION, LED
 import { refreshCertificationForEvents } from './certification.js';
 import { businessEventEvidenceSemanticKey, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
 import { STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION } from './standalone-purchase.js';
+import { FNS_RECEIPT_CURRENCY_MODEL_VERSION, FNS_RECEIPT_CURRENCY_STATUSES, resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -31,10 +32,29 @@ function deltaSeconds(bankOccurredAt, receiptDateTime) {
 
 function fail(code, message = code) { const error = new Error(message); error.code = code; throw error; }
 
+function receiptCurrencyResolution(value) {
+  if (!value || value.modelVersion !== FNS_RECEIPT_CURRENCY_MODEL_VERSION
+    || value.status !== FNS_RECEIPT_CURRENCY_STATUSES.RESOLVED
+    || typeof value.currency !== 'string' || !/^[A-Z]{3}$/.test(value.currency)
+    || value.sourceFamily !== 'FNS_FISCAL_RECEIPT'
+    || !['EXPLICIT_PAYLOAD', 'FNS_SOURCE_CONTRACT'].includes(value.basis)
+    || typeof value.reasonCode !== 'string') fail('MATCH_CONTRACT_INVALID', 'receipt currency resolution is invalid');
+  return {
+    modelVersion: value.modelVersion,
+    sourceFamily: value.sourceFamily,
+    status: value.status,
+    currency: value.currency,
+    basis: value.basis,
+    reasonCode: value.reasonCode,
+  };
+}
+
 function matchFields(match) {
   requiredHash(match.matchKey, 'matchKey');
   requiredMoney(match.amount);
   if (!/^[A-Z]{3}$/.test(match.currency)) fail('MATCH_CONTRACT_INVALID', 'currency is invalid');
+  const currencyProvenance = receiptCurrencyResolution(match.receiptCurrencyResolution);
+  if (currencyProvenance.currency !== match.currency) fail('MATCH_CONTRACT_INVALID', 'receipt currency does not match match currency');
   return {
     matchKey: match.matchKey.toLowerCase(), bankLedgerKey: match.bank.ledgerKey.toLowerCase(),
     bankCandidateKey: match.bank.candidateKey.toLowerCase(), bankJournalKey: match.bank.journalKey.toLowerCase(),
@@ -46,6 +66,7 @@ function matchFields(match) {
     receiptDateTime: new Date(match.receipt.dateTime).toISOString(), timeDeltaSeconds: deltaSeconds(match.bank.occurredAt, match.receipt.dateTime),
     reasonCode: match.reasonCode ?? 'MATCHED_PURCHASE_RECEIPT_EVIDENCE',
     ownershipProvenance: match.bankAccountOwnershipProvenance ?? [],
+    receiptCurrencyResolution: currencyProvenance,
   };
 }
 
@@ -61,14 +82,26 @@ async function lockInputs(client, scope, fields) {
   if (!tx.rowCount || !receipt.rowCount) fail('AUTHORITATIVE_INPUT_MISSING');
   const account = await client.query('SELECT id,scope_id,currency FROM financial_accounts WHERE id=$1 FOR UPDATE', [fields.financialAccountId]);
   if (!account.rowCount || Number(account.rows[0].scope_id) !== Number(scope.id) || account.rows[0].currency !== fields.currency) fail('ACCOUNT_SCOPE_OR_CURRENCY_CONFLICT');
+  const fnsSource = await client.query(`SELECT EXISTS (
+    SELECT 1
+    FROM receipt_source_observations rso
+    JOIN fns_sources fs ON fs.id=rso.fns_source_id
+    WHERE rso.receipt_id=$1
+  ) AS proven`, [fields.receiptId]);
+  const currencyProvenance = resolveFnsReceiptCurrency({
+    explicitCurrency: receipt.rows[0].currency,
+    fnsSourceProven: fnsSource.rows[0].proven === true,
+  });
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${scope.id}:bank-receipt-match:${fields.matchKey}`]);
-  return { transaction: tx.rows[0], receipt: receipt.rows[0], account: account.rows[0] };
+  return { transaction: tx.rows[0], receipt: receipt.rows[0], account: account.rows[0], receiptCurrencyResolution: currencyProvenance };
 }
 
 function assertAuthoritative(fields, locked) {
   const tx = locked.transaction; const receipt = locked.receipt;
   if (tx.currency !== fields.currency || tx.amount === null || String(tx.amount) !== fields.amount || (tx.occurred_at && new Date(tx.occurred_at).toISOString() !== fields.bankOccurredAt)) fail('AUTHORITATIVE_INPUT_CHANGED');
-  if (receipt.currency !== fields.currency || String(receipt.total_sum) !== fields.amount || new Date(receipt.date_time).toISOString() !== fields.receiptDateTime) fail('AUTHORITATIVE_INPUT_CHANGED');
+  if (String(receipt.total_sum) !== fields.amount || new Date(receipt.date_time).toISOString() !== fields.receiptDateTime
+    || !same(locked.receiptCurrencyResolution, fields.receiptCurrencyResolution)
+    || locked.receiptCurrencyResolution.currency !== fields.currency) fail('AUTHORITATIVE_INPUT_CHANGED');
 }
 
 async function persistMatch(client, scope, fields) {
