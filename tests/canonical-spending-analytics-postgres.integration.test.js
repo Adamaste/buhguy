@@ -385,10 +385,16 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7)`,
   [scope.id, secondRun.id, chainKey, initial.business_event_id, taxonomyId, categoryId, '5'.repeat(64)], ['23503']);
+  const orphanRun = (await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at)
+    VALUES($1,$2,$3,'READY',NOW()) RETURNING id`, [scope.id, initial.model_version, '3'.repeat(64)])).rows[0];
+  const orphanCategoryA = (await pool.query(`INSERT INTO spending_category_allocations(
+      scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
+    VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7) RETURNING id`,
+  [scope.id, orphanRun.id, '3'.repeat(64), initial.business_event_id, taxonomyId, categoryId, 'b1'.repeat(32)])).rows[0];
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key,supersedes_allocation_id)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7,$8)`,
-  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, categoryId, 'a1'.repeat(32), allocationA.id], ['23503']);
+  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, categoryId, 'c1'.repeat(32), orphanCategoryA.id], ['23503']);
 
   await expectConstraint(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key,supersedes_decision_id)
