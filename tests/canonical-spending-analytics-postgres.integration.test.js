@@ -34,7 +34,10 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     WHERE f.scope_id=$1 AND f.metric_code='CONFIRMED_ACQUISITION_VALUE' AND f.status='CERTIFIED'
     ORDER BY f.id LIMIT 1`, [scope.id])).rows[0];
   assert.ok(initial);
-  const receipt = (await pool.query('SELECT id AS receipt_id FROM receipts ORDER BY id LIMIT 1')).rows[0];
+  const receipt = (await pool.query(`SELECT receipt_id
+    FROM business_event_evidence
+    WHERE event_id=$1 AND receipt_id IS NOT NULL
+    ORDER BY id LIMIT 1`, [initial.business_event_id])).rows[0];
   assert.ok(receipt);
 
   const secondPerson = (await pool.query(`INSERT INTO persons(scope_id,person_key,display_name)
