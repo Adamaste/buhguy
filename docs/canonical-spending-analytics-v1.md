@@ -1,8 +1,23 @@
 # Canonical Spending Analytics V1
 
-Status: design and read-only audit only. This document does not authorize a
-migration, classification write path, deployment, replay, backfill, or
-production mutation.
+Status: the schema/read-model foundation is implemented on the exact master;
+classification writes, production exposure, deployment, replay, backfill, and
+production mutation remain out of scope.
+
+## Implemented foundation
+
+Migration `019_canonical_spending_analytics_foundation.sql` adds the versioned
+taxonomy, append-only classification decisions, return relationships, and
+exact-decimal category/person allocation contracts with scope, provenance,
+semantic-key, and supersession constraints. The additive artifact
+`db/analytics/011_canonical_spending_analytics_v1.sql` exposes only explicit
+scope/source-state-qualified purchase, item, return, category, person, and
+household summaries. It does not replace existing analytics views, add
+BlazeSQL exposure, or create a classifier or persistence writer.
+
+The PostgreSQL regression gate covers provenance fan-out, snapshot isolation,
+visible unclassified/unattributed remainders, partial returns before cash
+settlement, exact decimal reconciliation, and the foundation constraints.
 
 ## Purpose
 
@@ -199,7 +214,7 @@ account/card references, and internal writer tables remain excluded.
 
 ## Persistence proposal
 
-This is a design, not a migration. A future schema foundation should include:
+The implemented schema foundation includes:
 
 - a versioned taxonomy and category-code relation;
 - append-only item classification decisions with status, provenance, semantic
@@ -215,14 +230,15 @@ This is a design, not a migration. A future schema foundation should include:
 
 Corrections must append a new decision or allocation and preserve immutable
 history. Replaying the same evidence must reuse the same semantic identity.
-No table in this proposal authorizes production writes until its migration,
+No table in this foundation authorizes production writes until a classifier,
 writer, certification impact, and operational rollback are reviewed separately.
 
 ## Implementation sequence
 
-1. Define canonical read-only contracts and fan-out-safe views.
+1. Define canonical read-only contracts and fan-out-safe views. (complete in
+   the design and additive snapshot artifact)
 2. Add the minimal taxonomy/classification and allocation schema with
-   PostgreSQL constraints and exact-decimal tests.
+   PostgreSQL constraints and exact-decimal tests. (complete as migration 019)
 3. Implement deterministic item classification with explicit overrides and
    visible unclassified/review-required outcomes.
 4. Add the return/refund net layer and reconciliation tests.

@@ -52,6 +52,7 @@ const unitFiles = [
   'tests/runtime-schema.test.js',
   'tests/android-bank-envelope.test.js',
   'tests/chatgpt-accounting-semantic-layer.test.js',
+  'tests/canonical-spending-analytics.test.js',
 ];
 
 const postgresFiles = [
@@ -69,6 +70,7 @@ const postgresFiles = [
   'tests/matched-purchase-persistence-postgres.integration.test.js',
   'tests/matched-purchase-orchestration-postgres.integration.test.js',
   'tests/fns-receipt-currency-postgres.integration.test.js',
+  'tests/canonical-spending-analytics-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(
