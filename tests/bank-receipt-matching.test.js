@@ -99,6 +99,23 @@ test('exact PURCHASE and full electronic receipt produce one evidence match with
   assert.deepEqual(input, before);
 });
 
+test('NULL canonical currency is eligible only with proven FNS source and derives RUB', () => {
+  const receipt = receiptRow({ currency: null, fnsSourceProven: true });
+  const candidate = projectBankReceiptCandidate(receipt);
+  assert.equal(candidate.receipt.currency, 'RUB');
+  assert.equal(candidate.receipt.currencyResolution.basis, 'FNS_SOURCE_CONTRACT');
+  assert.equal(match(bankEntry(), receipt).matches.length, 1);
+  assert.equal(projectBankReceiptCandidate(receiptRow({ currency: null })).status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+});
+
+test('currency derivation provenance is part of deterministic candidate and match identity', () => {
+  const explicit = match(bankEntry(), receiptRow({ currency: 'RUB' }));
+  const derived = match(bankEntry(), receiptRow({ currency: null, fnsSourceProven: true }));
+  assert.notEqual(explicit.matches[0].receipt.receiptCandidateKey, derived.matches[0].receipt.receiptCandidateKey);
+  assert.notEqual(explicit.matches[0].matchKey, derived.matches[0].matchKey);
+  assert.equal(derived.matches[0].currency, 'RUB');
+});
+
 test('concrete bank account requires explicit OWNER in the same scope', () => {
   assert.equal(match(bankEntry(), receiptRow(), ownership([])).bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
   assert.equal(match(bankEntry(), receiptRow(), ownership([owner(1, 7, 'other-scope')])).bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
@@ -154,7 +171,6 @@ test('exact currency and inclusive time boundary are required', () => {
 test('zero-edge eligible bank and receipt are both UNMATCHED', () => {
   for (const receipt of [
     receiptRow({ ecashTotalSum: '101.00', totalSum: '101.00' }),
-    receiptRow({ currency: 'USD' }),
     receiptRow({ dateTime: '2026-10-05T10:02:00.000Z' }),
   ]) {
     const result = match(bankEntry(), receipt);
@@ -162,6 +178,7 @@ test('zero-edge eligible bank and receipt are both UNMATCHED', () => {
     assert.equal(result.bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
     assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
   }
+  assert.equal(projectBankReceiptCandidate(receiptRow({ currency: 'USD' })).status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
 });
 
 test('same-scope observations remain one receipt, cross-scope observations fail closed', () => {

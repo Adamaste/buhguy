@@ -1,5 +1,6 @@
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
 import { NORMALIZED_FACT_VERSION } from './prepayment-settlement-matcher.js';
+import { resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
 
 export const STANDALONE_PURCHASE_RULE = 'STANDALONE_PURCHASE_V1';
 export const STANDALONE_PURCHASE_VERSION = 'standalone-purchase-v1';
@@ -10,8 +11,14 @@ const CATEGORY_ORDER = ['ELIGIBLE_STANDALONE', 'EXCLUDED_ALREADY_MULTI_RECEIPT',
 export const standaloneSemanticKey = (receiptId) => `standalone-purchase:${receiptId}`;
 
 export const STANDALONE_RECEIPTS_SQL = `
+WITH fns_source_proof AS (
+  SELECT observation.receipt_id, TRUE AS "fnsSourceProven"
+  FROM receipt_source_observations observation
+  JOIN fns_sources source ON source.id = observation.fns_source_id
+  GROUP BY observation.receipt_id
+)
 SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.operation_type AS "operationType",
-       r.total_sum AS "totalSum", r.currency, f.normalization_status AS "normalizationStatus",
+       r.total_sum AS "totalSum", r.currency, COALESCE(fns_source_proof."fnsSourceProven", FALSE) AS "fnsSourceProven", f.normalization_status AS "normalizationStatus",
        f.fiscal_operation_type AS "fiscalOperationType", f.payment_stage AS "paymentStage",
        f.cash_total_sum AS "cashTotalSum", f.cash_total_state AS "cashTotalState",
        f.ecash_total_sum AS "ecashTotalSum", f.ecash_total_state AS "ecashTotalState",
@@ -21,6 +28,7 @@ SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.operation_type AS
        f.payment_components_status AS "paymentComponentsStatus"
 FROM receipts r
 JOIN receipt_fiscal_facts f ON f.receipt_id=r.id AND f.normalization_version=$1
+LEFT JOIN fns_source_proof ON fns_source_proof.receipt_id=r.id
 WHERE ($2::bigint[] IS NULL OR r.id = ANY($2::bigint[]))
 ORDER BY r.id`;
 
@@ -30,7 +38,8 @@ function newMoneyReconciles(row) { return ['PRESENT_VALUE', 'EXPLICIT_ZERO'].inc
 export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), purchaseReceiptIds = new Set() } = {}) {
   if (lifecycleReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_MULTI_RECEIPT', reason: 'CONFIRMED_MULTI_RECEIPT_LIFECYCLE' };
   if (purchaseReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_PURCHASE', reason: 'PURCHASE_EVIDENCE_ALREADY_EXISTS' };
-  if (row.normalizationStatus !== 'READY' || row.operationType !== 1 || row.fiscalOperationType !== 1 || (row.currency !== null && row.currency !== 'RUB')) return { category: 'OTHER_UNSUPPORTED', reason: 'NORMALIZATION_OPERATION_OR_CURRENCY_NOT_SUPPORTED' };
+  const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
+  if (row.normalizationStatus !== 'READY' || row.operationType !== 1 || row.fiscalOperationType !== 1 || currencyResolution.status !== 'RESOLVED') return { category: 'OTHER_UNSUPPORTED', reason: 'NORMALIZATION_OPERATION_OR_CURRENCY_NOT_SUPPORTED' };
   if (row.paymentStage === 'PREPAYMENT_ONLY') return { category: 'EXCLUDED_PREPAYMENT', reason: 'PREPAYMENT_STAGE' };
   if (row.paymentStage === 'ADVANCE_ONLY') return { category: 'EXCLUDED_ADVANCE', reason: 'ADVANCE_STAGE' };
   if (row.paymentStage === 'MIXED') return { category: 'EXCLUDED_MIXED', reason: 'MIXED_PAYMENT_STAGE' };
@@ -86,7 +95,9 @@ async function persistCandidate(tx, row, scopeKey) {
   await tx.pool.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${STANDALONE_PURCHASE_RULE}:${scopeKey}:${row.id}`]);
   const existing = await tx.pool.query(`SELECT event.id,event.resolution_status FROM business_event_evidence ev JOIN business_events event ON event.id=ev.event_id JOIN accounting_scopes scope ON scope.id=event.scope_id WHERE scope.scope_key=$1 AND ev.receipt_id=$2 AND event.event_type='PURCHASE' AND event.resolution_status='CONFIRMED' LIMIT 1`, [scopeKey, row.id]);
   if (existing.rowCount) return { receiptId: Number(row.id), eventId: Number(existing.rows[0].id), created: false, reused: true };
-  const base = { scopeKey, origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED', amount: amount(row.totalSum), currency: row.currency ?? 'RUB' };
+  const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
+  if (currencyResolution.status !== 'RESOLVED') throw new Error('FNS receipt currency is unresolved or conflicting');
+  const base = { scopeKey, origin: SYSTEM_DERIVED, graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: STANDALONE_PURCHASE_RULE, ruleVersion: STANDALONE_PURCHASE_VERSION, resolutionStatus: 'CONFIRMED', amount: amount(row.totalSum), currency: currencyResolution.currency };
   const event = await tx.createEvent({ ...base, eventType: 'PURCHASE', semanticKey: standaloneSemanticKey(row.id), description: 'Ordinary one-stage full settlement from reconciled new-money components' });
   const evidence = await tx.createEvidenceLink({ ...base, eventId: event.id, receiptId: Number(row.id), normalizationVersion: NORMALIZED_FACT_VERSION, evidenceRole: 'PURCHASE_EVIDENCE' });
   return { receiptId: Number(row.id), eventId: Number(event.id), evidenceId: Number(evidence.id), created: Boolean(event.created), reused: false };

@@ -6,6 +6,7 @@ import {
 import { loadBalancedBankJournalProjection } from './balanced-bank-journal-projection.js';
 import { projectBankBusinessEventCandidates } from './bank-business-event-candidate-projection.js';
 import { loadBankInternalTransferOwnershipSnapshot } from './bank-internal-transfer-matching.js';
+import { resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
 
 export const BANK_RECEIPT_MATCHING_VERSION = 'bank-receipt-matching-v1';
 export const BANK_RECEIPT_MATCHING_STATUSES = Object.freeze({
@@ -112,7 +113,8 @@ export function projectBankReceiptCandidate(row) {
   const receiptId = positiveInteger(parsedReceiptId) ? parsedReceiptId : null;
   const scopeKeys = canonicalScopeKeys(row);
   const amount = row?.ecashTotalSum;
-  const currency = canonicalCurrency(row?.currency);
+  const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row?.currency, fnsSourceProven: row?.fnsSourceProven === true });
+  const currency = canonicalCurrency(currencyResolution.currency);
   const dateTime = canonicalTime(row?.dateTime);
   const itemCodes = row?.itemPaymentTypeCodes;
   const valid = positiveInteger(receiptId)
@@ -121,6 +123,7 @@ export function projectBankReceiptCandidate(row) {
     && row?.normalizationStatus === 'READY'
     && dateTime !== null
     && scopeKeys !== null
+    && currencyResolution.status === 'RESOLVED'
     && currency !== null
     && Number(row?.fiscalOperationType) === 1
     && row?.householdCashDirection === 'OUT'
@@ -149,6 +152,7 @@ export function projectBankReceiptCandidate(row) {
     amount,
     currency,
     semantics: { fiscalOperationType: 1, householdCashDirection: 'OUT', paymentStage: 'SETTLEMENT_ONLY', itemPaymentTypeCodes: [4], amountBasis: 'ECASH_TOTAL_SUM' },
+    currencyResolution,
   });
   return {
     status: BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED,
@@ -162,6 +166,7 @@ export function projectBankReceiptCandidate(row) {
       amount,
       currency,
       amountBasis: 'ECASH_TOTAL_SUM',
+      currencyResolution,
     },
   };
 }
@@ -212,6 +217,7 @@ function matchKey(bank, receipt, timeDeltaMs) {
     bankOccurredAt: bank.occurredAt,
     receiptDateTime: receipt.dateTime,
     timeDeltaMs,
+    receiptCurrencyResolution: receipt.currencyResolution,
     bankAccountOwnershipProvenance: bank.ownershipProvenance,
   });
 }
@@ -276,6 +282,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
         bank: { ledgerKey: banks[0].ledgerKey, candidateKey: banks[0].candidateKey, journalKey: banks[0].journalKey, bankTransactionId: banks[0].bankTransactionId, financialAccountId: banks[0].financialAccountId, occurredAt: banks[0].occurredAt },
         receipt: receipts[0],
         bankAccountOwnershipProvenance: banks[0].ownershipProvenance,
+        receiptCurrencyResolution: receipts[0].currencyResolution,
       });
       statuses.set(`bank:${banks[0].candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
       statuses.set(`receipt:${receipts[0].receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
@@ -385,6 +392,11 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
       LEFT JOIN fns_sources source ON source.id = observation.fns_source_id
       LEFT JOIN accounting_scopes receipt_scope ON receipt_scope.id = source.scope_id
       GROUP BY observation.receipt_id
+    ), receipt_fns_sources AS (
+      SELECT observation.receipt_id, TRUE AS "fnsSourceProven"
+      FROM receipt_source_observations observation
+      JOIN fns_sources source ON source.id = observation.fns_source_id
+      GROUP BY observation.receipt_id
     ), receipt_item_coverage AS (
       SELECT item.receipt_id,
              count(DISTINCT item.id)::integer AS "receiptItemCount",
@@ -395,6 +407,7 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
       GROUP BY item.receipt_id
     )
     SELECT r.id AS "receiptId", r.date_time AS "dateTime", r.currency,
+           COALESCE(receipt_fns_sources."fnsSourceProven", FALSE) AS "fnsSourceProven",
            f.normalization_version AS "normalizationVersion", f.normalized_content_sha256 AS "normalizedContentSha256",
            f.normalization_status AS "normalizationStatus", f.fiscal_operation_type AS "fiscalOperationType",
            f.household_cash_direction AS "householdCashDirection", f.payment_components_status AS "paymentComponentsStatus",
@@ -410,11 +423,12 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
     FROM receipts r
     JOIN receipt_fiscal_facts f ON f.receipt_id = r.id AND f.normalization_version = $1
     LEFT JOIN receipt_item_coverage ON receipt_item_coverage.receipt_id = r.id
+    LEFT JOIN receipt_fns_sources ON receipt_fns_sources.receipt_id = r.id
     LEFT JOIN receipt_scopes ON receipt_scopes.receipt_id = r.id
     WHERE ($2::timestamptz IS NULL OR r.date_time >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR r.date_time < $3::timestamptz)
       AND ($4::text IS NULL OR $4 = ANY(COALESCE(receipt_scopes."scopeKeys", ARRAY[]::text[])))
-    GROUP BY r.id, f.normalization_version, f.normalized_content_sha256, f.normalization_status,
+    GROUP BY r.id, receipt_fns_sources."fnsSourceProven", f.normalization_version, f.normalized_content_sha256, f.normalization_status,
       f.fiscal_operation_type, f.household_cash_direction, f.payment_components_status,
       f.payment_stage, f.correction_status, f.ecash_total_sum, f.ecash_total_state,
       f.cash_total_sum, f.cash_total_state, f.prepaid_sum, f.prepaid_state,
