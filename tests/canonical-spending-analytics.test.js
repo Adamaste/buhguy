@@ -25,6 +25,9 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(analytics, /canonical_spending_returns_v1/);
   assert.match(analytics, /canonical_spending_category_summary_v1/);
   assert.match(analytics, /canonical_spending_person_summary_v1/);
+  assert.match(analytics, /taxonomy_version='household-spending-taxonomy-v1'/);
+  assert.match(analytics, /a\.taxonomy_id <> \(SELECT taxonomy_id FROM v1_taxonomy\)/);
+  assert.doesNotMatch(analytics, /WHERE status='ACTIVE' ORDER BY id LIMIT 1/);
   assert.match(analytics, /GROUP BY p\.scope_id, p\.certification_run_id/);
   assert.match(analytics, /UNCLASSIFIED/);
   assert.match(analytics, /UNRESOLVED_RETURN/);

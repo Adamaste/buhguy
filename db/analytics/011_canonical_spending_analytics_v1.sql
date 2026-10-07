@@ -89,9 +89,9 @@ LEFT JOIN LATERAL (
 ) item_totals ON TRUE;
 
 CREATE OR REPLACE VIEW canonical_spending_category_allocations_v1 AS
-WITH active_taxonomy AS (
+WITH v1_taxonomy AS (
   SELECT id AS taxonomy_id, taxonomy_version FROM spending_taxonomies
-  WHERE status='ACTIVE' ORDER BY id LIMIT 1
+  WHERE taxonomy_version='household-spending-taxonomy-v1'
 ), active_category_allocations AS (
   SELECT a.* FROM spending_category_allocations a
   WHERE NOT EXISTS (
@@ -106,9 +106,9 @@ WITH active_taxonomy AS (
 ), purchase_stats AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency, p.amount,
-         MIN(a.taxonomy_id) AS allocation_taxonomy_id,
          COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
+           OR a.taxonomy_id <> (SELECT taxonomy_id FROM v1_taxonomy)
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
@@ -128,9 +128,9 @@ WITH active_taxonomy AS (
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id AS subject_event_id, r.currency, r.return_amount,
-         MIN(a.taxonomy_id) AS allocation_taxonomy_id,
          COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
+           OR a.taxonomy_id <> (SELECT taxonomy_id FROM v1_taxonomy)
            OR a.currency <> r.currency
            OR a.scope_id <> r.scope_id
            OR a.certification_run_id <> r.certification_run_id
@@ -157,6 +157,7 @@ WITH active_taxonomy AS (
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key AND a.allocation_kind='PURCHASE'
    AND a.subject_event_id=p.purchase_id AND a.allocation_status='ALLOCATED'
+   AND a.taxonomy_id=(SELECT taxonomy_id FROM v1_taxonomy)
   JOIN purchase_stats ps
     ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
    AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id
@@ -172,6 +173,7 @@ WITH active_taxonomy AS (
     ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
    AND a.source_state_key=r.source_state_key AND a.allocation_kind='RETURN'
    AND a.subject_event_id=r.return_id AND a.allocation_status='ALLOCATED'
+   AND a.taxonomy_id=(SELECT taxonomy_id FROM v1_taxonomy)
   JOIN return_stats rs
     ON rs.scope_id=r.scope_id AND rs.certification_run_id=r.certification_run_id
    AND rs.source_state_key=r.source_state_key AND rs.subject_event_id=r.return_id
@@ -180,27 +182,25 @@ WITH active_taxonomy AS (
   JOIN spending_taxonomies t ON t.id=a.taxonomy_id
 ), fallback_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
-         p.purchase_id, p.currency, COALESCE(s.allocation_taxonomy_id, at.taxonomy_id),
-         st.taxonomy_version, 'UNCLASSIFIED',
+         p.purchase_id, p.currency, at.taxonomy_id,
+         at.taxonomy_version, 'UNCLASSIFIED',
          CASE WHEN s.conflict THEN p.amount ELSE p.amount-s.allocated END,
          0::NUMERIC(18,2), CASE WHEN s.conflict THEN 'REVIEW_REQUIRED' ELSE 'UNCLASSIFIED' END
   FROM purchase_stats s JOIN canonical_spending_purchases_v1 p
     ON p.scope_id=s.scope_id AND p.certification_run_id=s.certification_run_id
    AND p.source_state_key=s.source_state_key AND p.purchase_id=s.subject_event_id
-  CROSS JOIN active_taxonomy at
-  JOIN spending_taxonomies st ON st.id=COALESCE(s.allocation_taxonomy_id, at.taxonomy_id)
+  CROSS JOIN v1_taxonomy at
   WHERE s.conflict OR NOT s.has_rows OR s.allocated < s.amount
   UNION ALL
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
-         r.return_id, r.currency, COALESCE(s.allocation_taxonomy_id, at.taxonomy_id),
-         st.taxonomy_version, 'UNRESOLVED_RETURN',
+         r.return_id, r.currency, at.taxonomy_id,
+         at.taxonomy_version, 'UNRESOLVED_RETURN',
          0::NUMERIC(18,2), CASE WHEN s.conflict THEN s.return_amount ELSE s.return_amount-s.allocated END,
          CASE WHEN s.conflict THEN 'REVIEW_REQUIRED' ELSE 'REVIEW_REQUIRED' END
   FROM return_stats s JOIN canonical_spending_returns_v1 r
     ON r.scope_id=s.scope_id AND r.certification_run_id=s.certification_run_id
    AND r.source_state_key=s.source_state_key AND r.return_id=s.subject_event_id
-  CROSS JOIN active_taxonomy at
-  JOIN spending_taxonomies st ON st.id=COALESCE(s.allocation_taxonomy_id, at.taxonomy_id)
+  CROSS JOIN v1_taxonomy at
   WHERE s.conflict OR NOT s.has_rows OR s.allocated < s.return_amount
 )
 SELECT * FROM explicit_rows

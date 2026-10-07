@@ -422,6 +422,56 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     VALUES($1,'FOREIGN_PARENT') RETURNING id`, [foreignTaxonomy.id])).rows[0];
   const foreignCategory = (await pool.query(`INSERT INTO spending_categories(taxonomy_id,category_code)
     VALUES($1,'FOREIGN_CATEGORY') RETURNING id`, [foreignTaxonomy.id])).rows[0];
+
+  const singleForeignClient = await pool.connect();
+  try {
+    await singleForeignClient.query('BEGIN');
+    await singleForeignClient.query(`INSERT INTO spending_category_allocations(
+        scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
+      VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7)`,
+    [scope.id, secondRun.id, snapshotKey, initial.business_event_id, foreignTaxonomy.id, foreignCategory.id, 'c4'.repeat(32)]);
+    const singleForeignRows = (await singleForeignClient.query(`SELECT taxonomy_id,taxonomy_version,category_code,category_gross::text,allocation_status
+      FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
+    [scope.id, snapshotKey, initial.business_event_id])).rows;
+    assert.deepEqual(singleForeignRows, [{
+      taxonomy_id: taxonomyId,
+      taxonomy_version: 'household-spending-taxonomy-v1',
+      category_code: 'UNCLASSIFIED',
+      category_gross: chosenPurchase[0].amount,
+      allocation_status: 'REVIEW_REQUIRED'
+    }]);
+    await singleForeignClient.query('ROLLBACK');
+  } finally { singleForeignClient.release(); }
+
+  const multipleActiveFallback = (await pool.query(`SELECT taxonomy_id,taxonomy_version,category_code,category_gross::text,allocation_status
+    FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
+  [scope.id, snapshotKey, initial.business_event_id])).rows;
+  assert.deepEqual(multipleActiveFallback, [{
+    taxonomy_id: taxonomyId,
+    taxonomy_version: 'household-spending-taxonomy-v1',
+    category_code: 'UNCLASSIFIED',
+    category_gross: chosenPurchase[0].amount,
+    allocation_status: 'UNCLASSIFIED'
+  }]);
+
+  const retiredV1Client = await pool.connect();
+  try {
+    await retiredV1Client.query('BEGIN');
+    await retiredV1Client.query(`UPDATE spending_taxonomies SET status='RETIRED' WHERE id=$1`, [taxonomyId]);
+    await retiredV1Client.query(`UPDATE spending_taxonomies SET status='ACTIVE' WHERE id=$1`, [foreignTaxonomy.id]);
+    const retiredV1Rows = (await retiredV1Client.query(`SELECT taxonomy_id,taxonomy_version,category_code,category_gross::text,allocation_status
+      FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
+    [scope.id, snapshotKey, initial.business_event_id])).rows;
+    assert.deepEqual(retiredV1Rows, [{
+      taxonomy_id: taxonomyId,
+      taxonomy_version: 'household-spending-taxonomy-v1',
+      category_code: 'UNCLASSIFIED',
+      category_gross: chosenPurchase[0].amount,
+      allocation_status: 'UNCLASSIFIED'
+    }]);
+    await retiredV1Client.query('ROLLBACK');
+  } finally { retiredV1Client.release(); }
+
   await expectConstraint(`INSERT INTO spending_categories(taxonomy_id,category_code,parent_category_id)
     VALUES($1,'CROSS_TAXONOMY_CHILD',$2)`, [taxonomyId, foreignParent.id], ['23503']);
 
@@ -438,10 +488,10 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       VALUES($1,$2,$3,'PURCHASE',$4,$5,$6,0.01,'RUB','ALLOCATED',$7),
             ($1,$2,$3,'PURCHASE',$4,$8,$9,0.01,'RUB','ALLOCATED',$10)`,
     [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, categoryId, 'a3'.repeat(32), foreignTaxonomy.id, foreignCategory.id, 'b3'.repeat(32)]);
-    const taxonomyRows = (await taxonomyClient.query(`SELECT category_code,allocation_status,category_gross::text
+    const taxonomyRows = (await taxonomyClient.query(`SELECT taxonomy_id,taxonomy_version,category_code,allocation_status,category_gross::text
       FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND source_state_key=$2 AND subject_event_id=$3`,
     [scope.id, snapshotKey, initial.business_event_id])).rows;
-    assert.deepEqual(taxonomyRows, [{ category_code: 'UNCLASSIFIED', allocation_status: 'REVIEW_REQUIRED', category_gross: chosenPurchase[0].amount }]);
+    assert.deepEqual(taxonomyRows, [{ taxonomy_id: taxonomyId, taxonomy_version: 'household-spending-taxonomy-v1', category_code: 'UNCLASSIFIED', allocation_status: 'REVIEW_REQUIRED', category_gross: chosenPurchase[0].amount }]);
     await taxonomyClient.query('ROLLBACK');
   } finally { taxonomyClient.release(); }
 
