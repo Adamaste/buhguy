@@ -106,7 +106,9 @@ WITH purchase_stats AS (
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN spending_category_allocations a
-    ON a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
+    ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
+   AND a.source_state_key=p.source_state_key
+   AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
   GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
@@ -125,7 +127,9 @@ WITH purchase_stats AS (
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
   LEFT JOIN spending_category_allocations a
-    ON a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
+    ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
+   AND a.source_state_key=r.source_state_key
+   AND a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
   GROUP BY r.scope_id, r.certification_run_id, r.source_state_key, r.return_id, r.currency, r.return_amount
 ), explicit_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
@@ -201,7 +205,9 @@ WITH purchase_stats AS (
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN spending_person_allocations a
-    ON a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
+    ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
+   AND a.source_state_key=p.source_state_key
+   AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
   GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
@@ -220,7 +226,9 @@ WITH purchase_stats AS (
          COUNT(a.id) > 0 AS has_rows
   FROM canonical_spending_returns_v1 r
   LEFT JOIN spending_person_allocations a
-    ON a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
+    ON a.scope_id=r.scope_id AND a.certification_run_id=r.certification_run_id
+   AND a.source_state_key=r.source_state_key
+   AND a.subject_event_id=r.return_id AND a.allocation_kind='RETURN'
   GROUP BY r.scope_id, r.certification_run_id, r.source_state_key, r.return_id, r.currency, r.return_amount
 ), explicit_rows AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
