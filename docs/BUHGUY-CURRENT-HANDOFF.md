@@ -17,15 +17,15 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-07
-- Current implementation baseline: `9ed53a33cc6db47b18a204c8fe47355aed182871` (PR #117 squash-merged; FNS receipt currency closeout is merged)
+- Current implementation baseline: `90664d76e9087ca68bfe63eb761f62683d86e2dd` (PR #118 squash-merged; FNS eligibility closeout is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, while production reconciliation E2E remains unproven
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, and FNS receipt currency contract v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; the new persistence tables are empty and historical business/accounting rows are unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. The next blocker is bank account identity coverage: 32 authoritative PURCHASE/DEBIT rows have no concrete financial account, so matching-window work is not yet justified. No identity provisioning, writer execution, orchestration preview, replay, backfill, deployment, or further production mutation is authorized by this stage.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, and FNS receipt currency contract v1 stages are merged. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain unchanged. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is now complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The next stage is a production matching-window policy review; no orchestration preview, writer execution, replay, backfill, deployment, or further identity mutation is authorized by that stage.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `production bank account identity provisioning review`. Use an isolated exact-master checkout and a repeatable-read, read-only production transaction to review identity evidence and safe provisioning options. Do not create accounts, relations, references, bindings, transaction resolutions, orchestration previews, or writer executions; do not deploy, replay, backfill, or mutate production.
+- Next action: `matched-purchase production matching-window policy review`. Review explicit finite diagnostic windows before any preview; do not run orchestration or the writer, deploy, replay, backfill, or mutate production in that review.
 
 ## Bank business-event candidate projection v1
 
@@ -346,6 +346,34 @@ not sufficient to begin matching-window work. The next stage is the read-only
 `production bank account identity provisioning review`; it must not infer
 ownership from provider/source identity or execute any account, reference,
 binding, or transaction-resolution mutation.
+
+## Controlled user-confirmed bank account identity provisioning
+
+The production identity review found exactly 28 authoritative `PURCHASE /
+DEBIT` transactions for `com.yandex.bank` and 4 for
+`ru.sberbankmobile`, all previously `UNKNOWN` with no financial account.
+The user explicitly confirmed that payment instruments 4 and 5 are their own
+cards belonging to one personal Yandex RUB account, and that the Sber rows
+belong to their own Sber account in Person 1 scope.
+
+After a validated PostgreSQL backup, exactly one active Yandex RUB financial
+account (id 4) was created in the default scope with one `OWNER` relation
+using `USER_CONFIRMED_IDENTITY`. Instruments 4 and 5 were linked to it. The
+28 Yandex transactions and 4 Sber transactions were resolved through the
+reviewed account-resolution path as `MANUAL` with
+`USER_CONFIRMED_IDENTITY`; Sber account 1 was reused unchanged.
+
+No `bank_account_references` or source/provider bindings were created or
+changed. Bank transactions and immutable observations remained unchanged, as
+did all matched-purchase persistence tables. The installed production runtime
+remained on the previously deployed artifact; no deployment, replay, backfill,
+orchestration preview, writer invocation, or accounting mutation occurred.
+
+An exact-master read-only eligibility check using an explicit finite
+diagnostic window reported 32 eligible bank purchases, zero target OWNER-gate
+failures, and 356 eligible receipts in that window. This was not a matching
+policy decision and did not run matching-window sensitivity. The next stage is
+`matched-purchase production matching-window policy review`.
 
 ## T-Bank ordinary purchase validation baseline
 
