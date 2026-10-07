@@ -114,6 +114,12 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   assert.equal(chainRows[0].category_gross, initial.amount);
   assert.equal((await pool.query(`SELECT count(*)::int AS count FROM spending_category_allocations
     WHERE id IN ($1,$2)`, [allocationA.id, allocationB.id])).rows[0].count, 2);
+  const expectConstraint = async (query, params, codes) => {
+    await assert.rejects(() => pool.query(query, params), (error) => {
+      assert.ok(codes.includes(error.code), `unexpected SQLSTATE ${error.code}`);
+      return true;
+    });
+  };
 
   const historyKey = '1'.repeat(64);
   const historyRun = (await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at)
@@ -238,12 +244,6 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
 
   const categoryId = (await pool.query(`SELECT id FROM spending_categories
     WHERE category_code='UNCLASSIFIED' LIMIT 1`)).rows[0].id;
-  const expectConstraint = async (query, params, codes) => {
-    await assert.rejects(() => pool.query(query, params), (error) => {
-      assert.ok(codes.includes(error.code), `unexpected SQLSTATE ${error.code}`);
-      return true;
-    });
-  };
   const allocationClient = await pool.connect();
   try {
     await allocationClient.query('BEGIN');
