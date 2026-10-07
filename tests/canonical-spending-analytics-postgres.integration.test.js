@@ -346,7 +346,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   await expectConstraint(`INSERT INTO spending_category_allocations(
       scope_id,certification_run_id,source_state_key,allocation_kind,subject_event_id,taxonomy_id,category_id,amount,currency,allocation_status,semantic_key)
     VALUES($1,$2,$3,'PURCHASE',$4,$5,999999,0.01,'RUB','ALLOCATED',$6)`,
-  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, 'f'.repeat(64)], ['23503']);
+  [scope.id, secondRun.id, snapshotKey, initial.business_event_id, taxonomyId, '2'.repeat(64)], ['23503']);
   await expectConstraint(`INSERT INTO spending_classification_decisions(
       scope_id,taxonomy_id,subject_type,subject_id,category_id,decision_status,decision_source,rule_or_model_version,provenance_key,semantic_key)
     VALUES($1,(SELECT id FROM spending_taxonomies LIMIT 1),'PURCHASE',$2,$3,'CLASSIFIED','CHATGPT','v1',$4,$5)`,
