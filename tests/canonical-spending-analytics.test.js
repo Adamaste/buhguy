@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+test('canonical spending foundation is additive, snapshot-qualified, and exact-decimal', async () => {
+  const migration = await readFile(new URL('../db/migrations/019_canonical_spending_analytics_foundation.sql', import.meta.url), 'utf8');
+  const analytics = await readFile(new URL('../db/analytics/011_canonical_spending_analytics_v1.sql', import.meta.url), 'utf8');
+  assert.match(migration, /household-spending-taxonomy-v1/);
+  assert.match(migration, /NUMERIC\(18,2\)/);
+  assert.match(migration, /decision_source TEXT NOT NULL CHECK/);
+  assert.match(migration, /source_state_key CHAR\(64\)/);
+  assert.match(migration, /ON DELETE RESTRICT/);
+  assert.match(analytics, /canonical_spending_purchases_v1/);
+  assert.match(analytics, /canonical_spending_returns_v1/);
+  assert.match(analytics, /canonical_spending_category_summary_v1/);
+  assert.match(analytics, /canonical_spending_person_summary_v1/);
+  assert.match(analytics, /GROUP BY p\.scope_id, p\.certification_run_id/);
+  assert.match(analytics, /UNCLASSIFIED/);
+  assert.match(analytics, /UNRESOLVED_RETURN/);
+  assert.match(analytics, /Never SUM chatgpt_accounting\.user_receipts as spending/i);
+  assert.doesNotMatch(analytics, /FROM\s+chatgpt_accounting\.user_receipts/i);
+  assert.doesNotMatch(migration, /^\s*(DROP|DELETE)\b/im);
+});
