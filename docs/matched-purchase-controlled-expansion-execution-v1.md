@@ -47,11 +47,28 @@ The order is operational only: absolute event-time delta ascending, then
 | 11 | 182 | 15856 | 294058 | 3125747 | 4 | 5264.32 | RUB | 85265 | PERSIST_REQUIRED | REFINE_EXISTING_FISCAL_FUNDING | YES |
 | 12 | 81 | 15859 | 305967 | 3248897 | 4 | 3100.00 | RUB | 226847 | PERSIST_REQUIRED | REFINE_EXISTING_FISCAL_FUNDING | YES |
 
+The corresponding content-addressed identities, in the same order, are:
+
+| Order | Match key | Enrichment key | Orchestration key |
+| ---: | :--- | :--- | :--- |
+| 1 | `46ba405f907d17960dfd433754cc2fc76e9e7592cfb469932d7eab4d82b8c76a` | `df592bbccf4a62a46df67a9a55ef517262c83a68a661fe3daca54aa40b929c2b` | `3f5348fb66fcc16de9869ac309d8008804d5ede7998625b9b281220dac47b7ab` |
+| 2 | `672debe7d538850a496cd0921eabf2d3b1914e824dc377df6e020c2d3ad4bbcb` | `8b48c2e8a11034a70693e58fce22e656a90e8a855607a0f5ef437132fef728d9` | `a0179fc3ae42b3cbb421195341fa5dd543cb2f49e8a3bc1ad4a32dde3aa8074c` |
+| 3 | `ffffeb5702890e26cc9e2964bae313b5f97da46def845335f0dcf07e4c3c4b13` | `a734f794254378d69e87eb3b5f4e64533a3caa3a1d3590a6f3cb93335277be36` | `dd717f414763dc9010ff652e324500094c843b4d0c76a3381bbc82a3c6ef2111` |
+| 4 | `6db8cdb8d94e8497a3f86299294ed6563ce2e410f9c21b97438153fb22ede2a4` | `c51c013da3016f4d00e64f43c61b3daba977c4e07f868f81a4fb327bd715c02b` | `5e1fec1ad2e4a10b2b54b565c03e2eb5c59d04af359cdb22a8c8a9081cfc170d` |
+| 5 | `420628dabf272f4a4777479a3b57188b862f1f90f80fdf789313b870418c97c8` | `21b01b26c6748bdc983c605d584690383be642736df5652d4ce31453a397f868` | `fa325f51984a05d9e5f1c82cf838c98b6898220765e611b097644cc8e3ed33dd` |
+| 6 | `a64f7cbe24ad7ffafaf486f88ef65471cdf29ea7c6c2b03a769ab71aa3933d7b` | `7d298e86d1f7609d140c06400c35e379054d9d7167b14ec6a60e41504995a0b1` | `30d6b5b0b2aafb8ac4e97591c19a9a80679ea2683067b37f00275d32bd13de5e` |
+| 7 | `6efeef7ad0d5f37a9faa0ee92a65bb133869d922250397c4cdbced560b1359a8` | `e66464b9401ad1a4098700910f35c06734405fd92b1baf99e3021713d553baae` | `26b25afc2e65fa16334c274f56e89ca908ea3a2bd925786ae82e0ae9fae43430` |
+| 8 | `cc3d52c9a76014b2072c62ab671b20c0c884d002133faf2ae69157b8ccf7207a` | `f1a838231546a089895b7dd1b5028ee8898d408c7360b1bff410527a57a31c44` | `6a7c647119403d6f720dee413b8b8f582babd462b262358298f7134a74f7579f` |
+| 9 | `0ea1ae3c2991aca568b4e0209dc15a069f96afefda8b5b4ea481e808e8439536` | `5c440925081da2e2d734d3ba3a34a4eb01e6a043894060a597e58e91825b23b7` | `89a783f7817816664e0246d64a6f253a18c8af491b6ab075d9d05c704022aedc` |
+| 10 | `088992fe839b2fd21da6e041f6d81045903baac7eaae189bd8cd615722760ea8` | `e52bec66aff96b76cf5e161fe456de3e5d633462701994d0e4bfe8275770b12a` | `ae0c9acf61764884fb49fedda4dc24aefb4497bfe4e29432016cb0919e09b261` |
+| 11 | `8ffc314dd19ffad695061735940c37f3c8f66e4a081b4468f328a57fd3d0c22a` | `a6b07d1f30a6cdf60fc237c35ec7a295c5e4cd1da7ba6c2e87261aafa77730cf` | `71d8f306c42b7789e3e2becee40a2021b2794d245cd05c80c439711a49ad4d53` |
+| 12 | `61b1d3d4e82921f385dc439973cd170a85d65e83d29b67756e7aaa0928a19e6a` | `131fcc30eb55396f82d15aceb136fda0b7d3b387a265463d8e0e1caa8bf0f241` | `5f0631f248add3a1411e2f1f6e0f8487f0542f9964605184e84916bd5a899296` |
+
 All candidates resolved currency through `FNS_SOURCE_CONTRACT`, have concrete
 same-scope account `4`, and had no existing match, bank evidence, or
 supersession. Their `matchKey`, `enrichmentKey`, and `orchestrationKey` are
-captured by a fresh pre-write preview and must not be copied from this design
-document as authorization.
+captured by the reviewed preview; a future execution must revalidate them
+fresh and must not treat this design document as authorization.
 
 ## Diagnostic window
 
