@@ -85,24 +85,6 @@ const canonicalRows = (rows, fields) => rows
 const FACT_FIELDS = ['run_id', 'scope_id', 'subject_type', 'subject_id', 'metric_code', 'dimension', 'status', 'amount', 'currency', 'event_at', 'reason_code', 'rule_code', 'rule_version', 'ledger_entry_id', 'business_event_id', 'graph_evidence_id', 'semantic_key', 'source_state_key'];
 const RESULT_FIELDS = ['run_id', 'metric_code', 'status', 'amount', 'currency', 'count_items', 'reason_code', 'semantic_key'];
 
-function expectedResults(facts, runId) {
-  return aggregateFacts(facts).map((result) => {
-    const row = {
-      metric_code: result.metricCode,
-      status: result.status,
-      amount: result.amount,
-      currency: result.currency,
-      count_items: result.countItems,
-      reason_code: result.reasonCode,
-    };
-    return {
-      ...row,
-      run_id: runId,
-      semantic_key: fiscalContentFingerprint({ ...row, runId }),
-    };
-  });
-}
-
 async function insertFacts(client, runId, facts) {
   for (const fact of facts) await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,status=EXCLUDED.status,amount=EXCLUDED.amount`, [runId, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
 }
@@ -146,7 +128,13 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
         semantic_key: fact.semanticKey,
         source_state_key: fact.sourceStateKey,
       }));
-      const expectedResultRows = expectedResults(facts, existing.id);
+      const expectedResultRows = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code
+        FROM certification_facts WHERE run_id=$1
+        GROUP BY metric_code,status,currency,reason_code`, [existing.id])).rows.map((result) => ({
+        ...result,
+        run_id: existing.id,
+        semantic_key: fiscalContentFingerprint({ ...result, runId: Number(existing.id) }),
+      }));
       if (existing.status !== 'READY'
         || JSON.stringify(canonicalRows(persistedFacts, FACT_FIELDS)) !== JSON.stringify(canonicalRows(expectedFactRows, FACT_FIELDS))
         || JSON.stringify(canonicalRows(persistedResults, RESULT_FIELDS)) !== JSON.stringify(canonicalRows(expectedResultRows, RESULT_FIELDS))) {
