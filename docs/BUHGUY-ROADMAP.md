@@ -353,10 +353,11 @@ authoritative-loader read-only preview with explicit windows, deterministic
 decisions, stable orchestration identity, stale match-key fail-closed
 handling, PostgreSQL READ ONLY/snapshot proof, and safe summary
 observability. It has no writer execution path and no sync or
-accounting-catchup wiring. The next stage is matched-purchase production
-matching-window policy review before any controlled read-only preview:
-inspect production schema/runtime identity, define explicit finite windows,
-and keep the preview on a read-only DB path. Do not invoke the writer, deploy
+accounting-catchup wiring. Production receipt-window policy v1 is now
+reviewed: use an inclusive 300000 ms receipt window, while the internal-
+transfer window remains unresolved and must be revalidated separately. The
+next stage is a controlled production read-only matched-purchase orchestration
+preview using an explicit read-only DB path. Do not invoke the writer, deploy
 a trigger, replay, backfill, or mutate production. Ambiguity remains
 fail-closed.
 
