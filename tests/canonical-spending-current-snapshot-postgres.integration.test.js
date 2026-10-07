@@ -59,7 +59,7 @@ integration('current snapshot uses one repeatable-read read-only transaction and
   const before = await persistenceCounts();
   const observed = observingPool();
   const resolved = await resolveCurrentSpendingSnapshot(observed, { scopeKey: 'default' });
-  assert.equal(resolved.ok, true, JSON.stringify(resolved));
+  assert.equal(resolved.ok, true);
   assert.equal(resolved.snapshot.status, 'READY');
   assert.equal(resolved.snapshot.modelVersion, 'reconciliation-certification-v1');
   assert.match(resolved.snapshot.sourceStateKey, /^[0-9a-f]{64}$/);
