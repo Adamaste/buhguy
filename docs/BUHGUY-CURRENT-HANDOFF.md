@@ -60,8 +60,8 @@ trigger, replay, backfill, deployment, or identity mutation is authorized.
 ## Controlled matched-purchase expansion execution review (historical)
 
 The reviewed pre-execution design is recorded in
-`docs/matched-purchase-controlled-expansion-execution-v1.md`. It is a design
-and was a design and read-only review only. At that historical stage no writer call, production persistence, deployment,
+`docs/matched-purchase-controlled-expansion-execution-v1.md`. It was a design
+and read-only review only. At that historical stage no writer call, production persistence, deployment,
 replay, backfill, accounting catch-up, or identity mutation is authorized by
 this document.
 
@@ -2556,7 +2556,11 @@ However, Freecess is **not** a proven root cause.
 
 Do not state that Samsung Freecess caused the missed bank callback unless new evidence directly supports that conclusion.
 
-## Immediate next action
+## Historical immediate next action
+
+This section is retained only for historical context and is superseded by the
+top-level current `Next action` above. It must not override the current
+controlled-expansion closeout state.
 
 The Person 1 account-identity readiness audit is complete for development and
 the active phase is `RECONCILIATION_DEVELOPMENT`. The Alfa lifecycle
@@ -2564,7 +2568,7 @@ canonicalization, bank business-event candidate, two-sided internal-transfer,
 bank-ledger, and `bank-receipt-matching-v1` slices are complete and remain
 non-mutating.
 
-The immediate next action is
+The historical immediate next action was
 `matched-purchase writer orchestration / controlled production-readiness validation`.
 The non-mutating matched-purchase enrichment projection, reviewed persistence
 contract, migration 018 schema foundation, and ACTIVE-ledger runtime semantics
