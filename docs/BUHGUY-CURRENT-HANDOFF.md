@@ -16,16 +16,42 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-07
-- Current implementation baseline: `5695cc93fd9be837f6dde6233492427ff70084fe` (exact master; controlled expansion execution result is documented below)
+- Last updated: 2026-10-08
+- Current implementation baseline: `bdeb1fb607fb68d36bf146ffa1584761616f923c` (exact master; merged current-snapshot reader)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, the first matched-purchase canary, and the reviewed 12-item controlled expansion are complete. The canonical spending analytics v1 schema/read-model foundation and the non-mutating current-snapshot semantic reader are implemented additively; classification, production exposure, and production read-only validation remain separate stages. Exact master CI `37697059572` passed all applicable jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain immutable. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; no runtime deployment was performed by the expansion. The current persisted matched-purchase set is the original canary plus exactly the 12 reviewed expansion items; no unreviewed matches were persisted. The next action is production read-only canonical spending current-snapshot validation, not another writer run.
+- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, the first matched-purchase canary, and the reviewed 12-item controlled expansion are complete. The canonical spending analytics v1 schema/read-model foundation and the non-mutating current-snapshot semantic reader are merged, but the first exact-master production read-only validation is `SCHEMA_NOT_READY`: migration 019 tables and analytics 011 views are absent, and no exact live-source unbounded READY certification was found. Exact master CI `37756941658` passed all applicable jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain immutable. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; no runtime deployment was performed by the expansion. The current persisted matched-purchase set is the original canary plus exactly the 12 reviewed expansion items; no unreviewed matches were persisted. The next action is a reviewed production schema-readiness step for migration 019 and analytics 011, not a certification refresh, writer run, or deployment.
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `production read-only canonical spending current-snapshot validation`. The additive schema/read-model foundation and current-snapshot reader are complete through migration 019 and the snapshot-qualified analytics artifact; the next stage is to validate the exact-master reader against current production state in an explicitly read-only transaction, without changing production data or inferring unsupported ownership or business meaning. Classification decisions, persistence writes, grants/BlazeSQL exposure, and production rollout remain separate reviewed stages.
+- Next action: `reviewed production schema-readiness for canonical spending current-snapshot validation`. The exact-master reader preflight found migration 019 tables and analytics 011 views absent, so no current snapshot was selected and no reconciliation was refreshed. The next stage is to review a separately authorized schema-only rollout/readiness path before repeating the read-only validation; classification decisions, persistence writes, grants/BlazeSQL exposure, and production rollout remain separate reviewed stages.
+
+## Production read-only canonical spending current-snapshot validation
+
+The exact merged master `bdeb1fb607fb68d36bf146ffa1584761616f923c` was
+validated by CI run `37756941658`, including PostgreSQL integration, full
+suite, Android, and signed Android. The production probe used only
+`REPEATABLE READ READ ONLY` transactions and recorded a safe duration of about
+1.2 seconds.
+
+For Person 1 scope `default` (scope id `1`), the probe found:
+
+- `SCHEMA_019_PRESENT=NO`;
+- `ANALYTICS_011_VIEWS_PRESENT=NO`;
+- no live-source matching unbounded `READY` certification run;
+- `CURRENT_CERTIFICATION_STATUS=MISSING`;
+- certification integrity and household/category/person reconciliation were
+  blocked because the required schema/read-model layer is not present.
+
+The least-privilege service database role could not read the certification
+source tables (`42501`); the safe preflight was therefore repeated with the
+local PostgreSQL administrative path, still inside read-only transactions.
+No grants were changed. Persistence snapshots were identical before and after
+the probe, and no certification refresh, writer, migration, deployment,
+classification, replay, or backfill was performed. The next action is to
+review schema readiness before any repeat validation; do not install missing
+tables or views as part of this closeout.
 
 ## Controlled matched-purchase expansion design v1 (historical)
 
