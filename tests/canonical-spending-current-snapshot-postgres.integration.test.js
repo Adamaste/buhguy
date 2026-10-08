@@ -300,7 +300,7 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
         crypto.createHash('sha256').update(`${prefix}-${index}`).digest('hex'), current]);
     }
     const rows = (await pool.query(`WITH monetary AS (
-      SELECT event_at, amount, currency FROM canonical_spending_purchases_v1
+      SELECT purchased_at AS event_at, amount, currency FROM canonical_spending_purchases_v1
       WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
     ) SELECT to_char(date_trunc('month', event_at AT TIME ZONE $4),'YYYY-MM') AS month,
       currency, SUM(amount)::NUMERIC(18,2)::text AS amount
