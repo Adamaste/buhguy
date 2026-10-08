@@ -243,7 +243,7 @@ export function aggregateCertificationFacts(facts) {
     const current = result.get(key) ?? { metricCode: fact.metricCode, status: fact.status, amount: 0n, currency: fact.currency, countItems: 0, reasonCode: fact.reasonCode };
     current.amount += moneyMinorUnits(fact.amount); current.countItems += 1; result.set(key, current);
   }
-  return [...result.values()].map((item) => ({ ...item, amount: money(item.amount), semanticKey: fiscalContentFingerprint(item) }));
+  return [...result.values()].map((item) => { const amount = money(item.amount); return { ...item, amount, semanticKey: fiscalContentFingerprint({ ...item, amount }) }; });
 }
 
 const aggregateFacts = aggregateCertificationFacts;
