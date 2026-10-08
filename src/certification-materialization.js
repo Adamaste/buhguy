@@ -66,6 +66,16 @@ async function persistedRows(client, runId) {
   return { facts, results };
 }
 
+async function independentlyObservedSourceState(pool, scopeId, statementTimeoutMs) {
+  const verifier = await pool.connect();
+  try {
+    await verifier.query(`SET statement_timeout = '${statementTimeoutMs}ms'`);
+    return await certificationSourceStateKey(verifier, scopeId);
+  } finally {
+    verifier.release();
+  }
+}
+
 function assertPersistedProjection(run, projection, persisted) {
   if (run.status !== 'READY' || run.period_from !== null || run.period_to !== null || !run.finished_at) {
     throw materializationError(`Certification run ${run.id} is not a complete unbounded READY run`);
@@ -95,6 +105,8 @@ async function materialize(pool, { scopeKey = 'default', lockTimeoutMs = 5000, s
     if (afterProjection) await afterProjection();
     const recheckedSourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
     if (recheckedSourceStateKey !== sourceStateKey) throw materializationError('Source state changed during materialization', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
+    const independentlyObservedKey = await independentlyObservedSourceState(pool, Number(scope.id), statementTimeoutMs);
+    if (independentlyObservedKey !== sourceStateKey) throw materializationError('Source state changed outside the materialization snapshot', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
 
     const existing = (await client.query(`SELECT * FROM reconciliation_runs
       WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3

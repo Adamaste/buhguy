@@ -39,6 +39,10 @@ source state. From an isolated exact-master checkout:
    replay, backfill, or accounting catch-up.
 6. Verify the committed run is the exact source state, unbounded, `READY`, and
    that all fact/result semantic keys and per-currency reconciliations match.
+   The final source-state recheck is independently observed through a bounded
+   read connection because a repeatable transaction snapshot cannot see a
+   concurrent commit that occurs after projection. The materialization
+   transaction remains the only connection that writes certification rows.
 7. If any precheck, lock, timeout, source drift, conflict, or postcheck fails,
    stop and rollback. Do not retry blindly; take a new read-only snapshot.
 
