@@ -132,14 +132,15 @@ integration('current snapshot rejects stale and corrupt persisted snapshots with
 
   const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
   const semanticKey = crypto.createHash('sha256').update('current-snapshot-stale-fixture').digest('hex');
-  await pool.query(`INSERT INTO business_events(
+  const staleEventId = Number((await pool.query(`INSERT INTO business_events(
       scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
-    VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','current-snapshot-test',$2,$3,$4,0.01,'RUB','stale snapshot fixture')`,
-  [scope.id, rule.rule_code, rule.rule_version, semanticKey]);
+    VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','current-snapshot-test',$2,$3,$4,0.01,'RUB','stale snapshot fixture') RETURNING id`,
+  [scope.id, rule.rule_code, rule.rule_version, semanticKey])).rows[0]?.id);
   const stale = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
   assert.equal(stale.ok, false);
   assert.ok(['NO_CURRENT_CERTIFICATION', 'STALE_SNAPSHOT'].includes(stale.reasonCode));
   assert.notEqual(stale.sourceStateKey, sourceStateKey);
+  await pool.query('DELETE FROM business_events WHERE id=$1', [staleEventId]);
 });
 
 integration('current snapshot rejects non-ready, bounded, wrong-identity and absent current runs', async () => {
@@ -228,11 +229,14 @@ integration('repeatable-read snapshot remains coherent under concurrent source m
       }
     },
   });
-  const result = await resolveCurrentSpendingSnapshot(observed, { scopeKey: 'default' });
-  assert.equal(injected, true);
-  assert.equal(result.ok, true);
-  assert.equal(result.snapshot.sourceStateKey, baseline);
-  await pool.query("DELETE FROM business_events WHERE graph_model_version='snapshot-concurrent'");
+  try {
+    const result = await resolveCurrentSpendingSnapshot(observed, { scopeKey: 'default' });
+    assert.equal(injected, true);
+    assert.equal(result.ok, true);
+    assert.equal(result.snapshot.sourceStateKey, baseline);
+  } finally {
+    await pool.query("DELETE FROM business_events WHERE graph_model_version='snapshot-concurrent'");
+  }
 });
 
 integration('monthly metadata preserves timezone and half-open boundaries', async () => {
