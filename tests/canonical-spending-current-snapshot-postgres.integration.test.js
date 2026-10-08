@@ -294,9 +294,9 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
   try {
     for (const [index, fixture] of fixtures.entries()) {
       const eventId = Number((await pool.query(`INSERT INTO business_events(
-        scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,event_at,description)
-        VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','monthly-boundary',$2,$3,$4,$5,$6,$7,'monthly boundary fixture') RETURNING id`,
-      [scope.id, rule.rule_code, rule.rule_version, crypto.createHash('sha256').update(`${prefix}-event-${index}`).digest('hex'), fixture.amount, fixture.currency, fixture.eventAt])).rows[0].id);
+        scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
+        VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','monthly-boundary',$2,$3,$4,$5,$6,'monthly boundary fixture') RETURNING id`,
+      [scope.id, rule.rule_code, rule.rule_version, crypto.createHash('sha256').update(`${prefix}-event-${index}`).digest('hex'), fixture.amount, fixture.currency])).rows[0].id);
       eventIds.push(eventId);
       await pool.query(`INSERT INTO certification_facts(
         run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,
