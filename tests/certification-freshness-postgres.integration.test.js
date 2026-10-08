@@ -70,7 +70,13 @@ integration('distinguishes missing and stale snapshots after a source change', {
 
 integration('schema uniqueness prevents exact-run conflicts and non-ready exact runs are rejected', { concurrency: false }, async () => {
   const seeded = await seedReady();
-  await assert.rejects(\n    () => pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to,finished_at)\n      VALUES(1,$1,$2,'READY',NULL,NULL,NOW())`, [CERTIFICATION_MODEL_VERSION, seeded.sourceStateKey]),\n    (error) => error.code === '23505' && error.message.includes('reconciliation_runs_scope_model_state_period_unique'),\n  );\n  const coherent = await inspectCertificationFreshness(pool);\n  assert.equal(coherent.status, CERTIFICATION_FRESHNESS_STATUS.READY);
+  await assert.rejects(
+    () => pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to,finished_at)
+      VALUES(1,$1,$2,'READY',NULL,NULL,NOW())`, [CERTIFICATION_MODEL_VERSION, seeded.sourceStateKey]),
+    (error) => error.code === '23505' && error.message.includes('reconciliation_runs_scope_model_state_period_unique'),
+  );
+  const coherent = await inspectCertificationFreshness(pool);
+  assert.equal(coherent.status, CERTIFICATION_FRESHNESS_STATUS.READY);
   await clearCertification();
   const sourceStateKey = await currentKey();
   await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to)
