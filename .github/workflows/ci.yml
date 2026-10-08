@@ -6,12 +6,81 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      build_signed_apk:
+        description: Build the signed Android release APK from master
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      android: ${{ steps.classify.outputs.android }}
+    steps:
+      - name: Determine required checks
+        id: classify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let paths = [];
+            let full = context.eventName === 'workflow_dispatch';
+            try {
+              if (context.eventName === 'pull_request') {
+                const files = await github.paginate(github.rest.pulls.listFiles, {
+                  owner, repo, pull_number: context.issue.number, per_page: 100
+                });
+                paths = files.map(file => file.filename);
+              } else if (context.eventName === 'push') {
+                const before = context.payload.before;
+                if (!before || /^0+$/.test(before)) {
+                  full = true;
+                } else {
+                  const response = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: before + '...' + context.sha, per_page: 300
+                  });
+                  const files = response.data.files;
+                  if (!files || files.length >= 300 || response.data.total_commits > 250) {
+                    full = true;
+                  } else {
+                    paths = files.map(file => file.filename);
+                  }
+                }
+              }
+            } catch (error) {
+              core.warning('Could not determine changed paths; running all checks');
+              full = true;
+            }
+            if (!full && paths.length === 0) {
+              core.warning('Empty change set; running all checks');
+              full = true;
+            }
+            const android = full || paths.some(path =>
+              path.startsWith('android/') || path.startsWith('.github/workflows/')
+            );
+            const backend = full || paths.some(path =>
+              !path.startsWith('android/') &&
+              !path.startsWith('docs/') &&
+              !path.endsWith('.md')
+            );
+            core.setOutput('backend', String(backend));
+            core.setOutput('android', String(android));
+            core.info('Scopes: backend=' + backend + ', android=' + android);
+
   test:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/finance_receipt_collector_test_ci
@@ -54,16 +123,15 @@ jobs:
       - name: Check Node.js syntax
         run: npm run check
 
-      - name: PostgreSQL integration gate
+      - name: Unit tests (no database fixture)
+        run: npm run test:unit
+
+      - name: PostgreSQL integration suite (once)
         run: npm run test:integration
 
-      - name: Prepare full-suite PostgreSQL fixture
-        run: node scripts/prepare-postgres-integration.mjs
-
-      - name: Full test suite
-        run: npm test
-
   android:
+    needs: changes
+    if: ${{ needs.changes.outputs.android == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -116,9 +184,9 @@ jobs:
           retention-days: 7
 
   android-signed:
+    needs: changes
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.build_signed_apk == true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
