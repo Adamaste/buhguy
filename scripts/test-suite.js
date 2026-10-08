@@ -94,4 +94,3 @@ for (const file of postgresFiles) {
   if (spawnSync(process.execPath, ['scripts/prepare-postgres-integration.mjs'], { stdio: 'inherit', env: process.env }).status !== 0) process.exit(1);
   if (run([file]) !== 0) process.exit(1);
 }
-

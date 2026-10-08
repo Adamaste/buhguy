@@ -142,4 +142,3 @@ integration('maps statement timeout to a safe technical status and leaves persis
   assert.equal(result.reasonCode, 'READ_ONLY_TIMEOUT');
   assert.deepEqual(await persistenceState(), before);
 });
-

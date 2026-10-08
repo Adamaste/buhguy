@@ -44,4 +44,3 @@ test('connection and lock timeout failures have safe technical outcomes', async 
     { status: CERTIFICATION_FRESHNESS_STATUS.TECHNICAL_ERROR, reasonCode: 'READ_ONLY_PROBE_ERROR' },
   );
 });
-

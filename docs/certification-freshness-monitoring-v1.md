@@ -42,4 +42,3 @@ Stop and investigate on `CONFLICT`, `CORRUPT`, `TECHNICAL_ERROR`, an unexpected
 scope, or any source-state identity disagreement. `STALE` and `MISSING` are
 visible non-ready outcomes, not authorization to write. A separate reviewed
 materialization approval is required before any certification write.
-

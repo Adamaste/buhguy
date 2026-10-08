@@ -246,4 +246,3 @@ export function logCurrentSpendingSnapshot(result, options = {}, logger = create
     currencies: result.snapshot?.currencies ?? [],
   });
 }
-

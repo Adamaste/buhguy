@@ -69,4 +69,3 @@ export async function inspectCertificationFreshness(pool, { scopeKey = 'default'
     client?.release();
   }
 }
-
