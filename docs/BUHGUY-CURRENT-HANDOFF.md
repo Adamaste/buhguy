@@ -2687,7 +2687,7 @@ This is rehearsal evidence only. The reviewed runbook is docs/production-schema-
 ## Production schema-only rollout for migration 019 and analytics 011
 
 The authorized schema-only rollout was executed from exact master
-`83cddf3877edda136196da5471b09f308ade1efc3` after master CI
+`83cddf3877edda136196da5471b09f308ade1efc` after master CI
 `37764358275` passed all applicable jobs. A separate checkout was used;
 the active runtime release was not replaced.
 
