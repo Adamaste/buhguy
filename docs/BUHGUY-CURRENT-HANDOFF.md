@@ -17,21 +17,50 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-08
-- Current implementation baseline: `2f05c5928f92fc34cdade326733b31dd6b74ceaf` (exact current master; certification correction PR #137 merged as `3dd5fa0a3095510f266fa7cc8c62e5188eb9ecb9`, followed by the reviewed read-only handoff closeout)
+- Current implementation baseline: `ca5a4dfbf8831f85a0b2fe63892935e8dd6210cb` (exact current master; guarded certification materialization implementation merged through PR #139)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the exact-master read-only current-snapshot validation found live source state `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2` but no matching full unbounded READY run. The current snapshot is therefore `NO_CURRENT_CERTIFICATION`; the guarded one-shot materialization implementation is under review and no production certification write, deployment, replay, backfill, or grant change is authorized. The next action remains separately authorized controlled production certification materialization after the implementation PR is reviewed and merged.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `separately approved controlled production certification materialization`
+- Next action: `read-only certification freshness monitoring and separately approved rematerialization after source-state changes`
 
-## Guarded one-shot certification materialization (implementation under review)
+## Production certification materialization v1 (completed)
 
-The exact current master is `2f05c5928f92fc34cdade326733b31dd6b74ceaf`. A
-separate implementation PR adds `materializeCurrentCertification()` as a
+The exact master `ca5a4dfbf8831f85a0b2fe63892935e8dd6210cb` passed master CI
+`37789258443`. After a fresh read-only preflight, the first authorized
+materialization for Person 1 scope `default`/id `1` used source state
+`fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`.
+`NO_CURRENT_CERTIFICATION` was the permitted initial state: no exact current
+unbounded READY run existed before the call. The preflight projection had
+5,843 facts and 8 results, all RUB; exact decimal reconciliation gave gross
+`2211660.87`, returns `5782.29`, and net `2205878.58`.
+
+Exactly one guarded public `materializeCurrentCertification()` call was made
+with the approved bounded options and no retry. It committed READY run `3961`
+with 5,843 facts and 8 results. The independent exact-master read-only reader
+then returned READY for the same source state. All eight analytics views were
+present; the current household, category, and person summaries reconciled in
+RUB to gross `2211660.87`, returns `5782.29`, and net `2205878.58`. The
+validated backup was created outside the release checkout with SHA-256
+`cfabf2c6b7f898dc7471d85f66216f9c53c3e84ae60f8a13612ec6ef091544aa`.
+
+The service remained healthy and ingestion remained active. No bank, receipt,
+ledger, matched-purchase, business, classification, grant, or view data was
+changed by the operation; only the approved certification run, facts, and
+results were added. Historical certification rows remain immutable. Future
+source changes must be handled by a fresh read-only preflight and separately
+approved materialization; no automatic refresh, replay, backfill, or writer
+trigger is enabled.
+
+## Guarded one-shot certification materialization (historical implementation record)
+
+At that historical implementation stage, master was
+`2f05c5928f92fc34cdade326733b31dd6b74ceaf`. The implementation PR added
+`materializeCurrentCertification()` as a
 guarded one-shot full unbounded certification writer. It uses one
 `SERIALIZABLE` PostgreSQL transaction, bounded lock and statement timeouts,
 an accounting-scope lock, one authoritative source-state/projection snapshot,
@@ -51,7 +80,8 @@ exact rollback. Household/category/person
 gross, returns, net, and unresolved/unclassified buckets must reconcile by
 currency using exact decimal arithmetic before any production approval.
 
-Production remains read-only in this stage. A future materialization requires
+Production remained read-only during that implementation stage. The completed
+materialization is recorded above; any future materialization requires
 a fresh validated backup, explicit authorization for the exact scope and
 source-state key, a repeatable-read read-only precheck, same-state fact/result
 and per-currency reconciliation, bounded write transaction, and read-only
@@ -2765,9 +2795,9 @@ was performed. The next action is `production read-only canonical spending
 current-snapshot validation`.
 
 
-## Production read-only canonical spending current-snapshot validation (current, no materialization)
+## Production read-only canonical spending current-snapshot validation (historical, before materialization)
 
-The exact current master `39a45e68ae70050b7262c7d1db5c3711a8cc9993` passed master CI `37768474323` (test/PostgreSQL integration, full suite, Android, and signed Android). This stage used only `REPEATABLE READ READ ONLY` transactions and safe aggregate diagnostics; it did not invoke a writer or certification persistence.
+The then-current master `39a45e68ae70050b7262c7d1db5c3711a8cc9993` passed master CI `37768474323` (test/PostgreSQL integration, full suite, Android, and signed Android). This historical stage used only `REPEATABLE READ READ ONLY` transactions and safe aggregate diagnostics; it did not invoke a writer or certification persistence.
 
 For Person 1 scope `default` (scope id `1`), the live authoritative source-state key was `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2`. The non-persisting projection produced 5,840 facts and 8 results, all in RUB, over 2,070 active ledger entries. Its metric aggregates were: BLOCKED_EXPOSURE 73 facts / 183,738.45; FISCAL_NEW_MONEY 1,907 / 2,187,333.77; CONFIRMED_ACQUISITION_VALUE 1,920 / 2,211,029.87; ACQUISITION_CLASSIFICATION 1,920 / 2,211,029.87; CONFIRMED_RETURN_VALUE 10 / 5,782.29; OUTSTANDING_REFUND_RECEIVABLE 10 / 5,782.29. These are aggregate diagnostics only, not persisted certification.
 
@@ -2775,7 +2805,14 @@ The historical unbounded READY run was stale for this source state, so the live 
 
 On a disposable PostgreSQL clone, the exact one-time unbounded certification path produced a matching READY current snapshot. The clone's canonical household, category, and person summaries reconciled exactly by currency using decimal minor-unit arithmetic: RUB gross `2210631.68`, returns `5782.29`, and net `2204849.39` in each aggregate view. The clone also passed the current-state reader compatibility check after the shared result semantic-key correction. PR `#137` is now merged as `3dd5fa0a3095510f266fa7cc8c62e5188eb9ecb9`; exact-head master CI must still be verified before any production materialization. The clone's source-state identity was not recorded alongside these totals, so its RUB gross `2210631.68` is NOT proven comparable with the production read-only projection's `2211029.87` (difference `398.19`). Before materialization, compare authoritative source-state identities and independently reconcile the same-state aggregates; if the identities match but totals differ, STOP for investigation.
 
-Production certification materialization has NOT been approved. Any future separately approved procedure must require merged PR `#137`, successful exact-head master CI, verified same-source-state monetary reconciliation, and: create a fresh validated backup; open one bounded `REPEATABLE READ` transaction with a write-capable certification role; recompute and compare the authoritative source-state key immediately before insert; stop on any source drift, missing/unready/conflicting snapshot, lock/timeout, or fact/result mismatch; persist exactly one full unbounded READY run atomically; verify facts/results and per-currency reconciliation; commit only after all postchecks pass, otherwise rollback. A replay must reuse the same source-state identity and never create a second current run.
+The first separately approved production certification materialization is now
+complete. Future materializations must still require successful exact-master
+CI, a fresh validated backup, verified same-source-state monetary
+reconciliation, one bounded transaction with the approved write-capable role,
+an exact expected source-state key, and read-only postchecks. Stop on source
+drift, a missing/unready/conflicting exact run, lock/timeout, or fact/result
+mismatch. Never delete history, use `replace=true`, retry blindly, replay,
+backfill, deploy, or enable an automatic refresh trigger.
 
 After new bank or receipt ingestion, certification is not automatically current: the next controlled cycle must recompute source identity, run the non-persisting projection, classify the state, and only then use the separately approved materialization procedure. No automatic refresh, writer trigger, replay, or backfill is enabled.
 
