@@ -7,7 +7,7 @@ import { assertSupportedMetric, buildAnalyticsSummary, buildAnalyticsTrace, buil
 const fact = (metricCode, amount, status, extra = {}) => ({ metricCode, amount: String(amount), status, currency: 'RUB', eventAt: extra.eventAt ?? '2026-01-01T00:00:00Z', reasonCode: extra.reasonCode ?? null, ruleCode: 'rule', ruleVersion: 'v1', ledgerEntryId: extra.ledgerEntryId ?? 1, businessEventId: extra.businessEventId ?? 1, graphEvidenceId: extra.graphEvidenceId ?? 1, sourceStateKey: 'a'.repeat(64), subjectId: extra.subjectId ?? 1 });
 
 test('Xiaomi-style prepayment is not double counted', () => {
-  const report = { model: 'certification', sourceStateKey: 'x', metrics: { merchantAdvanceBalance: { amount: '0.00', currency: 'RUB', status: 'CERTIFIED' } }, proofFacts: [fact('FISCAL_NEW_MONEY', 32380, 'PROVISIONAL'), fact('CONFIRMED_ACQUISITION_VALUE', 32380, 'CERTIFIED')] };
+  const report = { model: 'certification', sourceStateKey: 'a'.repeat(64), metrics: { merchantAdvanceBalance: { amount: '0.00', currency: 'RUB', status: 'CERTIFIED' } }, proofFacts: [fact('FISCAL_NEW_MONEY', 32380, 'PROVISIONAL'), fact('CONFIRMED_ACQUISITION_VALUE', 32380, 'CERTIFIED')] };
   const summary = buildAnalyticsSummary({ report });
   assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '32380.00');
   assert.equal(summary.metrics.FISCAL_NEW_MONEY.amount, '32380.00');

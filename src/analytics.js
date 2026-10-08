@@ -46,7 +46,7 @@ function grouped(rows) {
   const out = new Map();
   for (const row of rows ?? []) {
     const key = `${row.metricCode}|${row.status}|${row.reasonCode ?? ''}|${row.currency ?? ''}`;
-    const current = out.get(key) ?? { metricCode: row.metricCode, status: row.status, reasonCode: row.reasonCode ?? null, currency: row.currency ?? null, amount: 0, count: 0 };
+    const current = out.get(key) ?? { metricCode: row.metricCode, status: row.status, reasonCode: row.reasonCode ?? null, currency: row.currency ?? null, amount: 0n, count: 0 };
     current.amount += moneyMinorUnits(row.amount ?? 0); current.count += 1; out.set(key, current);
   }
   return [...out.values()].map((row) => ({ ...row, amount: money(row.amount) })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
