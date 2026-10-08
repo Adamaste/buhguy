@@ -321,12 +321,12 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
     const exactBoundary = (await pool.query(`SELECT count(*)::int AS count, COALESCE(SUM(amount), 0)::NUMERIC(18,2)::text AS amount
       FROM canonical_spending_purchases_v1
       WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
-        AND purchase_id = ANY($4::bigint[]) AND event_at >= $5::timestamptz AND event_at < $6::timestamptz`,
+        AND purchase_id = ANY($4::bigint[]) AND purchased_at >= $5::timestamptz AND purchased_at < $6::timestamptz`,
     [scope.id, run.id, current, eventIds, fixtures[0].eventAt, fixtures[1].eventAt])).rows[0];
     assert.equal(Number(exactBoundary.count), 1);
     assert.equal(exactBoundary.amount, '11.00');
     const excluded = (await pool.query(`SELECT count(*)::int AS count FROM canonical_spending_purchases_v1
-      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id = ANY($4::bigint[]) AND event_at >= $5::timestamptz AND event_at < $6::timestamptz`,
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id = ANY($4::bigint[]) AND purchased_at >= $5::timestamptz AND purchased_at < $6::timestamptz`,
     [scope.id, run.id, current, eventIds, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z'])).rows[0];
     assert.equal(Number(excluded.count), 1);
   } finally {
