@@ -17,16 +17,22 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-08
-- Current implementation baseline: `ca5a4dfbf8831f85a0b2fe63892935e8dd6210cb` (exact current master; guarded certification materialization implementation merged through PR #139)
+- Current implementation baseline: `b0531f12325ba2419743b8f46169abda6c64da6e` (exact current master; spending correctness MVP merged through PR #142)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval. Spending correctness MVP is merged in PR #142, and the exact-decimal certification arithmetic correction is isolated in open PR #144 with exact-head CI passing; it is not merged or deployed.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `read-only certification freshness monitoring and separately approved rematerialization after source-state changes`
+- Next action: `production read-only canonical spending validation, then ChatGPT-facing read-only API`; PR #144 exact-decimal certification review is green and remains open, not merged or deployed
+
+## Spending correctness MVP and certification arithmetic review
+
+PR #142 is merged in master `b0531f12325ba2419743b8f46169abda6c64da6e`. Its read-only spending consumers use exact decimal minor-unit arithmetic and reject mixed certification source states without combining currencies or item-grain rows.
+
+PR #144 is a separate, unmerged feature review for the remaining certification-layer exact-decimal correction. It replaces monetary Number()/toFixed(2) arithmetic in src/certification.js with NUMERIC(18,2)-compatible BigInt minor units while preserving existing business rules, public contracts, semantic identities, idempotency, and certification invariants. Its exact head is 21b73e3321ab2e217f581d12fa1f0cd587ecc3da and exact-head CI 37833139812 passed unit, PostgreSQL integration, full suite, syntax and repository checks; Android jobs were correctly skipped for this backend-only diff. The PR remains open and unmerged by instruction. No migration, production write, deployment, grant change, replay, backfill, or automatic materialization occurred. The next operational stage is production read-only canonical spending validation, followed by a ChatGPT-facing read-only API.
 
 ## Production certification materialization v1 (completed)
 
