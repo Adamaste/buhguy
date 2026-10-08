@@ -17,15 +17,16 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-08
-- Current implementation baseline: `4591caff5ce007664aece7f1f8249c258f3a6935` (exact current master; schema-readiness rehearsal is documented below)
+- Current implementation baseline: `83cddf3877edda136196da5471b09f308ade1efc` (exact current master; production schema-only rollout 019/011 is complete)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. The non-mutating bank business-event candidate, internal-transfer matching, bank-ledger projection, bank-receipt-matching v1, matched-purchase-enrichment-projection-v1, matched-purchase persistence schema foundation, ACTIVE-ledger runtime semantics, atomic matched-purchase persistence writer v1, matched-purchase writer orchestration preview v1, FNS receipt currency contract v1, production receipt-window policy v1, controlled read-only production orchestration preview, the first matched-purchase canary, and the reviewed 12-item controlled expansion are complete. The canonical spending analytics v1 schema/read-model foundation and the non-mutating current-snapshot semantic reader are merged, but the first exact-master production read-only validation is `SCHEMA_NOT_READY`: migration 019 tables and analytics 011 views are absent, and no exact live-source unbounded READY certification was found. Exact master CI `37756941658` passed all applicable jobs. Migration 018 is applied in production as a schema-only rollout; historical business/accounting rows remain immutable. The FNS currency blocker is closed: 1845 previously currency-only receipts are eligible under the merged source-contract resolver, while canonical `receipts.currency` remains unchanged. Controlled user-confirmed identity provisioning is complete for the 32 authoritative PURCHASE/DEBIT rows: 28 Yandex rows resolve to the new Yandex account and 4 Sber rows resolve to account 1. The production receipt policy is `receiptMaxTimeDeltaMs=300000`; internal-transfer policy remains unresolved. The active runtime intentionally remains `8e18a9d65c933045820b0771afbcdd1c28546956`; no runtime deployment was performed by the expansion. The current persisted matched-purchase set is the original canary plus exactly the 12 reviewed expansion items; no unreviewed matches were persisted. The schema-readiness rehearsal is complete, but production remains at migration 018 with migration 019 and analytics 011 still absent. The next action is a separately approved schema-only rollout for migration 019 and analytics 011, not a certification refresh, writer run, or deployment.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the existing runtime remains unchanged. The first exact-master read-only current-snapshot validation ran after rollout and returned `NO_CURRENT_CERTIFICATION` for the live authoritative source state, so no certification refresh, writer call, deployment, replay, backfill, or grant change is authorized. The next action is a separately reviewed production read-only canonical spending current-snapshot validation/review, not a refresh or writer run.
+
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `separately approved schema-only rollout for migration 019 and analytics 011`. The exact-master reader preflight found migration 019 tables and analytics 011 views absent, so no current snapshot was selected and no reconciliation was refreshed. The next stage is to review a separately authorized schema-only rollout/readiness path before repeating the read-only validation; classification decisions, persistence writes, grants/BlazeSQL exposure, and production rollout remain separate reviewed stages.
+- Next action: `production read-only canonical spending current-snapshot validation`
 
 ## Production read-only canonical spending current-snapshot validation
 
@@ -2682,3 +2683,50 @@ The exact current master 4591caff5ce007664aece7f1f8249c258f3a6935 was verified a
 A fresh production custom-format backup was created and validated with pg_restore --list, then restored to a disposable clone. The exact repository migration runner applied 019 successfully and a second run was a no-op. Analytics 011 was installed separately and a second installation was idempotent. Clone checks passed for the six new tables, eight views, taxonomy/category seeds, constraints/indexes, unchanged pre-existing business/bank/receipt/certification/ledger/matched-purchase row counts, and transactional rollback after an interrupted clone-only DDL transaction. The disposable clone and temporary role were removed.
 
 This is rehearsal evidence only. The reviewed runbook is docs/production-schema-readiness-migration-019-v1.md. No production migration, analytics install, grant, deployment, restart, certification refresh, writer call, replay, backfill, or production mutation is authorized by this closeout.
+
+## Production schema-only rollout for migration 019 and analytics 011
+
+The authorized schema-only rollout was executed from exact master
+`83cddf3877edda136196da5471b09f308ade1efc3` after master CI
+`37764358275` passed all applicable jobs. A separate checkout was used;
+the active runtime release was not replaced.
+
+The read-only preflight confirmed the expected production database, schema
+head 018, no pending migration other than the approved 019, no migration 019,
+no analytics 011 views, and no blocking transaction/lock activity. A fresh
+custom-format PostgreSQL backup was created outside the release checkout and
+validated: `/var/backups/receipt-collector/postgres/finance_receipt_collector-schema019-rollout-20261008T105050Z.dump.gz`,
+SHA-256 `537bb172f45db34a783e97062ba0f3b953b750e9c61863c03369a7282a74b145`,
+non-empty mode 0600, gzip integrity and `pg_restore --list` passed. Existing
+backups were retained.
+
+Only the guarded production commands were used: `node
+scripts/migrate-prod-only.mjs` followed, after its postcheck, by
+`node scripts/install-analytics-prod-only.mjs`. Migration 019 is now the
+schema head. Its six tables, 28 foreign-key constraints, 27 indexes, one
+taxonomy version, and 21 seeded categories were verified. Analytics 011
+installed eight views in a separate bounded transaction; no explicit view
+ACLs were added and no GRANT/REVOKE was run.
+
+Pre-existing business, bank, receipt, certification, ledger, and
+matched-purchase counts were unchanged across the rollout:
+observations 428, bank transactions 428, matches 13, business events 2069,
+certification facts 5850, ledger entries 2082, supersessions 13, postings
+4018, source links 2025, receipts/fiscal facts 2771, reconciliation results
+8, and reconciliation runs 1. The ingestion service remained active and its
+local health endpoint returned `{"status":"ok"}`; no restart or deployment
+was performed.
+
+After rollout, the exact-master resolver ran in a `REPEATABLE READ READ
+ONLY` transaction for Person 1 scope `default/id1`. It computed live
+source state `dfaca835c8a9c9678fd778a8e04783940a7f0053d42edc5b1ce305cbbd02f2aa`
+and returned `NO_CURRENT_CERTIFICATION`; no exact unbounded READY run was
+available. No certification refresh was attempted. The schema rollout is
+complete, but current-snapshot certification validation remains a separate
+read-only stage.
+
+No grants, runtime deployment, service restart, writer call, certification
+refresh, replay, backfill, classification, or unrelated production mutation
+was performed. The next action is `production read-only canonical spending
+current-snapshot validation`.
+
