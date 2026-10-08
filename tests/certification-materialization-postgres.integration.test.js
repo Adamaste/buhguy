@@ -1,5 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import {
   materializeCurrentCertification,
@@ -27,6 +28,10 @@ async function clearCertification() {
   await pool.query('DELETE FROM reconciliation_runs');
 }
 
+async function installAnalyticsViewsOnDisposableFixture() {
+  await pool.query(readFileSync(new URL('../db/analytics/011_canonical_spending_analytics_v1.sql', import.meta.url), 'utf8'));
+}
+
 async function currentSourceStateKey() {
   return certificationSourceStateKey(pool, 1);
 }
@@ -43,6 +48,7 @@ async function summaryTotals(view, runId, sourceStateKey) {
 
 integration('materializes one full unbounded READY snapshot and reuses it idempotently', { concurrency: false }, async () => {
   await clearCertification();
+  await installAnalyticsViewsOnDisposableFixture();
   const expectedSourceStateKey = await currentSourceStateKey();
   const first = await materializeCurrentCertificationForTest(pool, { scopeKey: 'default', expectedSourceStateKey });
   assert.equal(first.materialized, true);
