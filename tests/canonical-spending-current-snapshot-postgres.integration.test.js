@@ -66,6 +66,16 @@ function sumMoney(rows, field) {
   }, 0n);
 }
 
+function sumMoneyByCurrency(rows, field) {
+  const totals = new Map();
+  for (const row of rows) totals.set(row.currency, (totals.get(row.currency) ?? 0n) + sumMoney([row], field));
+  return [...totals.entries()].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function assertCurrencyTotalsMatch(left, right, field) {
+  assert.deepEqual(sumMoneyByCurrency(left, field), sumMoneyByCurrency(right, field), `${field} must reconcile by currency`);
+}
+
 integration('current snapshot uses one repeatable-read read-only transaction and exposes only coherent current state', async () => {
   const before = await persistenceCounts();
   const observed = observingPool();
@@ -106,6 +116,15 @@ integration('current snapshot uses one repeatable-read read-only transaction and
   });
   assert.equal(sumMoney(categories.rows, 'gross_spend'), sumMoney(household.rows, 'gross_spend'));
   assert.equal(sumMoney(people.rows, 'gross_spend'), sumMoney(household.rows, 'gross_spend'));
+  for (const field of ['gross_spend', 'confirmed_returns', 'net_spend']) {
+    assertCurrencyTotalsMatch(categories.rows, household.rows, field);
+    assertCurrencyTotalsMatch(people.rows, household.rows, field);
+  }
+  for (const result of [household, categories, people]) {
+    assert.ok(result.rows.every((row) => Number(row.scope_id) === resolved.snapshot.scopeId));
+    assert.ok(result.rows.every((row) => Number(row.certification_run_id) === resolved.snapshot.runId));
+    assert.ok(result.rows.every((row) => row.source_state_key === resolved.snapshot.sourceStateKey));
+  }
 
   const after = await persistenceCounts();
   assert.deepEqual(after, before);
@@ -255,6 +274,57 @@ integration('monthly metadata preserves timezone and half-open boundaries', asyn
     snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter',
   });
   assert.ok(result.rows.every((row) => /^\d{4}-\d{2}$/.test(row.month)));
+});
+
+integration('monthly SQL assigns real boundary events by timezone and keeps currencies and snapshots separate', async () => {
+  const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
+  const current = await certificationSourceStateKey(pool, scope.id);
+  const run = (await pool.query(`SELECT id FROM reconciliation_runs
+    WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+      AND period_from IS NULL AND period_to IS NULL AND status='READY'`, [scope.id, CERTIFICATION_MODEL_VERSION, current])).rows[0];
+  assert.ok(run);
+  const prefix = crypto.createHash('sha256').update(`monthly-boundary-${process.pid}-${Date.now()}`).digest('hex');
+  const fixtures = [
+    { eventAt: '2026-08-31T20:59:59.999Z', currency: 'RUB', amount: '11.00' },
+    { eventAt: '2026-08-31T21:00:00.000Z', currency: 'EUR', amount: '12.00' },
+    { eventAt: '2026-09-01T00:00:00.000Z', currency: 'RUB', amount: '13.00' },
+  ];
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      await pool.query(`INSERT INTO certification_facts(
+        run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,
+        reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key)
+        VALUES($1,$2,'LEDGER_ENTRY',$3,'CONFIRMED_ACQUISITION_VALUE','BUSINESS_CERTIFICATION','CERTIFIED',$4,$5,$6,
+        'TEST','TEST','TEST',NULL,NULL,NULL,$7,$8)`,
+      [run.id, scope.id, 900000 + index, fixture.amount, fixture.currency, fixture.eventAt,
+        crypto.createHash('sha256').update(`${prefix}-${index}`).digest('hex'), current]);
+    }
+    const rows = (await pool.query(`WITH monetary AS (
+      SELECT event_at, amount, currency FROM canonical_spending_purchases_v1
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
+    ) SELECT to_char(date_trunc('month', event_at AT TIME ZONE $4),'YYYY-MM') AS month,
+      currency, SUM(amount)::NUMERIC(18,2)::text AS amount
+      FROM monetary WHERE event_at >= $5::timestamptz AND event_at < $6::timestamptz
+      GROUP BY date_trunc('month', event_at AT TIME ZONE $4), currency ORDER BY month,currency`,
+    [scope.id, run.id, current, 'Europe/Moscow', '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z'])).rows;
+    assert.deepEqual(rows, [
+      { month: '2026-08', currency: 'RUB', amount: '11.00' },
+      { month: '2026-09', currency: 'EUR', amount: '12.00' },
+    ]);
+    const exactBoundary = (await pool.query(`SELECT count(*)::int AS count, COALESCE(SUM(amount), 0)::NUMERIC(18,2)::text AS amount
+      FROM canonical_spending_purchases_v1
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
+        AND event_at >= $4::timestamptz AND event_at < $5::timestamptz`,
+    [scope.id, run.id, current, fixtures[0].eventAt, fixtures[1].eventAt])).rows[0];
+    assert.equal(Number(exactBoundary.count), 1);
+    assert.equal(exactBoundary.amount, '11.00');
+    const excluded = (await pool.query(`SELECT count(*)::int AS count FROM canonical_spending_purchases_v1
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND event_at >= $4::timestamptz AND event_at < $5::timestamptz`,
+    [scope.id, run.id, current, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z'])).rows[0];
+    assert.equal(Number(excluded.count), 1);
+  } finally {
+    await pool.query('DELETE FROM certification_facts WHERE run_id=$1 AND subject_id BETWEEN 900000 AND 900002', [run.id]);
+  }
 });
 
 integration('reader failure paths remain write-free', async () => {

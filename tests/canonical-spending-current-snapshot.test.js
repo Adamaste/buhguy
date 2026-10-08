@@ -18,6 +18,8 @@ test('current snapshot contract is authoritative, read-only, and fail-closed', a
   assert.match(source, /rebuildCertification\(client, \{ scopeKey, persist: false, sourceStateKey \}\)/);
   assert.match(source, /snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter'/);
   assert.match(certification, /sourceStateKey: providedSourceStateKey = null/);
+  assert.match(certification, /CERTIFICATION_SOURCE_STATE_OVERRIDE/);
+  assert.match(certification, /\(persist \|\| replace\) && providedSourceStateKey !== null/);
   assert.match(certification, /providedSourceStateKey \?\? await sourceState\(pool, scope\.id\)/);
   assert.doesNotMatch(source, /ORDER BY id DESC LIMIT 1/);
   assert.doesNotMatch(source, /INSERT INTO|UPDATE\s+|DELETE FROM|TRUNCATE\s+/i);

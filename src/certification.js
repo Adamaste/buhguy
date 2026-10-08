@@ -2,6 +2,7 @@ import { fiscalContentFingerprint } from './fiscal-evidence.js';
 
 export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
+export const CERTIFICATION_SOURCE_STATE_OVERRIDE = 'CERTIFICATION_SOURCE_STATE_OVERRIDE';
 
 const n = (value) => Number(value ?? 0);
 const money = (value) => n(value).toFixed(2);
@@ -71,6 +72,10 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
 }
 
 const certificationConflict = (message) => Object.assign(new Error(message), { code: 'CERTIFICATION_CONFLICT' });
+const certificationSourceStateOverride = () => Object.assign(
+  new Error('Caller-provided sourceStateKey is not allowed for persistent certification'),
+  { code: CERTIFICATION_SOURCE_STATE_OVERRIDE },
+);
 
 const canonicalValue = (value) => {
   if (value instanceof Date) return value.toISOString();
@@ -211,6 +216,7 @@ function aggregateFacts(facts) {
 }
 
 export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
+  if ((persist || replace) && providedSourceStateKey !== null) throw certificationSourceStateOverride();
   const { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
   // Read-only snapshot callers already computed this key in the same transaction.
   // Reuse it so validation cannot observe a second, logically different state.

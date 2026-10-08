@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Pool } from 'pg';
-import { certificationReport, rebuildCertification, refreshCertificationForEvents } from '../src/certification.js';
+import { certificationReport, rebuildCertification, refreshCertificationForEvents, CERTIFICATION_SOURCE_STATE_OVERRIDE } from '../src/certification.js';
 
 test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -92,5 +92,25 @@ test('same-source-state refresh is a byte-identical NOOP and corrupted snapshots
     const conflictingSnapshot = await snapshot(current.runId);
     await assert.rejects(() => refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] }), (error) => error.code === 'CERTIFICATION_CONFLICT');
     assert.deepEqual(await snapshot(current.runId), conflictingSnapshot);
+  } finally { await pool.end(); }
+});
+
+test('persistent certification rejects a forged source-state identity without writes', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const snapshot = async () => (await pool.query(`SELECT
+    (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_runs) x) AS runs,
+    (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM certification_facts) x) AS facts,
+    (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_results) x) AS results,
+    (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_entries) x) AS ledger_entries`)).rows[0];
+  try {
+    const before = await snapshot();
+    await assert.rejects(
+      () => rebuildCertification(pool, { persist: true, sourceStateKey: 'f'.repeat(64) }),
+      (error) => error.code === CERTIFICATION_SOURCE_STATE_OVERRIDE,
+    );
+    assert.deepEqual(await snapshot(), before);
+    const normal = await rebuildCertification(pool, { persist: true });
+    assert.match(normal.sourceStateKey, /^[0-9a-f]{64}$/);
+    assert.ok(normal.runId);
   } finally { await pool.end(); }
 });
