@@ -289,24 +289,31 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
     { eventAt: '2026-08-31T21:00:00.000Z', currency: 'EUR', amount: '12.00' },
     { eventAt: '2026-09-01T00:00:00.000Z', currency: 'RUB', amount: '13.00' },
   ];
+  const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
+  const eventIds = [];
   try {
     for (const [index, fixture] of fixtures.entries()) {
+      const eventId = Number((await pool.query(`INSERT INTO business_events(
+        scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,event_at,description)
+        VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','monthly-boundary',$2,$3,$4,$5,$6,$7,'monthly boundary fixture') RETURNING id`,
+      [scope.id, rule.rule_code, rule.rule_version, crypto.createHash('sha256').update(`${prefix}-event-${index}`).digest('hex'), fixture.amount, fixture.currency, fixture.eventAt])).rows[0].id);
+      eventIds.push(eventId);
       await pool.query(`INSERT INTO certification_facts(
         run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,
         reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key)
         VALUES($1,$2,'LEDGER_ENTRY',$3,'CONFIRMED_ACQUISITION_VALUE','BUSINESS_CERTIFICATION','CERTIFIED',$4,$5,$6,
         'TEST','TEST','TEST',NULL,$3,NULL,$7,$8)`,
-      [run.id, scope.id, 900000 + index, fixture.amount, fixture.currency, fixture.eventAt,
+      [run.id, scope.id, eventId, fixture.amount, fixture.currency, fixture.eventAt,
         crypto.createHash('sha256').update(`${prefix}-${index}`).digest('hex'), current]);
     }
     const rows = (await pool.query(`WITH monetary AS (
       SELECT purchased_at AS event_at, amount, currency FROM canonical_spending_purchases_v1
-      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id BETWEEN 900000 AND 900002
-    ) SELECT to_char(date_trunc('month', event_at AT TIME ZONE $4),'YYYY-MM') AS month,
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id = ANY($4::bigint[])
+    ) SELECT to_char(date_trunc('month', event_at AT TIME ZONE $5),'YYYY-MM') AS month,
       currency, SUM(amount)::NUMERIC(18,2)::text AS amount
-      FROM monetary WHERE event_at >= $5::timestamptz AND event_at < $6::timestamptz
-      GROUP BY date_trunc('month', event_at AT TIME ZONE $4), currency ORDER BY month,currency`,
-    [scope.id, run.id, current, 'Europe/Moscow', '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z'])).rows;
+      FROM monetary WHERE event_at >= $6::timestamptz AND event_at < $7::timestamptz
+      GROUP BY date_trunc('month', event_at AT TIME ZONE $5), currency ORDER BY month,currency`,
+    [scope.id, run.id, current, eventIds, 'Europe/Moscow', '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z'])).rows;
     assert.deepEqual(rows, [
       { month: '2026-08', currency: 'RUB', amount: '11.00' },
       { month: '2026-09', currency: 'EUR', amount: '12.00' },
@@ -314,16 +321,17 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
     const exactBoundary = (await pool.query(`SELECT count(*)::int AS count, COALESCE(SUM(amount), 0)::NUMERIC(18,2)::text AS amount
       FROM canonical_spending_purchases_v1
       WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
-        AND purchase_id BETWEEN 900000 AND 900002 AND event_at >= $4::timestamptz AND event_at < $5::timestamptz`,
-    [scope.id, run.id, current, fixtures[0].eventAt, fixtures[1].eventAt])).rows[0];
+        AND purchase_id = ANY($4::bigint[]) AND event_at >= $5::timestamptz AND event_at < $6::timestamptz`,
+    [scope.id, run.id, current, eventIds, fixtures[0].eventAt, fixtures[1].eventAt])).rows[0];
     assert.equal(Number(exactBoundary.count), 1);
     assert.equal(exactBoundary.amount, '11.00');
     const excluded = (await pool.query(`SELECT count(*)::int AS count FROM canonical_spending_purchases_v1
-      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id BETWEEN 900000 AND 900002 AND event_at >= $4::timestamptz AND event_at < $5::timestamptz`,
-    [scope.id, run.id, current, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z'])).rows[0];
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id = ANY($4::bigint[]) AND event_at >= $5::timestamptz AND event_at < $6::timestamptz`,
+    [scope.id, run.id, current, eventIds, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z'])).rows[0];
     assert.equal(Number(excluded.count), 1);
   } finally {
-    await pool.query('DELETE FROM certification_facts WHERE run_id=$1 AND subject_id BETWEEN 900000 AND 900002', [run.id]);
+    await pool.query('DELETE FROM certification_facts WHERE run_id=$1 AND business_event_id = ANY($2::bigint[])', [run.id, eventIds]);
+    if (eventIds.length) await pool.query('DELETE FROM business_events WHERE id = ANY($1::bigint[])', [eventIds]);
   }
 });
 
