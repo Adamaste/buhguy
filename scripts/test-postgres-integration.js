@@ -27,6 +27,7 @@ const integrationFiles = [
   'tests/return-refund-postgres.integration.test.js',
   'tests/canonical-spending-analytics-postgres.integration.test.js',
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
+  'tests/migration-production-safety-postgres.integration.test.js',
 ];
 const run = (files, env = process.env) => spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env }).status ?? 1;
 const runFixture = (env) => spawnSync(process.execPath, ['scripts/prepare-postgres-integration.mjs'], { stdio: 'inherit', env }).status ?? 1;
@@ -65,3 +66,4 @@ try {
 } finally {
   if (containerStarted) { try { execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' }); } catch {} }
 }
+

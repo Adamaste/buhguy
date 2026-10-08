@@ -12,19 +12,84 @@ import { decodePostgresJsonEvidence, encodePostgresJsonEvidence } from './postgr
 export function createPool(config = {}) {
   const connectionString = config.connectionString ?? process.env.DATABASE_URL;
   if (!connectionString && !config.host && !process.env.PGHOST) throw new Error('DATABASE_URL or PostgreSQL connection variables are required');
-  return new Pool({ connectionString, host: config.host, port: config.port, database: config.database, user: config.user, password: config.password, max: config.max ?? 5, ssl: config.ssl ?? (process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined) });
+  return new Pool({ connectionString, host: config.host, port: config.port, database: config.database, user: config.user, password: config.password, max: config.max ?? 5, connectionTimeoutMillis: config.connectionTimeoutMillis, ssl: config.ssl ?? (process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined) });
 }
 
 export const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL('../db/migrations/', import.meta.url));
 
-export async function migrate(pool, migrationsDir = DEFAULT_MIGRATIONS_DIR) {
-  await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
-  const files = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
-  for (const filename of files) {
-    if ((await pool.query('SELECT 1 FROM schema_migrations WHERE filename=$1', [filename])).rowCount) continue;
-    const client = await pool.connect();
-    try { await client.query('BEGIN'); await client.query(await fs.readFile(path.join(migrationsDir, filename), 'utf8')); await client.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]); await client.query('COMMIT'); }
-    catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+const migrationTimeout = (value, name) => {
+  if (value == null) return null;
+  const milliseconds = Number(value);
+  if (!Number.isInteger(milliseconds) || milliseconds <= 0) throw new TypeError(`${name} must be a positive integer`);
+  return `${milliseconds}ms`;
+};
+
+export async function configureBoundedSession(client, { lockTimeoutMs = null, statementTimeoutMs = null } = {}) {
+  const lockTimeout = migrationTimeout(lockTimeoutMs, 'lockTimeoutMs');
+  const statementTimeout = migrationTimeout(statementTimeoutMs, 'statementTimeoutMs');
+  if (lockTimeout) await client.query("SELECT set_config('lock_timeout',$1,false)", [lockTimeout]);
+  if (statementTimeout) await client.query("SELECT set_config('statement_timeout',$1,false)", [statementTimeout]);
+}
+
+export async function runBoundedTransaction(pool, operation, options = {}) {
+  const client = await pool.connect();
+  try {
+    await configureBoundedSession(client, options);
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export class PendingMigrationSetError extends Error {
+  constructor(expected, pending) {
+    super(`Unexpected pending migration set; expected only ${expected}, found ${pending.join(', ') || '(none)'}`);
+    this.name = 'PendingMigrationSetError';
+    this.code = 'MIGRATION_PENDING_SET_MISMATCH';
+    this.expected = expected;
+    this.pending = pending;
+  }
+}
+
+export async function migrate(pool, migrationsDir = DEFAULT_MIGRATIONS_DIR, options = {}) {
+  const client = await pool.connect();
+  try {
+    await configureBoundedSession(client, options);
+    const strictPending = options.requireSinglePendingMigration ?? null;
+    if (strictPending) {
+      const ledger = await client.query("SELECT to_regclass('public.schema_migrations') AS name");
+      if (!ledger.rows[0]?.name) {
+        const error = new Error('Production migration ledger is required');
+        error.code = 'MIGRATION_LEDGER_REQUIRED';
+        throw error;
+      }
+    } else {
+      await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+    }
+    const files = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
+    const applied = new Set((await client.query('SELECT filename FROM schema_migrations')).rows.map((row) => row.filename));
+    const pending = files.filter((filename) => !applied.has(filename));
+    if (strictPending && pending.length > 0 && (pending.length !== 1 || pending[0] !== strictPending)) throw new PendingMigrationSetError(strictPending, pending);
+    for (const filename of pending) {
+      await client.query('BEGIN');
+      try {
+        await client.query(await fs.readFile(path.join(migrationsDir, filename), 'utf8'));
+        await client.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]);
+        await client.query('COMMIT');
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch {}
+        throw error;
+      }
+    }
+    return { applied: pending };
+  } finally {
+    client.release();
   }
 }
 
@@ -240,3 +305,4 @@ export class ReceiptRepository {
   }
   async updateSyncState(accountKey, values) { await this.pool.query('INSERT INTO sync_state(account_key,last_sync_started_at,last_sync_finished_at,last_error) VALUES($1,$2,$3,$4) ON CONFLICT(account_key) DO UPDATE SET last_sync_started_at=EXCLUDED.last_sync_started_at,last_sync_finished_at=EXCLUDED.last_sync_finished_at,last_error=EXCLUDED.last_error,updated_at=NOW()', [accountKey, values.startedAt ?? null, values.finishedAt ?? null, values.error ?? null]); }
 }
+
