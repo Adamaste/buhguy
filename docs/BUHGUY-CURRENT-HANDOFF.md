@@ -17,16 +17,16 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-08
-- Current implementation baseline: `83cddf3877edda136196da5471b09f308ade1efc` (exact current master; production schema-only rollout 019/011 is complete)
+- Current implementation baseline: `39a45e68ae70050b7262c7d1db5c3711a8cc9993` (exact current master; production schema-only rollout 019/011 is complete)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the existing runtime remains unchanged. The first exact-master read-only current-snapshot validation ran after rollout and returned `NO_CURRENT_CERTIFICATION` for the live authoritative source state, so no certification refresh, writer call, deployment, replay, backfill, or grant change is authorized. The next action is a separately reviewed production read-only canonical spending current-snapshot validation/review, not a refresh or writer run.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the existing runtime remains unchanged. The exact-master read-only current-snapshot validation found live source state `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2` but no matching full unbounded READY run. The current snapshot is therefore `NO_CURRENT_CERTIFICATION`; no certification refresh, writer call, deployment, replay, backfill, or grant change is authorized. The next action is separately approved controlled production certification materialization, gated by a fresh read-only precheck and the reviewed certification contract correction.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `production read-only canonical spending current-snapshot validation`
+- Next action: `separately approved controlled production certification materialization`
 
 ## Production read-only canonical spending current-snapshot validation
 
@@ -2729,4 +2729,19 @@ No grants, runtime deployment, service restart, writer call, certification
 refresh, replay, backfill, classification, or unrelated production mutation
 was performed. The next action is `production read-only canonical spending
 current-snapshot validation`.
+
+
+## Production read-only canonical spending current-snapshot validation (current, no materialization)
+
+The exact current master `39a45e68ae70050b7262c7d1db5c3711a8cc9993` passed master CI `37768474323` (test/PostgreSQL integration, full suite, Android, and signed Android). This stage used only `REPEATABLE READ READ ONLY` transactions and safe aggregate diagnostics; it did not invoke a writer or certification persistence.
+
+For Person 1 scope `default` (scope id `1`), the live authoritative source-state key was `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2`. The non-persisting projection produced 5,840 facts and 8 results, all in RUB, over 2,070 active ledger entries. Its metric aggregates were: BLOCKED_EXPOSURE 73 facts / 183,738.45; FISCAL_NEW_MONEY 1,907 / 2,187,333.77; CONFIRMED_ACQUISITION_VALUE 1,920 / 2,211,029.87; ACQUISITION_CLASSIFICATION 1,920 / 2,211,029.87; CONFIRMED_RETURN_VALUE 10 / 5,782.29; OUTSTANDING_REFUND_RECEIVABLE 10 / 5,782.29. These are aggregate diagnostics only, not persisted certification.
+
+The historical unbounded READY run was stale for this source state, so the live status is `NO_CURRENT_CERTIFICATION`. No run, fact, result, ledger, receipt, bank, classification, grant, or view row was written or refreshed.
+
+On a disposable PostgreSQL clone, the exact one-time unbounded certification path produced a matching READY current snapshot. The clone's canonical household, category, and person summaries reconciled exactly by currency using decimal minor-unit arithmetic: RUB gross `2210631.68`, returns `5782.29`, and net `2204849.39` in each aggregate view. The clone also passed the current-state reader compatibility check after the shared result semantic-key correction in open PR `#137`; that correction must be merged before any production materialization is considered.
+
+The safe production materialization procedure is separately approved only after PR `#137` is merged and exact-master CI passes: create a fresh validated backup; open one bounded `REPEATABLE READ` transaction with a write-capable certification role; recompute and compare the authoritative source-state key immediately before insert; stop on any source drift, missing/unready/conflicting snapshot, lock/timeout, or fact/result mismatch; persist exactly one full unbounded READY run atomically; verify facts/results and per-currency reconciliation; commit only after all postchecks pass, otherwise rollback. A replay must reuse the same source-state identity and never create a second current run.
+
+After new bank or receipt ingestion, certification is not automatically current: the next controlled cycle must recompute source identity, run the non-persisting projection, classify the state, and only then use the separately approved materialization procedure. No automatic refresh, writer trigger, replay, or backfill is enabled.
 
