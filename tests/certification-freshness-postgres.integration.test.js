@@ -68,7 +68,7 @@ integration('distinguishes missing and stale snapshots after a source change', {
   }
 });
 
-integration('rejects exact-run conflicts and non-ready exact runs', { concurrency: false }, async () => {
+integration('schema uniqueness prevents exact-run conflicts and non-ready exact runs are rejected', { concurrency: false }, async () => {
   const seeded = await seedReady();
   await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to,finished_at)
     VALUES(1,$1,$2,'READY',NULL,NULL,NOW())`, [CERTIFICATION_MODEL_VERSION, seeded.sourceStateKey]);
