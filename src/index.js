@@ -18,3 +18,4 @@ export { BankSourceProviderBindingError, SOURCE_PROVIDER_BINDING_PROVENANCE, bin
 export { MATCHER_RECEIPTS_SQL, MATCHER_VERSION, NORMALIZED_FACT_VERSION, PREPAYMENT_SETTLEMENT_RULE, dryRunPrepaymentSettlements, matchPrepaymentSettlements, persistPrepaymentSettlementMatches, reconsiderPrepaymentSettlement } from './prepayment-settlement-matcher.js';
 export { MATCHED_PURCHASE_PERSISTENCE_VERSION, MATCHED_PURCHASE_BANK_LEDGER_RULE, persistMatchedPurchase, persistMatchedPurchaseAtomic } from './matched-purchase-persistence.js';
 export { MATCHED_PURCHASE_ORCHESTRATION_VERSION, ORCHESTRATION_DECISIONS, buildMatchedPurchaseOrchestrationPreview, previewMatchedPurchaseOrchestration } from './matched-purchase-orchestration.js';
+export { CERTIFICATION_MATERIALIZATION_VERSION, materializeCurrentCertification } from './certification-materialization.js';

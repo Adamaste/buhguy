@@ -17,9 +17,9 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-08
-- Current implementation baseline: `39a45e68ae70050b7262c7d1db5c3711a8cc9993` (exact baseline of the production read-only validation; certification correction PR #137 subsequently merged as `3dd5fa0a3095510f266fa7cc8c62e5188eb9ecb9`)
+- Current implementation baseline: `2f05c5928f92fc34cdade326733b31dd6b74ceaf` (exact current master; certification correction PR #137 merged as `3dd5fa0a3095510f266fa7cc8c62e5188eb9ecb9`, followed by the reviewed read-only handoff closeout)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the existing runtime remains unchanged. The exact-master read-only current-snapshot validation found live source state `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2` but no matching full unbounded READY run. The current snapshot is therefore `NO_CURRENT_CERTIFICATION`; no certification refresh, writer call, deployment, replay, backfill, or grant change is authorized. The next action is separately approved controlled production certification materialization, gated by a fresh read-only precheck and the reviewed certification contract correction.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified; the exact-master read-only current-snapshot validation found live source state `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2` but no matching full unbounded READY run. The current snapshot is therefore `NO_CURRENT_CERTIFICATION`; the guarded one-shot materialization implementation is under review and no production certification write, deployment, replay, backfill, or grant change is authorized. The next action remains separately authorized controlled production certification materialization after the implementation PR is reviewed and merged.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
@@ -27,6 +27,40 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
 - Next action: `separately approved controlled production certification materialization`
+
+## Guarded one-shot certification materialization (implementation under review)
+
+The exact current master is `2f05c5928f92fc34cdade326733b31dd6b74ceaf`. A
+separate implementation PR adds `materializeCurrentCertification()` as a
+guarded one-shot full unbounded certification writer. It uses one
+`SERIALIZABLE` PostgreSQL transaction, bounded lock and statement timeouts,
+an accounting-scope lock, one authoritative source-state/projection snapshot,
+immutable historical runs, atomic run/fact/result insertion, exact semantic
+identity revalidation, and rollback on conflicts, timeouts, failures, or
+serialization retries. The production call requires the exact SHA-256
+`expectedSourceStateKey` from the approved read-only preflight; missing or
+mismatched identity fails before any INSERT. It never uses `replace=true`,
+deletes history, or invokes the matched-purchase writer.
+
+The disposable clone test contract covers creation of a full READY snapshot,
+current-snapshot reader READY compatibility, same-state per-currency
+household/category/person reconciliation, missing and wrong expected keys,
+idempotent retry without extra rows, concurrent source-change fail-closed
+behavior, overall timeout, and injected failures after run/facts/results with
+exact rollback. Household/category/person
+gross, returns, net, and unresolved/unclassified buckets must reconcile by
+currency using exact decimal arithmetic before any production approval.
+
+Production remains read-only in this stage. A future materialization requires
+a fresh validated backup, explicit authorization for the exact scope and
+source-state key, a repeatable-read read-only precheck, same-state fact/result
+and per-currency reconciliation, bounded write transaction, and read-only
+postcheck. `NO_CURRENT_CERTIFICATION` is allowed when no exact unbounded
+`READY` run exists for the approved state; an existing foreign, conflicting,
+corrupt, or non-READY exact run is a STOP, as are source drift, lock/timeout,
+semantic mismatch, or failed postcheck. No automatic
+refresh, replay, backfill, deployment, classification, or accounting catch-up
+is permitted.
 
 ## Production read-only canonical spending current-snapshot validation
 
