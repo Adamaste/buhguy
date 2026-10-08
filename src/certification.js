@@ -210,9 +210,11 @@ function aggregateFacts(facts) {
   return [...result.values()].map((item) => ({ ...item, amount: money(item.amount), semanticKey: fiscalContentFingerprint(item) }));
 }
 
-export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null } = {}) {
+export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
   const { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
-  const sourceStateKey = await sourceState(pool, scope.id);
+  // Read-only snapshot callers already computed this key in the same transaction.
+  // Reuse it so validation cannot observe a second, logically different state.
+  const sourceStateKey = providedSourceStateKey ?? await sourceState(pool, scope.id);
   const facts = deriveCertificationFacts({ entries, postings, links, sourceStateKey, from, to });
   const results = aggregateFacts(facts);
   const merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + n(p.debit) - n(p.credit), 0);

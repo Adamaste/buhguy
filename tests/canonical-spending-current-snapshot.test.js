@@ -9,12 +9,16 @@ import { readFile } from 'node:fs/promises';
 
 test('current snapshot contract is authoritative, read-only, and fail-closed', async () => {
   const source = await readFile(new URL('../src/canonical-spending-current-snapshot.js', import.meta.url), 'utf8');
+  const certification = await readFile(new URL('../src/certification.js', import.meta.url), 'utf8');
   assert.match(source, /certificationSourceStateKey\(/);
   assert.match(source, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/);
   assert.match(source, /ROLLBACK/);
   assert.match(source, /period_from IS NULL AND period_to IS NULL/);
   assert.match(source, /run\.status !== 'READY'/);
-  assert.match(source, /rebuildCertification\(client, \{ scopeKey, persist: false \}\)/);
+  assert.match(source, /rebuildCertification\(client, \{ scopeKey, persist: false, sourceStateKey \}\)/);
+  assert.match(source, /snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter'/);
+  assert.match(certification, /sourceStateKey: providedSourceStateKey = null/);
+  assert.match(certification, /providedSourceStateKey \?\? await sourceState\(pool, scope\.id\)/);
   assert.doesNotMatch(source, /ORDER BY id DESC LIMIT 1/);
   assert.doesNotMatch(source, /INSERT INTO|UPDATE\s+|DELETE FROM|TRUNCATE\s+/i);
   assert.doesNotMatch(source, /Number\([^)]*(amount|gross|return|spend|currency)/i);

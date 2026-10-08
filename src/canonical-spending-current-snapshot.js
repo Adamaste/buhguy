@@ -67,7 +67,7 @@ async function loadSnapshotOnClient(client, { scopeKey = 'default' } = {}) {
     return failure(CURRENT_SPENDING_SNAPSHOT_FAILURES.CORRUPT_SNAPSHOT, { scopeKey, sourceStateKey, runId: Number(run.id) });
   }
 
-  const expected = await rebuildCertification(client, { scopeKey, persist: false });
+  const expected = await rebuildCertification(client, { scopeKey, persist: false, sourceStateKey });
   if (expected.sourceStateKey !== sourceStateKey) {
     return failure(CURRENT_SPENDING_SNAPSHOT_FAILURES.STALE_SNAPSHOT, { scopeKey, sourceStateKey, runId: Number(run.id) });
   }
@@ -163,8 +163,8 @@ function scopedViewWhere(snapshot) {
   return [snapshot.scopeId, snapshot.runId, snapshot.sourceStateKey];
 }
 
-function readResult(snapshot, rows) {
-  return { snapshot, rows };
+function readResult(snapshot, rows, queryPeriod = null) {
+  return { snapshot, ...(queryPeriod ? { queryPeriod } : {}), rows };
 }
 
 export async function currentHouseholdSummary(pool, options = {}) {
@@ -175,6 +175,13 @@ export async function currentHouseholdSummary(pool, options = {}) {
 }
 
 export async function currentMonthlySpending(pool, { timezone = 'UTC', from = null, to = null, ...options } = {}) {
+  const queryPeriod = {
+    timezone,
+    from,
+    to,
+    semantics: 'event_at, half-open [from,to)',
+    snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter',
+  };
   return withCurrentSnapshot(pool, options, async (client, snapshot) => readResult(snapshot, (await client.query(`WITH monetary AS (
       SELECT purchased_at AS event_at, amount AS gross_spend, 0::NUMERIC(18,2) AS confirmed_returns, currency
       FROM canonical_spending_purchases_v1
@@ -192,7 +199,7 @@ export async function currentMonthlySpending(pool, { timezone = 'UTC', from = nu
     WHERE ($4::timestamptz IS NULL OR event_at >= $4::timestamptz)
       AND ($5::timestamptz IS NULL OR event_at < $5::timestamptz)
     GROUP BY date_trunc('month',event_at AT TIME ZONE $6), currency
-    ORDER BY month,currency`, [...scopedViewWhere(snapshot), from, to, timezone])).rows));
+    ORDER BY month,currency`, [...scopedViewWhere(snapshot), from, to, timezone])).rows, queryPeriod));
 }
 
 export async function currentCategorySummary(pool, options = {}) {

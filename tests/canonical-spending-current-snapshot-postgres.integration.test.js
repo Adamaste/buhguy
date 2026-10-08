@@ -35,7 +35,7 @@ const persistenceCounts = async () => (await pool.query(`SELECT
   (SELECT count(*)::int FROM ledger_postings) AS postings,
   (SELECT count(*)::int FROM ledger_source_links) AS source_links`)).rows[0];
 
-function observingPool() {
+function observingPool({ afterQuery = null } = {}) {
   const seen = [];
   const forbidden = /\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE)\b/i;
   return {
@@ -47,12 +47,23 @@ function observingPool() {
           const text = String(sql).replace(/\s+/g, ' ').trim();
           seen.push(text);
           if (forbidden.test(text) && !/^ROLLBACK\b/i.test(text)) throw new Error(`read-only query guard rejected ${text}`);
-          return client.query(sql, params);
+          const result = await client.query(sql, params);
+          if (afterQuery) await afterQuery(text);
+          return result;
         },
         release() { client.release(); },
       };
     },
   };
+}
+
+function sumMoney(rows, field) {
+  return rows.reduce((sum, row) => {
+    const [whole, fraction = '00'] = String(row[field]).split('.');
+    const sign = whole.startsWith('-') ? -1n : 1n;
+    const absolute = whole.replace('-', '');
+    return sum + sign * (BigInt(absolute) * 100n + BigInt(fraction.padEnd(2, '0')));
+  }, 0n);
 }
 
 integration('current snapshot uses one repeatable-read read-only transaction and exposes only coherent current state', async () => {
@@ -65,7 +76,8 @@ integration('current snapshot uses one repeatable-read read-only transaction and
   assert.match(resolved.snapshot.sourceStateKey, /^[0-9a-f]{64}$/);
   assert.ok(observed.seen.some((query) => query === 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
   assert.ok(observed.seen.includes('ROLLBACK'));
-  assert.ok(observed.seen.every((query) => !/^\s*(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP)\b/i.test(query)));
+  assert.equal(observed.seen.filter((query) => query.includes('(SELECT count(*) FROM receipts)')).length, 1);
+  assert.ok(observed.seen.every((query) => /^ROLLBACK\b/i.test(query) || !/\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE)\b/i.test(query)));
 
   const [household, monthly, categories, people, purchases, returns] = await Promise.all([
     currentHouseholdSummary(pool, { scopeKey: 'default' }),
@@ -85,6 +97,15 @@ integration('current snapshot uses one repeatable-read read-only transaction and
   assert.ok(monthly.rows.every((row) => typeof row.gross_spend === 'string' && typeof row.net_spend === 'string'));
   assert.ok(categories.rows.every((row) => typeof row.gross_spend === 'string' && typeof row.net_spend === 'string'));
   assert.ok(people.rows.every((row) => typeof row.gross_spend === 'string' && typeof row.net_spend === 'string'));
+  assert.deepEqual(monthly.queryPeriod, {
+    timezone: 'UTC',
+    from: null,
+    to: null,
+    semantics: 'event_at, half-open [from,to)',
+    snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter',
+  });
+  assert.equal(sumMoney(categories.rows, 'gross_spend'), sumMoney(household.rows, 'gross_spend'));
+  assert.equal(sumMoney(people.rows, 'gross_spend'), sumMoney(household.rows, 'gross_spend'));
 
   const after = await persistenceCounts();
   assert.deepEqual(after, before);
@@ -101,11 +122,13 @@ integration('current snapshot rejects stale and corrupt persisted snapshots with
   const fact = (await pool.query('SELECT id,amount FROM certification_facts WHERE run_id=$1 ORDER BY id LIMIT 1', [run[0].id])).rows[0];
   assert.ok(fact);
   const originalAmount = fact.amount;
+  const beforeCorrupt = await persistenceCounts();
   await pool.query('UPDATE certification_facts SET amount=amount+0.01 WHERE id=$1', [fact.id]);
   const corrupt = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
   assert.equal(corrupt.ok, false);
   assert.equal(corrupt.reasonCode, 'CORRUPT_SNAPSHOT');
   await pool.query('UPDATE certification_facts SET amount=$2 WHERE id=$1', [fact.id, originalAmount]);
+  assert.deepEqual(await persistenceCounts(), beforeCorrupt);
 
   const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
   const semanticKey = crypto.createHash('sha256').update('current-snapshot-stale-fixture').digest('hex');
@@ -117,4 +140,123 @@ integration('current snapshot rejects stale and corrupt persisted snapshots with
   assert.equal(stale.ok, false);
   assert.ok(['NO_CURRENT_CERTIFICATION', 'STALE_SNAPSHOT'].includes(stale.reasonCode));
   assert.notEqual(stale.sourceStateKey, sourceStateKey);
+});
+
+integration('current snapshot rejects non-ready, bounded, wrong-identity and absent current runs', async () => {
+  const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
+  const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
+  const eventKey = crypto.createHash('sha256').update(`snapshot-run-fixture-${Date.now()}`).digest('hex');
+  const eventId = Number((await pool.query(`INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
+    VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','snapshot-run-fixture',$2,$3,$4,0.01,'RUB','temporary run fixture') RETURNING id`, [scope.id, rule.rule_code, rule.rule_version, eventKey])).rows[0].id);
+  try {
+    const changedKey = await certificationSourceStateKey(pool, scope.id);
+    for (const status of ['RUNNING', 'FAILED']) {
+      const run = Number((await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to)
+        VALUES($1,$2,$3,$4,NULL,NULL) RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, changedKey, status])).rows[0].id);
+      const result = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, 'NO_CURRENT_CERTIFICATION');
+      await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [run]);
+    }
+    const absent = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
+    assert.equal(absent.ok, false);
+    assert.equal(absent.reasonCode, 'NO_CURRENT_CERTIFICATION');
+    const boundedRun = Number((await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to)
+      VALUES($1,$2,$3,'READY','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z') RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, changedKey])).rows[0].id);
+    const bounded = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
+    assert.equal(bounded.ok, false);
+    assert.equal(bounded.reasonCode, 'NO_CURRENT_CERTIFICATION');
+    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [boundedRun]);
+
+    const wrongModel = Number((await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to)
+      VALUES($1,'other-model-v1',$2,'READY',NULL,NULL) RETURNING id`, [scope.id, changedKey])).rows[0].id);
+    const wrongModelResult = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
+    assert.equal(wrongModelResult.ok, false);
+    assert.equal(wrongModelResult.reasonCode, 'NO_CURRENT_CERTIFICATION');
+    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [wrongModel]);
+
+    const otherScope = Number((await pool.query("INSERT INTO accounting_scopes(scope_key,label) VALUES($1,'temporary') RETURNING id", [`snapshot-other-${Date.now()}`])).rows[0].id);
+    const otherScopeKey = await certificationSourceStateKey(pool, otherScope);
+    const wrongScopeRun = Number((await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,period_from,period_to)
+      VALUES($1,$2,$3,'READY',NULL,NULL) RETURNING id`, [otherScope, CERTIFICATION_MODEL_VERSION, otherScopeKey])).rows[0].id);
+    const wrongScopeResult = await resolveCurrentSpendingSnapshot(pool, { scopeKey: 'default' });
+    assert.equal(wrongScopeResult.ok, false);
+    assert.equal(wrongScopeResult.reasonCode, 'NO_CURRENT_CERTIFICATION');
+    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [wrongScopeRun]);
+    await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [otherScope]);
+  } finally {
+    await pool.query('DELETE FROM reconciliation_runs WHERE scope_id=$1 AND source_state_key=$2', [scope.id, await certificationSourceStateKey(pool, scope.id)]);
+    await pool.query('DELETE FROM business_events WHERE id=$1', [eventId]);
+  }
+});
+
+integration('current snapshot changes identity for receipt population and active-ledger supersession', async () => {
+  const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
+  const before = await certificationSourceStateKey(pool, scope.id);
+  const receiptId = Number((await pool.query("INSERT INTO receipts(fns_id,source,total_sum,currency) VALUES($1,'snapshot-receipt-fixture',0,'RUB') RETURNING id", [`snapshot-receipt-${Date.now()}`])).rows[0].id);
+  const afterReceipt = await certificationSourceStateKey(pool, scope.id);
+  assert.notEqual(afterReceipt, before);
+  await pool.query('DELETE FROM receipts WHERE id=$1', [receiptId]);
+
+  const active = (await pool.query(`SELECT e.* FROM ledger_entries e
+    WHERE e.scope_id=$1 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
+    ORDER BY e.id LIMIT 1`, [scope.id])).rows[0];
+  assert.ok(active);
+  const replacement = (await pool.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,description)
+    SELECT scope_id,source_event_id,currency,event_at,repeat('d',64),derivation_rule,derivation_version,derivation_status,certification_status,origin,'temporary snapshot supersession'
+    FROM ledger_entries WHERE id=$1 RETURNING id`, [active.id])).rows[0];
+  await pool.query(`INSERT INTO ledger_entry_supersessions(scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code)
+    VALUES($1,$2,$3,$4,repeat('e',64),repeat('f',64),'SNAPSHOT_TEST')`, [scope.id, active.id, replacement.id, active.source_event_id]);
+  const afterSupersession = await certificationSourceStateKey(pool, scope.id);
+  assert.notEqual(afterSupersession, afterReceipt);
+  await pool.query('DELETE FROM ledger_entry_supersessions WHERE replacement_ledger_entry_id=$1', [replacement.id]);
+  await pool.query('DELETE FROM ledger_entries WHERE id=$1', [replacement.id]);
+});
+
+integration('repeatable-read snapshot remains coherent under concurrent source modification', async () => {
+  const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
+  const baseline = await certificationSourceStateKey(pool, scope.id);
+  let injected = false;
+  const observed = observingPool({
+    afterQuery: async (query) => {
+      if (!injected && query.includes('(SELECT count(*) FROM receipts)')) {
+        injected = true;
+        const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
+        const key = crypto.createHash('sha256').update(`snapshot-concurrent-${Date.now()}`).digest('hex');
+        await pool.query(`INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency)
+          VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','snapshot-concurrent',$2,$3,$4,0.01,'RUB')`, [scope.id, rule.rule_code, rule.rule_version, key]);
+      }
+    },
+  });
+  const result = await resolveCurrentSpendingSnapshot(observed, { scopeKey: 'default' });
+  assert.equal(injected, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.sourceStateKey, baseline);
+  await pool.query("DELETE FROM business_events WHERE graph_model_version='snapshot-concurrent'");
+});
+
+integration('monthly metadata preserves timezone and half-open boundaries', async () => {
+  const result = await currentMonthlySpending(pool, {
+    scopeKey: 'default',
+    timezone: 'Europe/Moscow',
+    from: '2026-08-01T00:00:00Z',
+    to: '2026-09-01T00:00:00Z',
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.queryPeriod, {
+    timezone: 'Europe/Moscow',
+    from: '2026-08-01T00:00:00Z',
+    to: '2026-09-01T00:00:00Z',
+    semantics: 'event_at, half-open [from,to)',
+    snapshotIdentity: 'unbounded certification snapshot; query period is an additional filter',
+  });
+  assert.ok(result.rows.every((row) => /^\d{4}-\d{2}$/.test(row.month)));
+});
+
+integration('reader failure paths remain write-free', async () => {
+  const before = await persistenceCounts();
+  const result = await resolveCurrentSpendingSnapshot(observingPool(), { scopeKey: 'missing-scope' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reasonCode, 'SCOPE_NOT_FOUND');
+  assert.deepEqual(await persistenceCounts(), before);
 });
