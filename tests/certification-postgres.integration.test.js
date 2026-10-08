@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Pool } from 'pg';
-import { certificationReport, rebuildCertification, refreshCertificationForEvents, CERTIFICATION_SOURCE_STATE_OVERRIDE } from '../src/certification.js';
+import { certificationReport, certificationResultSemanticKey, rebuildCertification, refreshCertificationForEvents, CERTIFICATION_SOURCE_STATE_OVERRIDE } from '../src/certification.js';
 
 test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -136,3 +136,29 @@ test('full READY certification can be reused by bounded refresh without mutation
   } finally { await pool.end(); }
 });
 
+
+
+test('existing READY result identity has golden parity and same-state reuse', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const full = await rebuildCertification(pool, { scopeKey: 'default', persist: true });
+    const stored = (await pool.query('SELECT * FROM reconciliation_results WHERE run_id=$1 ORDER BY id', [full.runId])).rows;
+    const projected = await rebuildCertification(pool, { scopeKey: 'default', persist: false });
+    assert.equal(projected.sourceStateKey, full.sourceStateKey);
+    for (const result of projected.results) {
+      const row = stored.find((candidate) => candidate.metric_code === result.metricCode
+        && candidate.currency === result.currency
+        && candidate.status === result.status
+        && candidate.reason_code === result.reasonCode);
+      assert.ok(row, `persisted result missing for ${result.metricCode}`);
+      assert.equal(row.semantic_key, certificationResultSemanticKey(result, full.runId));
+    }
+    const reused = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });
+    assert.equal(reused.runId, full.runId);
+    assert.equal(reused.sourceStateKey, full.sourceStateKey);
+    assert.equal(reused.reused, true);
+    assert.equal(reused.refreshed, false);
+  } finally {
+    await pool.end();
+  }
+});

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateCertificationFacts, deriveCertificationFacts } from '../src/certification.js';
+import { aggregateCertificationFacts, certificationResultSemanticKey, deriveCertificationFacts, summarizeCertificationTotals } from '../src/certification.js';
 
 const base = (id, rule, status = 'READY', amount = '100.00') => ({ id, scope_id: 1, source_event_id: id, derivation_rule: rule, derivation_status: status, currency: 'RUB', event_at: '2026-01-01T00:00:00Z', event_amount: amount });
 const posting = (entry, code, debit, credit) => ({ ledger_entry_id: entry, account_code: code, debit, credit });
@@ -52,3 +52,122 @@ test('certification aggregates keep currencies separate and preserve result iden
   assert.notEqual(results[0].semanticKey, results[1].semanticKey);
 });
 
+
+
+test('certification money uses exact minor units for pennies and large NUMERIC(18,2) values', () => {
+  const results = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '9000000000000000.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.98', currency: 'RUB' },
+  ]);
+  assert.deepEqual(results, [{
+    metricCode: 'CONFIRMED_ACQUISITION_VALUE',
+    status: 'CERTIFIED',
+    amount: '9000000000000000.99',
+    currency: 'RUB',
+    countItems: 2,
+    reasonCode: 'BUSINESS_GRAPH_CONFIRMED',
+    semanticKey: results[0].semanticKey,
+  }]);
+});
+
+test('certification refund arithmetic preserves cents and separates currencies', () => {
+  const results = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.02', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.02', currency: 'USD' },
+  ]);
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_ACQUISITION_VALUE').amount, '10.01');
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_RETURN_VALUE' && row.currency === 'RUB').amount, '0.02');
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_RETURN_VALUE' && row.currency === 'USD').amount, '0.02');
+});
+
+test('same source-state inputs keep deterministic certification identity', () => {
+  const facts = deriveCertificationFacts({
+    sourceStateKey: 'a'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  const repeated = deriveCertificationFacts({
+    sourceStateKey: 'a'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  const changed = deriveCertificationFacts({
+    sourceStateKey: 'b'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  assert.equal(facts[0].amount, '0.01');
+  assert.equal(facts[0].semanticKey, repeated[0].semanticKey);
+  assert.notEqual(facts[0].semanticKey, changed[0].semanticKey);
+});
+
+
+test('aggregate projection identity is separate from persisted result identity', () => {
+  const [aggregate] = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.01', currency: 'RUB' },
+  ]);
+  const persisted = certificationResultSemanticKey({
+    metricCode: aggregate.metricCode,
+    status: aggregate.status,
+    amount: aggregate.amount,
+    currency: aggregate.currency,
+    countItems: aggregate.countItems,
+    reasonCode: aggregate.reasonCode,
+  }, 123);
+  assert.equal(persisted, certificationResultSemanticKey({
+    metricCode: aggregate.metricCode,
+    status: aggregate.status,
+    amount: '10.01',
+    currency: 'RUB',
+    countItems: 1,
+    reasonCode: 'BUSINESS_GRAPH_CONFIRMED',
+  }, 123));
+  assert.notEqual(aggregate.semanticKey, persisted);
+});
+
+test('certification report totals fail closed across currencies and preserve mono-currency contract', () => {
+  const baseline = summarizeCertificationTotals([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', amount: '0.01', currency: 'RUB' },
+  ]);
+  assert.equal(baseline.netConfirmedAcquisition.amount, '10.00');
+  assert.equal(baseline.netConfirmedAcquisition.status, 'CERTIFIED');
+
+  const zeroReturns = summarizeCertificationTotals([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '10.01', currency: 'RUB' },
+  ]);
+  assert.equal(zeroReturns.confirmedReturnValue.amount, '0.00');
+  assert.equal(zeroReturns.netConfirmedAcquisition.amount, '10.01');
+  assert.equal(zeroReturns.netConfirmedAcquisition.status, 'CERTIFIED');
+
+  const mixedGross = summarizeCertificationTotals([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '2.00', currency: 'USD' },
+  ]);
+  assert.equal(mixedGross.confirmedAcquisitionValue.amount, null);
+  assert.equal(mixedGross.confirmedAcquisitionValue.status, 'BLOCKED');
+  assert.equal(mixedGross.netConfirmedAcquisition.amount, null);
+  assert.equal(mixedGross.netConfirmedAcquisition.reason, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+
+  const mixedReturns = summarizeCertificationTotals([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', amount: '2.00', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', amount: '1.00', currency: 'USD' },
+  ]);
+  assert.equal(mixedReturns.confirmedReturnValue.amount, null);
+  assert.equal(mixedReturns.confirmedReturnValue.status, 'BLOCKED');
+  assert.equal(mixedReturns.netConfirmedAcquisition.amount, null);
+  assert.equal(mixedReturns.netConfirmedAcquisition.status, 'BLOCKED');
+
+  const crossMetric = summarizeCertificationTotals([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', amount: '2.00', currency: 'USD' },
+  ]);
+  assert.equal(crossMetric.netConfirmedAcquisition.amount, null);
+  assert.equal(crossMetric.netConfirmedAcquisition.status, 'BLOCKED');
+  assert.equal(crossMetric.netConfirmedAcquisition.reason, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+});

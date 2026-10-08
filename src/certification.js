@@ -4,8 +4,25 @@ export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
 export const CERTIFICATION_SOURCE_STATE_OVERRIDE = 'CERTIFICATION_SOURCE_STATE_OVERRIDE';
 
-const n = (value) => Number(value ?? 0);
-const money = (value) => n(value).toFixed(2);
+const MONEY_PATTERN = /^-?\d+(?:\.\d{1,2})?$/;
+
+function moneyMinorUnits(value) {
+  if (value === null || value === undefined || value === '') return 0n;
+  const text = String(value);
+  if (!MONEY_PATTERN.test(text)) throw new Error(`Invalid NUMERIC(18,2) amount: ${text}`);
+  const negative = text.startsWith('-');
+  const unsigned = negative ? text.slice(1) : text;
+  const [whole, fraction = ''] = unsigned.split('.');
+  const minor = (BigInt(whole) * 100n) + BigInt(fraction.padEnd(2, '0'));
+  return negative ? -minor : minor;
+}
+
+function money(value) {
+  const minor = typeof value === 'bigint' ? value : moneyMinorUnits(value);
+  const negative = minor < 0n;
+  const absolute = negative ? -minor : minor;
+  return `${negative ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
+}
 const inPeriod = (value, from, to) => (!from || new Date(value) >= new Date(from)) && (!to || new Date(value) < new Date(to));
 
 async function sourceState(pool, scopeId) {
@@ -192,10 +209,10 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
   };
   for (const entry of entries) {
     const entryPostings = byEntry.get(Number(entry.id)) ?? [];
-    const debit = (code) => entryPostings.filter((p) => p.account_code === code).reduce((sum, p) => sum + n(p.debit), 0);
-    const credit = (code) => entryPostings.filter((p) => p.account_code === code).reduce((sum, p) => sum + n(p.credit), 0);
+    const debit = (code) => entryPostings.filter((p) => p.account_code === code).reduce((sum, p) => sum + moneyMinorUnits(p.debit), 0n);
+    const credit = (code) => entryPostings.filter((p) => p.account_code === code).reduce((sum, p) => sum + moneyMinorUnits(p.credit), 0n);
     if (entry.derivation_status === 'BLOCKED') {
-      add(entry, 'BLOCKED_EXPOSURE', 'BUSINESS_CERTIFICATION', 'BLOCKED', n(entry.event_amount), entry.reason_code ?? 'BLOCKED_LEDGER_ENTRY');
+      add(entry, 'BLOCKED_EXPOSURE', 'BUSINESS_CERTIFICATION', 'BLOCKED', moneyMinorUnits(entry.event_amount), entry.reason_code ?? 'BLOCKED_LEDGER_ENTRY');
       continue;
     }
     if (entry.derivation_status !== 'READY') continue;
@@ -223,10 +240,53 @@ export function aggregateCertificationFacts(facts) {
   const result = new Map();
   for (const fact of facts) {
     const key = `${fact.metricCode}|${fact.status}|${fact.reasonCode}|${fact.currency ?? ''}`;
-    const current = result.get(key) ?? { metricCode: fact.metricCode, status: fact.status, amount: 0, currency: fact.currency, countItems: 0, reasonCode: fact.reasonCode };
-    current.amount += n(fact.amount); current.countItems += 1; result.set(key, current);
+    const current = result.get(key) ?? { metricCode: fact.metricCode, status: fact.status, amount: 0n, currency: fact.currency, countItems: 0, reasonCode: fact.reasonCode };
+    current.amount += moneyMinorUnits(fact.amount); current.countItems += 1; result.set(key, current);
   }
-  return [...result.values()].map((item) => ({ ...item, amount: money(item.amount), semanticKey: fiscalContentFingerprint(item) }));
+  return [...result.values()].map((item) => { const amount = money(item.amount); return { ...item, amount, semanticKey: fiscalContentFingerprint({ ...item, amount }) }; });
+}
+
+export function summarizeCertificationTotals(results, balances = {}) {
+  const byMetric = {};
+  for (const result of results ?? []) byMetric[result.metricCode] = [...(byMetric[result.metricCode] ?? []), result];
+
+  const summarize = (metricCode, status) => {
+    const rows = byMetric[metricCode] ?? [];
+    const currencies = [...new Set(rows.map((row) => row.currency).filter(Boolean))].sort();
+    if (currencies.length > 1) {
+      return { amount: null, status: 'BLOCKED', reason: 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT', currency: null };
+    }
+    return {
+      amount: money(rows.reduce((sum, row) => sum + moneyMinorUnits(row.amount), 0n)),
+      status,
+      currency: currencies[0] ?? null,
+    };
+  };
+
+  const acquisition = summarize('CONFIRMED_ACQUISITION_VALUE', 'CERTIFIED');
+  const returns = summarize('CONFIRMED_RETURN_VALUE', 'CERTIFIED');
+  const currencyConflict = acquisition.currency && returns.currency && acquisition.currency !== returns.currency;
+  const net = currencyConflict || acquisition.status === 'BLOCKED' || returns.status === 'BLOCKED'
+    ? { amount: null, status: 'BLOCKED', reason: 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT', currency: null }
+    : {
+      amount: money(moneyMinorUnits(acquisition.amount) - moneyMinorUnits(returns.amount)),
+      status: acquisition.status === 'CERTIFIED' && returns.status === 'CERTIFIED' ? 'CERTIFIED' : 'BLOCKED',
+      currency: acquisition.currency ?? returns.currency,
+    };
+
+  const metric = (code, status, reason = undefined) => {
+    const item = summarize(code, status);
+    return reason === undefined ? item : { ...item, reason };
+  };
+  return {
+    confirmedAcquisitionValue: acquisition,
+    confirmedReturnValue: returns,
+    netConfirmedAcquisition: net,
+    fiscalNewMoney: metric('FISCAL_NEW_MONEY', 'PROVISIONAL', 'FUNDING_UNRECONCILED'),
+    merchantAdvanceBalance: { amount: money(balances.merchantAdvance ?? '0.00'), status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' },
+    outstandingRefundReceivable: metric('OUTSTANDING_REFUND_RECEIVABLE', 'CERTIFIED'),
+    blockedExposure: metric('BLOCKED_EXPOSURE', 'BLOCKED'),
+  };
 }
 
 const aggregateFacts = aggregateCertificationFacts;
@@ -239,7 +299,7 @@ export async function rebuildCertification(pool, { scopeKey = 'default', from = 
   const sourceStateKey = providedSourceStateKey ?? await sourceState(pool, scope.id);
   const facts = deriveCertificationFacts({ entries, postings, links, sourceStateKey, from, to });
   const results = aggregateFacts(facts);
-  const merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + n(p.debit) - n(p.credit), 0);
+  const merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
   if (!persist) return { model: CERTIFICATION_MODEL_VERSION, sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
   const client = await pool.connect();
   try {
@@ -258,10 +318,6 @@ export async function rebuildCertification(pool, { scopeKey = 'default', from = 
 
 export async function certificationReport(pool, { scopeKey = 'default', from = null, to = null } = {}) {
   const projection = await rebuildCertification(pool, { scopeKey, from, to, persist: false });
-  const byMetric = {};
-  for (const result of projection.results) byMetric[result.metricCode] = [...(byMetric[result.metricCode] ?? []), result];
-  const acquisition = (byMetric.CONFIRMED_ACQUISITION_VALUE ?? []).reduce((sum, item) => sum + n(item.amount), 0);
-  const returns = (byMetric.CONFIRMED_RETURN_VALUE ?? []).reduce((sum, item) => sum + n(item.amount), 0);
-  return { model: projection.model, sourceStateKey: projection.sourceStateKey, period: { from, to, semantics: 'business event/ledger event_at, half-open [from,to)' }, metrics: { confirmedAcquisitionValue: { amount: money(acquisition), status: 'CERTIFIED' }, confirmedReturnValue: { amount: money(returns), status: 'CERTIFIED' }, netConfirmedAcquisition: { amount: money(acquisition - returns), status: 'CERTIFIED' }, fiscalNewMoney: { amount: money((byMetric.FISCAL_NEW_MONEY ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'PROVISIONAL', reason: 'FUNDING_UNRECONCILED' }, merchantAdvanceBalance: { amount: projection.balances.merchantAdvance, status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' }, outstandingRefundReceivable: { amount: money((byMetric.OUTSTANDING_REFUND_RECEIVABLE ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'CERTIFIED' }, blockedExposure: { amount: money((byMetric.BLOCKED_EXPOSURE ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'BLOCKED' } }, results: projection.results, proofFacts: projection.facts };
+  return { model: projection.model, sourceStateKey: projection.sourceStateKey, period: { from, to, semantics: 'business event/ledger event_at, half-open [from,to)' }, metrics: summarizeCertificationTotals(projection.results, projection.balances), results: projection.results, proofFacts: projection.facts };
 }
 
