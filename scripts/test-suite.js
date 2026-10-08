@@ -54,6 +54,7 @@ const unitFiles = [
   'tests/chatgpt-accounting-semantic-layer.test.js',
   'tests/canonical-spending-analytics.test.js',
   'tests/canonical-spending-current-snapshot.test.js',
+  'tests/certification-materialization.test.js',
 ];
 
 const postgresFiles = [
@@ -73,6 +74,7 @@ const postgresFiles = [
   'tests/fns-receipt-currency-postgres.integration.test.js',
   'tests/canonical-spending-analytics-postgres.integration.test.js',
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
+  'tests/certification-materialization-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(
