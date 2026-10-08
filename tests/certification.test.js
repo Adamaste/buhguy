@@ -52,3 +52,55 @@ test('certification aggregates keep currencies separate and preserve result iden
   assert.notEqual(results[0].semanticKey, results[1].semanticKey);
 });
 
+
+
+test('certification money uses exact minor units for pennies and large NUMERIC(18,2) values', () => {
+  const results = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '9000000000000000.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.98', currency: 'RUB' },
+  ]);
+  assert.deepEqual(results, [{
+    metricCode: 'CONFIRMED_ACQUISITION_VALUE',
+    status: 'CERTIFIED',
+    amount: '9000000000000000.99',
+    currency: 'RUB',
+    countItems: 2,
+    reasonCode: 'BUSINESS_GRAPH_CONFIRMED',
+    semanticKey: results[0].semanticKey,
+  }]);
+});
+
+test('certification refund arithmetic preserves cents and separates currencies', () => {
+  const results = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.01', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.02', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_RETURN_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '0.02', currency: 'USD' },
+  ]);
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_ACQUISITION_VALUE').amount, '10.01');
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_RETURN_VALUE' && row.currency === 'RUB').amount, '0.02');
+  assert.equal(results.find((row) => row.metricCode === 'CONFIRMED_RETURN_VALUE' && row.currency === 'USD').amount, '0.02');
+});
+
+test('same source-state inputs keep deterministic certification identity', () => {
+  const facts = deriveCertificationFacts({
+    sourceStateKey: 'a'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  const repeated = deriveCertificationFacts({
+    sourceStateKey: 'a'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  const changed = deriveCertificationFacts({
+    sourceStateKey: 'b'.repeat(64),
+    entries: [base(20, 'LEDGER_FULFILLMENT_V1', 'READY', '0.01')],
+    postings: [posting(20, 'UNCLASSIFIED_ACQUISITION', '0.01', '0')],
+    links: [link(20)],
+  });
+  assert.equal(facts[0].amount, '0.01');
+  assert.equal(facts[0].semanticKey, repeated[0].semanticKey);
+  assert.notEqual(facts[0].semanticKey, changed[0].semanticKey);
+});
