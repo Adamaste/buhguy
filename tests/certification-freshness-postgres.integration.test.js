@@ -145,3 +145,35 @@ integration('maps statement timeout to a safe technical status and leaves persis
   assert.equal(result.reasonCode, 'READ_ONLY_TIMEOUT');
   assert.deepEqual(await persistenceState(), before);
 });
+
+
+integration('exact READY run without finished_at is CORRUPT, not MISSING or READY', { concurrency: false }, async () => {
+  const seeded = await seedReady();
+  const before = await persistenceState();
+  await pool.query('UPDATE reconciliation_runs SET finished_at=NULL WHERE id=$1', [seeded.runId]);
+  try {
+    const result = await inspectCertificationFreshness(pool);
+    assert.equal(result.status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+    assert.notEqual(result.status, CERTIFICATION_FRESHNESS_STATUS.MISSING);
+    assert.notEqual(result.status, CERTIFICATION_FRESHNESS_STATUS.READY);
+    assert.deepEqual(await persistenceState(), before);
+  } finally {
+    await pool.query('UPDATE reconciliation_runs SET finished_at=NOW() WHERE id=$1', [seeded.runId]);
+  }
+});
+
+integration('source-state identity corruption is never downgraded to MISSING or STALE', { concurrency: false }, async () => {
+  const seeded = await seedReady();
+  const fact = (await pool.query('SELECT id,source_state_key FROM certification_facts WHERE run_id=$1 ORDER BY id LIMIT 1', [seeded.runId])).rows[0];
+  const before = await persistenceState();
+  await pool.query("UPDATE certification_facts SET source_state_key=$2 WHERE id=$1", [fact.id, 'b'.repeat(64)]);
+  try {
+    const result = await inspectCertificationFreshness(pool);
+    assert.equal(result.status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+    assert.notEqual(result.status, CERTIFICATION_FRESHNESS_STATUS.MISSING);
+    assert.notEqual(result.status, CERTIFICATION_FRESHNESS_STATUS.STALE);
+    assert.deepEqual(await persistenceState(), before);
+  } finally {
+    await pool.query('UPDATE certification_facts SET source_state_key=$2 WHERE id=$1', [fact.id, fact.source_state_key]);
+  }
+});

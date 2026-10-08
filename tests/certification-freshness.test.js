@@ -7,16 +7,49 @@ import {
   classifyCertificationFreshness,
 } from '../src/certification-freshness.js';
 
-test('freshness classification exposes READY, STALE, MISSING, CONFLICT and CORRUPT without false READY', () => {
-  const base = { id: 7, status: 'READY', source_state_key: 'old', finished_at: '2026-01-01T00:00:00Z' };
-  assert.deepEqual(classifyCertificationFreshness({
-    reader: { ok: true, status: 'READY', snapshot: { runId: 8 } }, exactRuns: [{ ...base, source_state_key: 'current' }], previousReadyRun: base,
+test('freshness classification is fail-closed for exact identity and reader state', () => {
+  const key = 'a'.repeat(64);
+  const base = { id: 7, status: 'READY', source_state_key: key, finished_at: '2026-01-01T00:00:00Z' };
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: true, status: 'READY', snapshot: { runId: 7, sourceStateKey: key } },
+    exactRuns: [base], previousReadyRun: null, sourceStateKey: key,
   }).status, CERTIFICATION_FRESHNESS_STATUS.READY);
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' }, exactRuns: [], previousReadyRun: base }).status, CERTIFICATION_FRESHNESS_STATUS.STALE);
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' }, exactRuns: [], previousReadyRun: null }).status, CERTIFICATION_FRESHNESS_STATUS.MISSING);
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'CERTIFICATION_CONFLICT' }, exactRuns: [base, { ...base, id: 8 }], previousReadyRun: base }).status, CERTIFICATION_FRESHNESS_STATUS.CONFLICT);
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' }, exactRuns: [{ ...base, status: 'RUNNING', source_state_key: 'current' }], previousReadyRun: null }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'CORRUPT_SNAPSHOT' }, exactRuns: [base], previousReadyRun: null }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' },
+    exactRuns: [], previousReadyRun: base, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.STALE);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' },
+    exactRuns: [], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.MISSING);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'CERTIFICATION_CONFLICT' },
+    exactRuns: [base, { ...base, id: 8 }], previousReadyRun: base, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.CONFLICT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' },
+    exactRuns: [{ ...base, status: 'RUNNING' }], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'NO_CURRENT_CERTIFICATION' },
+    exactRuns: [{ ...base, finished_at: null }], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, status: 'STALE_SNAPSHOT', reasonCode: 'STALE_SNAPSHOT' },
+    exactRuns: [base], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: true, status: 'READY', snapshot: { runId: 7, sourceStateKey: 'b'.repeat(64) } },
+    exactRuns: [base], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.CORRUPT);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, status: 'SURPRISE', reasonCode: 'SURPRISE' },
+    exactRuns: [], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.TECHNICAL_ERROR);
+  assert.equal(classifyCertificationFreshness({
+    reader: { ok: false, reasonCode: 'READ_ONLY_PROBE_ERROR' },
+    exactRuns: [], previousReadyRun: null, sourceStateKey: key,
+  }).status, CERTIFICATION_FRESHNESS_STATUS.TECHNICAL_ERROR);
 });
 
 test('freshness module has a safe machine-readable contract and no data mutation SQL', () => {

@@ -42,3 +42,8 @@ Stop and investigate on `CONFLICT`, `CORRUPT`, `TECHNICAL_ERROR`, an unexpected
 scope, or any source-state identity disagreement. `STALE` and `MISSING` are
 visible non-ready outcomes, not authorization to write. A separate reviewed
 materialization approval is required before any certification write.
+
+
+## Coverage limitation
+
+The source-state fingerprint identifies the complete snapshot used by the certification projection; it does not prove that every bank-only transaction is covered by certified spending. A READY result confirms current snapshot integrity, not completeness of all expenses, especially bank-only, unmatched, or unclassified movements.
