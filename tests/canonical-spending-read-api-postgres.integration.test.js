@@ -1,5 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import pg from 'pg';
 import { queryCanonicalSpending, validatePurchaseGrainRows } from '../src/canonical-spending-read-api.js';
 
@@ -9,7 +10,12 @@ let pool;
 before(() => { if (databaseUrl) pool = new pg.Pool({ connectionString: databaseUrl, max: 2 }); });
 after(async () => { await pool?.end(); });
 
+async function applyAnalyticsArtifact() {
+  await pool.query(await fs.readFile(new URL('../db/analytics/011_canonical_spending_analytics_v1.sql', import.meta.url), 'utf8'));
+}
+
 integration('disposable PostgreSQL query is snapshot-qualified and write-free', async () => {
+  await applyAnalyticsArtifact();
   const tableNames = ['reconciliation_runs', 'certification_facts', 'reconciliation_results', 'ledger_entries', 'ledger_postings', 'ledger_source_links', 'bank_receipt_matches', 'business_event_bank_evidence'];
   const snapshot = async () => Promise.all(tableNames.map(async (name) => [name, (await pool.query(`SELECT count(*)::bigint AS count FROM public.${name}`)).rows[0].count]));
   const beforeRows = await snapshot();
