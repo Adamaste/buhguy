@@ -1,7 +1,10 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { materializeCurrentCertificationForTest } from '../src/certification-materialization.js';
+import {
+  materializeCurrentCertification,
+  materializeCurrentCertificationForTest,
+} from '../src/certification-materialization.js';
 import { resolveCurrentSpendingSnapshot } from '../src/canonical-spending-current-snapshot.js';
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -56,19 +59,27 @@ integration('injected run, fact and result failures rollback all materialization
 integration('serializable materialization rejects a concurrent source change rather than hiding it', { concurrency: false }, async () => {
   await clearCertification();
   const sourceWriter = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-  let receiptId;
+  let entryId;
+  let originalDescription;
   try {
+    const entry = (await sourceWriter.query('SELECT id,description FROM ledger_entries ORDER BY id LIMIT 1')).rows[0];
+    assert.ok(entry, 'disposable fixture must contain a ledger entry');
+    entryId = entry.id;
+    originalDescription = entry.description;
     await assert.rejects(
       () => materializeCurrentCertificationForTest(pool, {
         scopeKey: 'default',
         afterProjection: async () => {
-          receiptId = Number((await sourceWriter.query("INSERT INTO receipts(fns_id,source,total_sum,currency) VALUES($1,'materialization-concurrent',0,'RUB') RETURNING id", [`materialization-${Date.now()}`])).rows[0].id);
+          await sourceWriter.query(
+            'UPDATE ledger_entries SET description=$2 WHERE id=$1',
+            [entryId, `${originalDescription ?? ''} concurrent-source-change`],
+          );
         },
       }),
       (error) => ['CERTIFICATION_SOURCE_STATE_CONFLICT', 'CERTIFICATION_MATERIALIZATION_RETRY_REQUIRED'].includes(error.code),
     );
   } finally {
-    if (receiptId) await sourceWriter.query('DELETE FROM receipts WHERE id=$1', [receiptId]);
+    if (entryId !== undefined) await sourceWriter.query('UPDATE ledger_entries SET description=$2 WHERE id=$1', [entryId, originalDescription]);
     await sourceWriter.end();
   }
 });
