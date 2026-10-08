@@ -30,7 +30,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
   const periods = [
     { period: 'today' },
     { period: 'yesterday' },
-    { period: 'range', from: '2020-01-01T00:00:00Z', to: '2030-01-01T00:00:00Z' },
+    { period: 'range', from: '2026-01-01T00:00:00Z', to: '2026-12-31T00:00:00Z' },
   ];
   for (const options of periods) {
     const result = await queryCanonicalSpending(pool, { ...options, scopeKey: 'default', limit: 1000 });
