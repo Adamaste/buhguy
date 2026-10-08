@@ -13,6 +13,7 @@
     "migrate": "node ./bin/receipt-collector.js migrate",
     "normalize": "node ./bin/receipt-collector.js normalize",
     "test": "node ./scripts/test-suite.js",
+    "test:unit": "node ./scripts/test-suite.js --unit-only",
     "test:integration": "node ./scripts/test-postgres-integration.js",
     "test:observation-locking": "node ./scripts/run-observation-locking-clone.mjs",
     "check": "node --check ./bin/receipt-collector.js",

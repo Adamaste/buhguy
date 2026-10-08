@@ -15,6 +15,8 @@ const integrationFiles = [
   'tests/bank-ingestion-postgres.integration.test.js',
   'tests/bank-device-auth-postgres.integration.test.js',
   'tests/bank-account-resolution-postgres.integration.test.js',
+  'tests/historical-bank-account-resolution-postgres.integration.test.js',
+  'tests/chatgpt-accounting-semantic-layer-postgres.integration.test.js',
   'tests/bank-cash-flow-projection-postgres.integration.test.js',
   'tests/balanced-bank-journal-projection-postgres.integration.test.js',
   'tests/payment-instrument-identity-postgres.integration.test.js',
