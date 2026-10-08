@@ -146,3 +146,26 @@ integration('overall materialization timeout rolls back before writing certifica
   );
   assert.deepEqual(await counts(), before);
 });
+
+integration('server-side transaction timeout aborts long SQL and rolls back all rows', { concurrency: false }, async () => {
+  await clearCertification();
+  const before = await counts();
+  const expectedSourceStateKey = await currentSourceStateKey();
+  let transactionTimeout;
+  const version = Number((await pool.query('SHOW server_version_num')).rows[0].server_version_num);
+  await assert.rejects(
+    () => materializeCurrentCertificationForTest(pool, {
+      scopeKey: 'default',
+      expectedSourceStateKey,
+      overallTimeoutMs: 500,
+      statementTimeoutMs: 5000,
+      beforeProjection: async (client, { supportsTransactionTimeout }) => {
+        if (supportsTransactionTimeout) transactionTimeout = (await client.query('SHOW transaction_timeout')).rows[0].transaction_timeout;
+        await client.query('SELECT pg_sleep(2)');
+      },
+    }),
+    (error) => error.code === '57014' || error.code === 'CERTIFICATION_MATERIALIZATION_TIMEOUT',
+  );
+  if (version >= 170000) assert.match(transactionTimeout, /500ms|0\.5s/);
+  assert.deepEqual(await counts(), before);
+});

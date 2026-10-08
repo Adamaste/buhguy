@@ -113,7 +113,7 @@ function assertPersistedProjection(run, projection, persisted) {
   if (!factsMatch || !resultsMatch) throw materializationError(`Certification run ${run.id} does not match the authoritative projection`);
 }
 
-async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey, lockTimeoutMs = 5000, statementTimeoutMs = 120000, overallTimeoutMs = 180000, failAfter = null, afterProjection = null } = {}) {
+async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey, lockTimeoutMs = 5000, statementTimeoutMs = 120000, overallTimeoutMs = 180000, failAfter = null, beforeProjection = null, afterProjection = null } = {}) {
   if (!SOURCE_STATE_KEY_PATTERN.test(expectedSourceStateKey ?? '')) {
     throw materializationError('An explicit SHA-256 expectedSourceStateKey is required', 'CERTIFICATION_EXPECTED_SOURCE_STATE_REQUIRED');
   }
@@ -123,14 +123,18 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   const deadline = Date.now() + overallTimeoutMs;
   const client = await pool.connect();
   try {
+    const serverVersionNum = Number((await client.query('SHOW server_version_num')).rows[0]?.server_version_num ?? 0);
+    const supportsTransactionTimeout = serverVersionNum >= 170000;
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
-    await client.query(`SET LOCAL statement_timeout = '${Math.min(statementTimeoutMs, overallTimeoutMs)}ms'`);
+    await client.query(`SET LOCAL statement_timeout = '${supportsTransactionTimeout ? statementTimeoutMs : Math.min(statementTimeoutMs, overallTimeoutMs)}ms'`);
+    if (supportsTransactionTimeout) await client.query(`SET LOCAL transaction_timeout = '${overallTimeoutMs}ms'`);
     const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
     if (!scope) throw materializationError(`Accounting scope not found: ${scopeKey}`, 'CERTIFICATION_SCOPE_NOT_FOUND');
 
     const sourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
     if (sourceStateKey !== expectedSourceStateKey) throw materializationError('Expected source state differs from the authoritative transaction snapshot', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
+    if (beforeProjection) await beforeProjection(client, { supportsTransactionTimeout });
     const projection = await rebuildCertification(client, { scopeKey, persist: false, sourceStateKey });
     if (projection.sourceStateKey !== sourceStateKey) throw materializationError('Projection source state differs from the locked source state', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
     if (afterProjection) await afterProjection();

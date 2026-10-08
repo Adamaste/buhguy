@@ -30,8 +30,11 @@ source state. From an isolated exact-master checkout:
 2. Verify service health, schema migration head, permissions, active
    transactions, locks, and a fresh validated PostgreSQL backup.
 3. In a separate `REPEATABLE READ READ ONLY` transaction, compute the current
-   source-state key and projection. Stop if the state is missing, stale,
-   conflicting, non-READY, or differs from the reviewed decision.
+   source-state key and projection. `NO_CURRENT_CERTIFICATION` is an allowed
+   initial state when no exact unbounded `READY` run exists: it is the expected
+   starting condition for the first materialization. Stop if an exact run is
+   present but foreign, conflicting, corrupt, non-READY, or semantically
+   inconsistent, and stop on source drift or mismatch with the approved key.
 4. Compare the same-state per-currency facts/results and household/category/
    person gross, returns, net, and unresolved buckets using exact decimal
    arithmetic. Do not compare aggregates from different source states.

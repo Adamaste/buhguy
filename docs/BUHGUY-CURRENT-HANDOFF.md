@@ -55,8 +55,10 @@ Production remains read-only in this stage. A future materialization requires
 a fresh validated backup, explicit authorization for the exact scope and
 source-state key, a repeatable-read read-only precheck, same-state fact/result
 and per-currency reconciliation, bounded write transaction, and read-only
-postcheck. Any drift, missing or conflicting current run, lock/timeout,
-semantic mismatch, or failed postcheck is a STOP with rollback; no automatic
+postcheck. `NO_CURRENT_CERTIFICATION` is allowed when no exact unbounded
+`READY` run exists for the approved state; an existing foreign, conflicting,
+corrupt, or non-READY exact run is a STOP, as are source drift, lock/timeout,
+semantic mismatch, or failed postcheck. No automatic
 refresh, replay, backfill, deployment, classification, or accounting catch-up
 is permitted.
 
