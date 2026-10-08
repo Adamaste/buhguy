@@ -16,6 +16,12 @@ const LIMITATIONS = Object.freeze([
   'PERSON_ATTRIBUTION_MAY_REMAIN_UNATTRIBUTED',
 ]);
 
+const MAX_STATEMENT_TIMEOUT_MS = 300000;
+const MAX_LOCK_TIMEOUT_MS = 30000;
+const MAX_PERIOD_MS = 366 * 24 * 60 * 60 * 1000;
+const MAX_PAGE_SIZE = 1000;
+const MAX_PAGE_OFFSET = 1000000;
+
 function isAccessError(error) {
   return /42501|permission denied|access denied/i.test(String(error?.code ?? error?.message ?? ''));
 }
@@ -31,13 +37,27 @@ function localParts(date, timezone) {
 
 function zonedMidnightUtc(date, timezone) {
   const day = localParts(date, timezone);
-  const localAsUtc = Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day));
-  const rendered = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  }).formatToParts(date);
-  const values = Object.fromEntries(rendered.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  const renderedAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second));
-  return new Date(localAsUtc - (renderedAsUtc - date.getTime()));
+  const targetUtc = Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day));
+  let guess = targetUtc;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const rendered = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(guess));
+    const values = Object.fromEntries(rendered.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    const renderedAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second));
+    const next = targetUtc - (renderedAsUtc - guess);
+    if (next === guess) return new Date(next);
+    guess = next;
+  }
+  return new Date(guess);
+}
+
+function validateBoundedInteger(value, max) {
+  return Number.isInteger(value) && value > 0 && value <= max;
+}
+
+function validatePagination(value, max, fallback) {
+  return value === undefined ? fallback : Number.isInteger(value) && value >= 0 && value <= max ? value : null;
 }
 
 export function resolveSpendingPeriod({ period = 'today', timezone = 'Europe/Moscow', from = null, to = null, now = new Date() } = {}) {
@@ -50,9 +70,13 @@ export function resolveSpendingPeriod({ period = 'today', timezone = 'Europe/Mos
   }
   if (from !== null || to !== null || !['today', 'yesterday'].includes(period)) return { ok: false, reasonCode: SPENDING_QUERY_FAILURES.INVALID_PERIOD };
   const midnight = zonedMidnightUtc(now, timezone);
-  const start = new Date(midnight.getTime() + (period === 'yesterday' ? -86400000 : 0));
-  const end = new Date(start.getTime() + 86400000);
-  return { ok: true, timezone, from: start.toISOString(), to: end.toISOString(), semantics: 'event_at, half-open [from,to)' };
+  const day = localParts(now, timezone);
+  const localNoon = (delta) => new Date(Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day) + delta, 12));
+  const todayStart = zonedMidnightUtc(localNoon(0), timezone);
+  const tomorrowStart = zonedMidnightUtc(localNoon(1), timezone);
+  if (period === 'yesterday') return { ok: true, timezone, from: zonedMidnightUtc(localNoon(-1), timezone).toISOString(), to: todayStart.toISOString(), semantics: 'event_at, half-open [from,to)' };
+  const end = tomorrowStart;
+  return { ok: true, timezone, from: todayStart.toISOString(), to: end.toISOString(), semantics: 'event_at, half-open [from,to)' };
 }
 
 export function validatePurchaseGrainRows(rows) {
@@ -82,15 +106,16 @@ async function classifyFailure(client, resolved, scopeId) {
 }
 
 function safeRows(rows, fields) { return rows.map((row) => Object.fromEntries(fields.map((field) => [field, row[field] ?? null]))); }
-function totals(rows, gross, returns, net) {
-  return rows.map((row) => ({ currency: row.currency, gross: String(row[gross]), returns: String(row[returns]), net: String(row[net]) }));
-}
-
 export async function queryCanonicalSpending(pool, {
-  scopeKey = 'default', period = 'today', timezone = 'Europe/Moscow', from = null, to = null, statementTimeoutMs = 120000, lockTimeoutMs = 5000,
+  scopeKey = 'default', period = 'today', timezone = 'Europe/Moscow', from = null, to = null, statementTimeoutMs = 120000, lockTimeoutMs = 5000, limit = 100, offset = 0,
 } = {}) {
   const queryPeriod = resolveSpendingPeriod({ period, timezone, from, to });
   if (!queryPeriod.ok) return failure(queryPeriod.reasonCode);
+  if (period === 'range' && new Date(queryPeriod.to).getTime() - new Date(queryPeriod.from).getTime() > MAX_PERIOD_MS) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'PERIOD_TOO_WIDE' });
+  if (!validateBoundedInteger(statementTimeoutMs, MAX_STATEMENT_TIMEOUT_MS) || !validateBoundedInteger(lockTimeoutMs, MAX_LOCK_TIMEOUT_MS)) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'TIMEOUT_OUT_OF_BOUNDS' });
+  const pageSize = validatePagination(limit, MAX_PAGE_SIZE, 100);
+  const pageOffset = validatePagination(offset, MAX_PAGE_OFFSET, 0);
+  if (pageSize === null || pageOffset === null) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'PAGINATION_OUT_OF_BOUNDS' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -107,32 +132,40 @@ export async function queryCanonicalSpending(pool, {
     const [purchases, returns, household, category, person, results] = await Promise.all([
       client.query(`SELECT scope_id,certification_run_id,source_state_key,certification_fact_id,purchase_id,amount::text,currency,purchased_at,rule_code,rule_version,semantic_key
         FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
-          AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz ORDER BY purchased_at,purchase_id`, args),
+          AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz ORDER BY purchased_at,purchase_id LIMIT $6 OFFSET $7`, [...args, pageSize + 1, pageOffset]),
       client.query(`SELECT scope_id,certification_run_id,source_state_key,certification_fact_id,return_id,return_amount::text,currency,returned_at
         FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
-          AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz ORDER BY returned_at,return_id`, args),
-      client.query(`SELECT scope_id,certification_run_id,source_state_key,currency,gross_spend::text,confirmed_returns::text,net_spend::text FROM canonical_spending_household_summary_v1
-        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 ORDER BY currency`, args.slice(0, 3)),
-      client.query(`SELECT scope_id,certification_run_id,source_state_key,currency,taxonomy_id,taxonomy_version,category_code,gross_spend::text,confirmed_returns::text,net_spend::text FROM canonical_spending_category_summary_v1
-        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 ORDER BY currency,taxonomy_version,category_code`, args.slice(0, 3)),
-      client.query(`SELECT scope_id,certification_run_id,source_state_key,currency,person_id,gross_spend::text,confirmed_returns::text,net_spend::text,attribution_status FROM canonical_spending_person_summary_v1
-        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 ORDER BY currency,person_id NULLS FIRST`, args.slice(0, 3)),
+          AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz ORDER BY returned_at,return_id LIMIT $6 OFFSET $7`, [...args, pageSize + 1, pageOffset]),
+      client.query(`WITH monetary AS (
+          SELECT currency,amount AS gross,0::numeric AS returns FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz
+          UNION ALL SELECT currency,0::numeric,return_amount FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz
+        ) SELECT currency,SUM(gross)::text AS gross_spend,SUM(returns)::text AS confirmed_returns,(SUM(gross)-SUM(returns))::text AS net_spend FROM monetary GROUP BY currency ORDER BY currency`, args),
+      client.query(`WITH p AS (SELECT DISTINCT subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz) SELECT a.currency,a.taxonomy_id,a.taxonomy_version,a.category_code,SUM(a.category_gross)::text AS gross_spend,SUM(a.category_returns)::text AS confirmed_returns,(SUM(a.category_gross)-SUM(a.category_returns))::text AS net_spend FROM canonical_spending_category_allocations_v1 a LEFT JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency LEFT JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND (p.subject_event_id IS NOT NULL OR r.subject_event_id IS NOT NULL) GROUP BY a.currency,a.taxonomy_id,a.taxonomy_version,a.category_code ORDER BY a.currency,a.taxonomy_version,a.category_code`, args),
+      client.query(`WITH p AS (SELECT DISTINCT subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz) SELECT a.currency,a.person_id,a.attribution_status,SUM(a.person_gross)::text AS gross_spend,SUM(a.person_returns)::text AS confirmed_returns,(SUM(a.person_gross)-SUM(a.person_returns))::text AS net_spend FROM canonical_spending_person_allocations_v1 a LEFT JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency LEFT JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND (p.subject_event_id IS NOT NULL OR r.subject_event_id IS NOT NULL) GROUP BY a.currency,a.person_id,a.attribution_status ORDER BY a.currency,a.person_id NULLS FIRST`, args),
       client.query(`SELECT metric_code,status,amount::text,currency,count_items,reason_code FROM reconciliation_results WHERE run_id=$1 ORDER BY metric_code,status,currency,reason_code`, [resolved.snapshot.runId]),
     ]);
     const duplicate = validatePurchaseGrainRows(purchases.rows);
     if (!duplicate.ok) { await client.query('ROLLBACK'); return failure(duplicate.reasonCode, { detail: duplicate.detail, sourceStateKey: resolved.snapshot.sourceStateKey, runId: resolved.snapshot.runId, queryPeriod }); }
     const data = {
-      grossReturnsNetByCurrency: totals(household.rows, 'gross_spend', 'confirmed_returns', 'net_spend'),
-      confirmedPurchases: safeRows(purchases.rows, ['purchase_id', 'amount', 'currency', 'purchased_at', 'rule_code', 'rule_version']),
-      confirmedReturns: safeRows(returns.rows, ['return_id', 'return_amount', 'currency', 'returned_at']),
-      category: totals(category.rows, 'gross_spend', 'confirmed_returns', 'net_spend'),
-      person: totals(person.rows, 'gross_spend', 'confirmed_returns', 'net_spend'),
+      grossReturnsNetByCurrency: safeRows(household.rows, ['currency', 'gross_spend', 'confirmed_returns', 'net_spend']).map((row) => ({ currency: row.currency, gross: row.gross_spend, returns: row.confirmed_returns, net: row.net_spend })),
+      confirmedPurchases: safeRows(purchases.rows.slice(0, pageSize), ['purchase_id', 'amount', 'currency', 'purchased_at', 'rule_code', 'rule_version']),
+      confirmedReturns: safeRows(returns.rows.slice(0, pageSize), ['return_id', 'return_amount', 'currency', 'returned_at']),
+      category: category.rows.map((row) => ({ currency: row.currency, taxonomyId: row.taxonomy_id, taxonomyVersion: row.taxonomy_version, categoryCode: row.category_code, gross: row.gross_spend, returns: row.confirmed_returns, net: row.net_spend })),
+      person: person.rows.map((row) => ({ currency: row.currency, personId: row.person_id ?? null, attributionStatus: row.attribution_status, gross: row.gross_spend, returns: row.confirmed_returns, net: row.net_spend })),
       unresolved: {
-        blockedExposure: safeRows(results.rows.filter((row) => row.status === 'BLOCKED'), ['metric_code', 'amount', 'currency', 'count_items', 'reason_code']),
+        blockedExposure: [],
+        blockedExposureStatus: 'INCOMPLETE_PERIOD_UNSUPPORTED',
+        blockedExposureReasonCode: 'PERIOD_FILTERED_BLOCKED_FACT_GRAIN_UNAVAILABLE',
         unattributedPersonRows: person.rows.filter((row) => row.person_id === null).map((row) => ({ currency: row.currency, gross: String(row.gross_spend), returns: String(row.confirmed_returns), net: String(row.net_spend) })),
       },
       bankOnlyIncomplete: { status: 'EXCLUDED_FROM_CERTIFIED_ACQUISITIONS', reasonCode: 'BANK_ONLY_OR_UNMATCHED_NOT_PROVEN_PURCHASE' },
       limitations: [...LIMITATIONS],
+      pagination: {
+        limit: pageSize,
+        offset: pageOffset,
+        purchases: { hasMore: purchases.rows.length > pageSize },
+        returns: { hasMore: returns.rows.length > pageSize },
+      },
     };
     await client.query('ROLLBACK');
     return { ok: true, modelVersion: CANONICAL_SPENDING_QUERY_MODEL, status: 'READY', reasonCode: null, snapshot: resolved.snapshot, queryPeriod, data };
@@ -141,4 +174,3 @@ export async function queryCanonicalSpending(pool, {
     return failure(isAccessError(error) ? SPENDING_QUERY_FAILURES.ACCESS_ERROR : 'TECHNICAL_ERROR', { reason: isAccessError(error) ? 'READ_ONLY_ACCESS_DENIED' : 'READ_ONLY_QUERY_FAILED', queryPeriod });
   } finally { client.release(); }
 }
-

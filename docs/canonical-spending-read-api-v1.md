@@ -9,10 +9,21 @@ Use `queryCanonicalSpending(pool, options)` from
 - `period` is `today`, `yesterday`, or `range`.
 - `timezone` is explicit and defaults to `Europe/Moscow`.
 - `range` requires ISO `from` and `to`; the interval is half-open `[from,to)`.
+- `today` and `yesterday` use local calendar midnights in the requested IANA
+  timezone; DST days are not assumed to be 24 hours. Range requests are
+  bounded to at most 366 days.
 - all amounts remain decimal strings grouped by currency; no cross-currency
   arithmetic is performed;
 - purchases come only from the snapshot-qualified purchase-grain view;
 - returns are separate evidence and never create a second purchase cash flow;
+- gross/returns/net totals are computed from period-filtered purchase and return
+  grain in the same snapshot. Category and person rows use period-filtered
+  allocation grain and retain identifiers/attribution metadata. Lifetime
+  summary views are never presented as period totals.
+- purchase and return lists use bounded `limit`/`offset` pagination; totals are
+  computed over the complete requested period rather than the returned page.
+- `statementTimeoutMs` and `lockTimeoutMs` are positive bounded values; zero,
+  negative, non-finite, or excessive values fail closed.
 - duplicate purchase grain, source-state drift, stale/missing/conflicting or
   corrupt certification fails closed;
 - bank-only, unmatched, unclassified and unresolved movements are reported as
@@ -35,4 +46,3 @@ is not implemented here.
 `READY` means current certified snapshot integrity, not complete personal
 spending. A bank-only movement without proven purchase semantics remains
 outside certified acquisitions.
-

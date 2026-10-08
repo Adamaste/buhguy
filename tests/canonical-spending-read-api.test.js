@@ -6,6 +6,19 @@ test('periods use explicit Europe/Moscow half-open boundaries', () => {
   assert.deepEqual(resolveSpendingPeriod({ period: 'today', timezone: 'Europe/Moscow', now: new Date('2026-10-08T12:00:00Z') }).from, '2026-10-07T21:00:00.000Z');
   assert.deepEqual(resolveSpendingPeriod({ period: 'yesterday', timezone: 'Europe/Moscow', now: new Date('2026-10-08T12:00:00Z') }).from, '2026-10-06T21:00:00.000Z');
   assert.equal(resolveSpendingPeriod({ period: 'range', timezone: 'Europe/Moscow', from: '2026-10-07T21:00:00Z', to: '2026-10-08T21:00:00Z' }).semantics, 'event_at, half-open [from,to)');
+  const spring = resolveSpendingPeriod({ period: 'today', timezone: 'America/New_York', now: new Date('2026-03-08T16:00:00.123Z') });
+  assert.deepEqual([spring.from, spring.to], ['2026-03-08T05:00:00.000Z', '2026-03-09T04:00:00.000Z']);
+  const autumn = resolveSpendingPeriod({ period: 'today', timezone: 'America/New_York', now: new Date('2026-11-01T17:00:00.999Z') });
+  assert.deepEqual([autumn.from, autumn.to], ['2026-11-01T04:00:00.000Z', '2026-11-02T05:00:00.000Z']);
+});
+
+test('timeouts and result pages are bounded', async () => {
+  const pool = { async connect() { throw new Error('should validate before connecting'); } };
+  assert.equal((await queryCanonicalSpending(pool, { statementTimeoutMs: 0 })).reason, 'TIMEOUT_OUT_OF_BOUNDS');
+  assert.equal((await queryCanonicalSpending(pool, { lockTimeoutMs: -1 })).reason, 'TIMEOUT_OUT_OF_BOUNDS');
+  assert.equal((await queryCanonicalSpending(pool, { statementTimeoutMs: 300001 })).reason, 'TIMEOUT_OUT_OF_BOUNDS');
+  assert.equal((await queryCanonicalSpending(pool, { limit: 0 })).reason, 'PAGINATION_OUT_OF_BOUNDS');
+  assert.equal((await queryCanonicalSpending(pool, { limit: 1001 })).reason, 'PAGINATION_OUT_OF_BOUNDS');
 });
 
 test('duplicate purchase matches fail closed and item fan-out stays purchase-grain', () => {
@@ -41,4 +54,3 @@ test('read-only contract is transaction-bound and does not contain writers', asy
   assert.doesNotMatch(source, /\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE)\b/);
   assert.equal(CANONICAL_SPENDING_QUERY_MODEL, 'canonical-spending-read-api-v1');
 });
-
