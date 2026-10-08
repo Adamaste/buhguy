@@ -45,11 +45,11 @@ function failure(reasonCode, details = {}) {
   };
 }
 
-async function loadSnapshotOnClient(client, { scopeKey = 'default' } = {}) {
+async function loadSnapshotOnClient(client, { scopeKey = 'default', sourceStateKey: providedSourceStateKey = null } = {}) {
   const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
   if (!scope) return failure('SCOPE_NOT_FOUND', { scopeKey });
 
-  const sourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
+  const sourceStateKey = providedSourceStateKey ?? await certificationSourceStateKey(client, Number(scope.id));
   const runs = (await client.query(`SELECT id,scope_id,model_version,source_state_key,period_from,period_to,status,started_at,finished_at
     FROM reconciliation_runs
     WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
@@ -152,6 +152,12 @@ async function withCurrentSnapshot(pool, options, reader) {
   } finally {
     client.release();
   }
+}
+
+// Internal transaction-bound entry point for read-only projections that have
+// already computed the authoritative source state in the same snapshot.
+export async function resolveCurrentSpendingSnapshotOnClient(client, options = {}) {
+  return loadSnapshotOnClient(client, options);
 }
 
 export async function resolveCurrentSpendingSnapshot(pool, options = {}) {

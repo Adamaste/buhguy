@@ -28,6 +28,7 @@ const integrationFiles = [
   'tests/canonical-spending-analytics-postgres.integration.test.js',
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
   'tests/certification-materialization-postgres.integration.test.js',
+  'tests/certification-freshness-postgres.integration.test.js',
   'tests/migration-production-safety-postgres.integration.test.js',
 ];
 const run = (files, env = process.env) => spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env }).status ?? 1;
