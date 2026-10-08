@@ -56,10 +56,11 @@ source changes must be handled by a fresh read-only preflight and separately
 approved materialization; no automatic refresh, replay, backfill, or writer
 trigger is enabled.
 
-## Guarded one-shot certification materialization (implementation under review)
+## Guarded one-shot certification materialization (historical implementation record)
 
-The exact current master is `2f05c5928f92fc34cdade326733b31dd6b74ceaf`. A
-separate implementation PR adds `materializeCurrentCertification()` as a
+At that historical implementation stage, master was
+`2f05c5928f92fc34cdade326733b31dd6b74ceaf`. The implementation PR added
+`materializeCurrentCertification()` as a
 guarded one-shot full unbounded certification writer. It uses one
 `SERIALIZABLE` PostgreSQL transaction, bounded lock and statement timeouts,
 an accounting-scope lock, one authoritative source-state/projection snapshot,
@@ -79,7 +80,8 @@ exact rollback. Household/category/person
 gross, returns, net, and unresolved/unclassified buckets must reconcile by
 currency using exact decimal arithmetic before any production approval.
 
-Production remains read-only in this stage. A future materialization requires
+Production remained read-only during that implementation stage. The completed
+materialization is recorded above; any future materialization requires
 a fresh validated backup, explicit authorization for the exact scope and
 source-state key, a repeatable-read read-only precheck, same-state fact/result
 and per-currency reconciliation, bounded write transaction, and read-only
@@ -2793,9 +2795,9 @@ was performed. The next action is `production read-only canonical spending
 current-snapshot validation`.
 
 
-## Production read-only canonical spending current-snapshot validation (current, no materialization)
+## Production read-only canonical spending current-snapshot validation (historical, before materialization)
 
-The exact current master `39a45e68ae70050b7262c7d1db5c3711a8cc9993` passed master CI `37768474323` (test/PostgreSQL integration, full suite, Android, and signed Android). This stage used only `REPEATABLE READ READ ONLY` transactions and safe aggregate diagnostics; it did not invoke a writer or certification persistence.
+The then-current master `39a45e68ae70050b7262c7d1db5c3711a8cc9993` passed master CI `37768474323` (test/PostgreSQL integration, full suite, Android, and signed Android). This historical stage used only `REPEATABLE READ READ ONLY` transactions and safe aggregate diagnostics; it did not invoke a writer or certification persistence.
 
 For Person 1 scope `default` (scope id `1`), the live authoritative source-state key was `4a55497313a8e82342a3877c91122ff5d22d05423e973a2b25b5acab80445ef2`. The non-persisting projection produced 5,840 facts and 8 results, all in RUB, over 2,070 active ledger entries. Its metric aggregates were: BLOCKED_EXPOSURE 73 facts / 183,738.45; FISCAL_NEW_MONEY 1,907 / 2,187,333.77; CONFIRMED_ACQUISITION_VALUE 1,920 / 2,211,029.87; ACQUISITION_CLASSIFICATION 1,920 / 2,211,029.87; CONFIRMED_RETURN_VALUE 10 / 5,782.29; OUTSTANDING_REFUND_RECEIVABLE 10 / 5,782.29. These are aggregate diagnostics only, not persisted certification.
 
