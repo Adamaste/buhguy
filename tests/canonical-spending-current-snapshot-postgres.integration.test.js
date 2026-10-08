@@ -295,7 +295,7 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
         run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,
         reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key)
         VALUES($1,$2,'LEDGER_ENTRY',$3,'CONFIRMED_ACQUISITION_VALUE','BUSINESS_CERTIFICATION','CERTIFIED',$4,$5,$6,
-        'TEST','TEST','TEST',NULL,NULL,NULL,$7,$8)`,
+        'TEST','TEST','TEST',NULL,$3,NULL,$7,$8)`,
       [run.id, scope.id, 900000 + index, fixture.amount, fixture.currency, fixture.eventAt,
         crypto.createHash('sha256').update(`${prefix}-${index}`).digest('hex'), current]);
     }
