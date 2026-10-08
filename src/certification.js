@@ -4,7 +4,7 @@ export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
 export const CERTIFICATION_SOURCE_STATE_OVERRIDE = 'CERTIFICATION_SOURCE_STATE_OVERRIDE';
 
-const MONEY_PATTERN = /^-?\\d+(?:\\.\\d{1,2})?$/;
+const MONEY_PATTERN = /^-?\d+(?:\.\d{1,2})?$/;
 
 function moneyMinorUnits(value) {
   if (value === null || value === undefined || value === '') return 0n;
