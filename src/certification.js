@@ -246,6 +246,49 @@ export function aggregateCertificationFacts(facts) {
   return [...result.values()].map((item) => { const amount = money(item.amount); return { ...item, amount, semanticKey: fiscalContentFingerprint({ ...item, amount }) }; });
 }
 
+export function summarizeCertificationTotals(results, balances = {}) {
+  const byMetric = {};
+  for (const result of results ?? []) byMetric[result.metricCode] = [...(byMetric[result.metricCode] ?? []), result];
+
+  const summarize = (metricCode, status) => {
+    const rows = byMetric[metricCode] ?? [];
+    const currencies = [...new Set(rows.map((row) => row.currency).filter(Boolean))].sort();
+    if (currencies.length > 1) {
+      return { amount: null, status: 'BLOCKED', reason: 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT', currency: null };
+    }
+    return {
+      amount: money(rows.reduce((sum, row) => sum + moneyMinorUnits(row.amount), 0n)),
+      status,
+      currency: currencies[0] ?? null,
+    };
+  };
+
+  const acquisition = summarize('CONFIRMED_ACQUISITION_VALUE', 'CERTIFIED');
+  const returns = summarize('CONFIRMED_RETURN_VALUE', 'CERTIFIED');
+  const currencyConflict = acquisition.currency && returns.currency && acquisition.currency !== returns.currency;
+  const net = currencyConflict || acquisition.status === 'BLOCKED' || returns.status === 'BLOCKED'
+    ? { amount: null, status: 'BLOCKED', reason: 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT', currency: null }
+    : {
+      amount: money(moneyMinorUnits(acquisition.amount) - moneyMinorUnits(returns.amount)),
+      status: acquisition.status === 'CERTIFIED' && returns.status === 'CERTIFIED' ? 'CERTIFIED' : 'BLOCKED',
+      currency: acquisition.currency ?? returns.currency,
+    };
+
+  const metric = (code, status, reason = undefined) => {
+    const item = summarize(code, status);
+    return reason === undefined ? item : { ...item, reason };
+  };
+  return {
+    confirmedAcquisitionValue: acquisition,
+    confirmedReturnValue: returns,
+    netConfirmedAcquisition: net,
+    fiscalNewMoney: metric('FISCAL_NEW_MONEY', 'PROVISIONAL', 'FUNDING_UNRECONCILED'),
+    merchantAdvanceBalance: { amount: money(balances.merchantAdvance ?? '0.00'), status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' },
+    outstandingRefundReceivable: metric('OUTSTANDING_REFUND_RECEIVABLE', 'CERTIFIED'),
+    blockedExposure: metric('BLOCKED_EXPOSURE', 'BLOCKED'),
+  };
+}
+
 const aggregateFacts = aggregateCertificationFacts;
 
 export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
@@ -275,10 +318,6 @@ export async function rebuildCertification(pool, { scopeKey = 'default', from = 
 
 export async function certificationReport(pool, { scopeKey = 'default', from = null, to = null } = {}) {
   const projection = await rebuildCertification(pool, { scopeKey, from, to, persist: false });
-  const byMetric = {};
-  for (const result of projection.results) byMetric[result.metricCode] = [...(byMetric[result.metricCode] ?? []), result];
-  const acquisition = (byMetric.CONFIRMED_ACQUISITION_VALUE ?? []).reduce((sum, item) => sum + moneyMinorUnits(item.amount), 0n);
-  const returns = (byMetric.CONFIRMED_RETURN_VALUE ?? []).reduce((sum, item) => sum + moneyMinorUnits(item.amount), 0n);
-  return { model: projection.model, sourceStateKey: projection.sourceStateKey, period: { from, to, semantics: 'business event/ledger event_at, half-open [from,to)' }, metrics: { confirmedAcquisitionValue: { amount: money(acquisition), status: 'CERTIFIED' }, confirmedReturnValue: { amount: money(returns), status: 'CERTIFIED' }, netConfirmedAcquisition: { amount: money(acquisition - returns), status: 'CERTIFIED' }, fiscalNewMoney: { amount: money((byMetric.FISCAL_NEW_MONEY ?? []).reduce((sum, item) => sum + moneyMinorUnits(item.amount), 0n)), status: 'PROVISIONAL', reason: 'FUNDING_UNRECONCILED' }, merchantAdvanceBalance: { amount: projection.balances.merchantAdvance, status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' }, outstandingRefundReceivable: { amount: money((byMetric.OUTSTANDING_REFUND_RECEIVABLE ?? []).reduce((sum, item) => sum + moneyMinorUnits(item.amount), 0n)), status: 'CERTIFIED' }, blockedExposure: { amount: money((byMetric.BLOCKED_EXPOSURE ?? []).reduce((sum, item) => sum + moneyMinorUnits(item.amount), 0n)), status: 'BLOCKED' } }, results: projection.results, proofFacts: projection.facts };
+  return { model: projection.model, sourceStateKey: projection.sourceStateKey, period: { from, to, semantics: 'business event/ledger event_at, half-open [from,to)' }, metrics: summarizeCertificationTotals(projection.results, projection.balances), results: projection.results, proofFacts: projection.facts };
 }
 
