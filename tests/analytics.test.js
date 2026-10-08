@@ -7,7 +7,7 @@ import { assertSupportedMetric, buildAnalyticsSummary, buildAnalyticsTrace, buil
 const fact = (metricCode, amount, status, extra = {}) => ({ metricCode, amount: String(amount), status, currency: 'RUB', eventAt: extra.eventAt ?? '2026-01-01T00:00:00Z', reasonCode: extra.reasonCode ?? null, ruleCode: 'rule', ruleVersion: 'v1', ledgerEntryId: extra.ledgerEntryId ?? 1, businessEventId: extra.businessEventId ?? 1, graphEvidenceId: extra.graphEvidenceId ?? 1, sourceStateKey: 'a'.repeat(64), subjectId: extra.subjectId ?? 1 });
 
 test('Xiaomi-style prepayment is not double counted', () => {
-  const report = { model: 'certification', sourceStateKey: 'x', metrics: { merchantAdvanceBalance: { amount: '0.00', currency: 'RUB', status: 'CERTIFIED' } }, proofFacts: [fact('FISCAL_NEW_MONEY', 32380, 'PROVISIONAL'), fact('CONFIRMED_ACQUISITION_VALUE', 32380, 'CERTIFIED')] };
+  const report = { model: 'certification', sourceStateKey: 'a'.repeat(64), metrics: { merchantAdvanceBalance: { amount: '0.00', currency: 'RUB', status: 'CERTIFIED' } }, proofFacts: [fact('FISCAL_NEW_MONEY', 32380, 'PROVISIONAL'), fact('CONFIRMED_ACQUISITION_VALUE', 32380, 'CERTIFIED')] };
   const summary = buildAnalyticsSummary({ report });
   assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '32380.00');
   assert.equal(summary.metrics.FISCAL_NEW_MONEY.amount, '32380.00');
@@ -54,4 +54,61 @@ test('bank spend cannot be requested as certified analytics', () => {
 test('analytics source code never aggregates receipt total_sum directly', async () => {
   const source = await readFile(path.join(process.cwd(), 'src', 'analytics.js'), 'utf8');
   assert.equal(/receipts?\.total_sum|SUM\s*\(\s*total_sum\s*\)/i.test(source), false);
+});
+
+test('exact NUMERIC(18,2) money stays exact beyond JavaScript safe integers', () => {
+  const report = {
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '90071992547409.91', 'CERTIFIED'),
+      fact('CONFIRMED_ACQUISITION_VALUE', '0.09', 'CERTIFIED'),
+      fact('CONFIRMED_RETURN_VALUE', '0.01', 'CERTIFIED'),
+    ],
+  };
+  const summary = buildAnalyticsSummary({ report });
+  assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '90071992547410.00');
+  assert.equal(summary.metrics.CONFIRMED_RETURN_VALUE.amount, '0.01');
+  assert.equal(summary.metrics.NET_CONFIRMED_ACQUISITION.amount, '90071992547409.99');
+});
+
+test('analytics rejects facts from multiple certification source states', () => {
+  const report = {
+    sourceStateKey: 'a'.repeat(64),
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '10.00', 'CERTIFIED'),
+      { ...fact('CONFIRMED_ACQUISITION_VALUE', '5.00', 'CERTIFIED'), sourceStateKey: 'b'.repeat(64) },
+    ],
+  };
+  assert.throws(() => buildAnalyticsSummary({ report }), /MULTIPLE_SOURCE_STATES_NOT_ALLOWED|SOURCE_STATE_IDENTITY_MISSING_OR_MISMATCHED/);
+});
+
+test('analytics keeps item-grain out of purchase-grain aggregation', () => {
+  const report = {
+    proofFacts: [fact('CONFIRMED_ACQUISITION_VALUE', '20.00', 'CERTIFIED', { subjectId: 42 })],
+  };
+  const summary = buildAnalyticsSummary({ report });
+  assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '20.00');
+});
+
+test('net fails closed when gross and returns use different currencies', () => {
+  const report = {
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '10.00', 'CERTIFIED'),
+      { ...fact('CONFIRMED_RETURN_VALUE', '5.00', 'CERTIFIED'), currency: 'USD' },
+    ],
+  };
+  const net = buildAnalyticsSummary({ report }).metrics.NET_CONFIRMED_ACQUISITION;
+  assert.equal(net.status, 'BLOCKED');
+  assert.equal(net.amount, null);
+  assert.equal(net.currency, null);
+  assert.equal(net.reasonCode, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+  assert.equal(net.reason, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+});
+
+test('net remains ordinary when the returns metric is empty', () => {
+  const report = { proofFacts: [fact('CONFIRMED_ACQUISITION_VALUE', '10.01', 'CERTIFIED')] };
+  const net = buildAnalyticsSummary({ report }).metrics.NET_CONFIRMED_ACQUISITION;
+  assert.equal(net.status, 'CERTIFIED');
+  assert.equal(net.amount, '10.01');
+  assert.equal(net.currency, 'RUB');
+  assert.equal(net.reasonCode, null);
 });
