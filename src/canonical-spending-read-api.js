@@ -60,6 +60,10 @@ function validatePagination(value, max, fallback) {
   return value === undefined ? fallback : Number.isInteger(value) && value >= 0 && value <= max ? value : null;
 }
 
+function validatePageSize(value) {
+  return value === undefined ? 100 : Number.isInteger(value) && value > 0 && value <= MAX_PAGE_SIZE ? value : null;
+}
+
 export function resolveSpendingPeriod({ period = 'today', timezone = 'Europe/Moscow', from = null, to = null, now = new Date() } = {}) {
   try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(now); } catch { return { ok: false, reasonCode: SPENDING_QUERY_FAILURES.INVALID_PERIOD }; }
   if (period === 'range') {
@@ -113,7 +117,7 @@ export async function queryCanonicalSpending(pool, {
   if (!queryPeriod.ok) return failure(queryPeriod.reasonCode);
   if (period === 'range' && new Date(queryPeriod.to).getTime() - new Date(queryPeriod.from).getTime() > MAX_PERIOD_MS) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'PERIOD_TOO_WIDE' });
   if (!validateBoundedInteger(statementTimeoutMs, MAX_STATEMENT_TIMEOUT_MS) || !validateBoundedInteger(lockTimeoutMs, MAX_LOCK_TIMEOUT_MS)) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'TIMEOUT_OUT_OF_BOUNDS' });
-  const pageSize = validatePagination(limit, MAX_PAGE_SIZE, 100);
+  const pageSize = validatePageSize(limit);
   const pageOffset = validatePagination(offset, MAX_PAGE_OFFSET, 0);
   if (pageSize === null || pageOffset === null) return failure(SPENDING_QUERY_FAILURES.INVALID_PERIOD, { reason: 'PAGINATION_OUT_OF_BOUNDS' });
   const client = await pool.connect();
