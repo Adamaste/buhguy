@@ -20,18 +20,25 @@ A fresh custom-format production backup was created and validated with
 disposable PostgreSQL clone, never over production.
 
 On the clone, the exact repository migration runner (`migrate()` from
-`src/database.js`) applied migration 019 from schema head 018. A second run
-was a no-op. Analytics 011 was then installed separately, as the runtime
-migration loader intentionally does not load `db/analytics` artifacts; a
-second installation was also idempotent.
+`src/database.js`) applied migration 019 from schema head 018. The production
+runner now configures `lock_timeout` and `statement_timeout` through
+`set_config()` on the same `pg.Client` used for migration DDL and the
+`schema_migrations` insert; a pool connection timeout bounds acquisition as
+well. A second run was a no-op. Analytics 011 was then installed separately
+through `scripts/install-analytics-prod-only.mjs`, as the runtime migration
+loader intentionally does not load `db/analytics` artifacts. That script uses
+its own bounded transaction and the artifact contains no `GRANT` or `REVOKE`;
+a second installation was also idempotent.
 
 The rehearsal verified six migration tables, eight canonical spending views,
 the taxonomy seed and 21 category seeds, indexes and foreign-key dependencies,
 unchanged restored business/bank/receipt/certification/ledger/matched-purchase
-row counts, and a clone-only service-role compatibility check. A terminated
-clone-only DDL transaction left no probe table, demonstrating transactional
-rollback after interruption. The disposable clone and temporary role were
-removed after validation. No production grants or rows changed.
+row counts, and a clone-only service-role compatibility check. A conflicting
+clone-only table lock produced bounded PostgreSQL `55P03` failure on the
+actual migration client; both the DDL and `schema_migrations` insert rolled
+back, and the probe column was absent afterward. A terminated clone-only DDL
+transaction also left no probe table. The disposable clone and temporary role
+were removed after validation. No production grants or rows changed.
 
 ## Preconditions before any production approval
 
@@ -53,28 +60,47 @@ removed after validation. No production grants or rows changed.
 ## Execution order after approval
 
 The operator must use the repository migration mechanism, not hand-edited SQL.
-Use a maintenance session with `lock_timeout` and `statement_timeout` set to
-reviewed bounded values. Stop before the first migration statement if there is
-any waiting lock, unexpected active writer, schema drift, backup mismatch,
-missing parent object, or non-018 migration head.
+Do not rely on `psql` session settings: the runner creates its own pool
+connections. Use the reviewed scripts below, which set bounded values on the
+actual connections:
+
+```sh
+export MIGRATION_CONNECTION_TIMEOUT_MS=10000
+export MIGRATION_LOCK_TIMEOUT_MS=5000
+export MIGRATION_STATEMENT_TIMEOUT_MS=120000
+node scripts/migrate-prod-only.mjs
+node scripts/install-analytics-prod-only.mjs
+```
+
+The production migration runner requires an existing `schema_migrations`
+ledger and accepts only an empty pending set (idempotent rerun) or exactly one
+pending file, `019_canonical_spending_analytics_foundation.sql`. Any other
+pending set is rejected before migration DDL or a migration-row insert.
+Analytics 011 is a separate bounded transaction and is not included in the
+migration ledger. Neither script changes grants or reader exposure.
+Stop before the first migration statement if there is any waiting lock,
+unexpected active writer, schema drift, backup mismatch, missing parent
+object, or non-018 migration head.
 
 1. Reconfirm the backup and preconditions immediately before execution.
-2. Apply migration 019 through the reviewed migration runner in one
-   transaction. Do not run analytics SQL in that transaction.
+2. Apply migration 019 through `scripts/migrate-prod-only.mjs`; its DDL and
+   `schema_migrations` update share one bounded transaction.
 3. Verify the migration row, tables, constraints, indexes, seed taxonomy and
    categories, and unchanged pre-existing data counts.
-4. Install `db/analytics/011_canonical_spending_analytics_v1.sql` separately
-   in a bounded transaction after migration 019 is verified.
+4. Install `db/analytics/011_canonical_spending_analytics_v1.sql` only through
+   `scripts/install-analytics-prod-only.mjs` after migration 019 is verified.
 5. Verify all eight views and dependencies, then run the exact-master
    non-persisting resolver only in a `REPEATABLE READ READ ONLY` transaction.
 6. Do not create or refresh a certification snapshot in this rollout.
 
 ## STOP conditions and recovery
 
-STOP immediately on lock timeout, statement timeout, failed constraint/seed,
+STOP immediately on lock timeout (`55P03`), statement timeout (`57014`),
+failed constraint/seed, unexpected pending migration set,
 unexpected schema head, non-idempotent rerun, changed pre-existing rows,
 view dependency failure, or any permission/grant request outside the approved
-plan. Do not retry blindly.
+plan. Do not retry blindly. Preserve the error and exact source-state
+inventory for review.
 
 Migration 019 is transactional and the rehearsal showed an interrupted DDL
 transaction rolls back. For a failed production transaction, verify the
@@ -95,3 +121,14 @@ the current-snapshot validation be reviewed as a separate operation.
 No writer, classification, accounting persistence, replay, backfill, or
 analytics exposure is enabled by migration 019 or artifact 011 alone.
 
+
+## Exact rehearsal gate
+
+The clone-only integration test is
+`tests/migration-production-safety-postgres.integration.test.js`. It proves
+that an unexpected pending migration is rejected without mutation, that a
+conflicting lock fails within the configured bound, that the migration
+transaction rolls back both DDL and its ledger row, and that analytics 011 is
+installed in a separate bounded transaction without explicit grant changes.
+The same test is included in `npm run test:integration`; use the disposable
+clone only and remove it after the run.
