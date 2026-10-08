@@ -84,6 +84,8 @@ const run = (files, env = process.env) => spawnSync(
   { stdio: 'inherit', env },
 ).status ?? 1;
 
+if (process.argv.includes('--unit-only')) process.exit(run(unitFiles));
+
 if (!process.env.TEST_DATABASE_URL) {
   process.exit(run([...unitFiles, ...postgresFiles]));
 }
