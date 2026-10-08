@@ -74,11 +74,23 @@ export function buildAnalyticsSummary({ report, scopeKey = 'default', from = nul
   }
   const acquisitionMetric = metrics.CONFIRMED_ACQUISITION_VALUE;
   const returnsMetric = metrics.CONFIRMED_RETURN_VALUE;
-  const netCurrency = acquisitionMetric.currency ?? returnsMetric.currency;
-  const canComputeNet = acquisitionMetric.amount !== null && returnsMetric.amount !== null
+  const currencyConflict = acquisitionMetric.currency && returnsMetric.currency
+    && acquisitionMetric.currency !== returnsMetric.currency;
+  const netCurrency = currencyConflict ? null : (acquisitionMetric.currency ?? returnsMetric.currency);
+  const netReasonCode = currencyConflict ? 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT' : null;
+  const canComputeNet = !currencyConflict && acquisitionMetric.amount !== null && returnsMetric.amount !== null
     && (!acquisitionMetric.currency || !returnsMetric.currency || acquisitionMetric.currency === returnsMetric.currency);
   const netAmount = canComputeNet ? money(moneyMinorUnits(acquisitionMetric.amount) - moneyMinorUnits(returnsMetric.amount)) : null;
-  metrics.NET_CONFIRMED_ACQUISITION = { metricCode: 'NET_CONFIRMED_ACQUISITION', amount: netAmount, currency: netCurrency, status: metrics.CONFIRMED_ACQUISITION_VALUE.status === 'CERTIFIED' && metrics.CONFIRMED_RETURN_VALUE.status === 'CERTIFIED' ? 'CERTIFIED' : 'BLOCKED', count: metrics.CONFIRMED_ACQUISITION_VALUE.count + metrics.CONFIRMED_RETURN_VALUE.count, reason: null, period: periodInfo };
+  metrics.NET_CONFIRMED_ACQUISITION = {
+    metricCode: 'NET_CONFIRMED_ACQUISITION',
+    amount: netAmount,
+    currency: netCurrency,
+    status: currencyConflict ? 'BLOCKED' : (metrics.CONFIRMED_ACQUISITION_VALUE.status === 'CERTIFIED' && metrics.CONFIRMED_RETURN_VALUE.status === 'CERTIFIED' ? 'CERTIFIED' : 'BLOCKED'),
+    count: metrics.CONFIRMED_ACQUISITION_VALUE.count + metrics.CONFIRMED_RETURN_VALUE.count,
+    reasonCode: netReasonCode,
+    reason: netReasonCode,
+    period: periodInfo,
+  };
   return { model: ANALYTICS_MODEL_VERSION, scopeKey, period: periodInfo, source: { model: report?.model ?? null, sourceStateKey: report?.sourceStateKey ?? null }, metrics, contract: { amountsAreLedgerOrCertificationDerived: true, receiptTotalSumIsNotAnAnalyticsSource: true } };
 }
 

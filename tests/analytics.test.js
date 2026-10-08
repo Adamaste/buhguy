@@ -88,3 +88,27 @@ test('analytics keeps item-grain out of purchase-grain aggregation', () => {
   const summary = buildAnalyticsSummary({ report });
   assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '20.00');
 });
+
+test('net fails closed when gross and returns use different currencies', () => {
+  const report = {
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '10.00', 'CERTIFIED'),
+      { ...fact('CONFIRMED_RETURN_VALUE', '5.00', 'CERTIFIED'), currency: 'USD' },
+    ],
+  };
+  const net = buildAnalyticsSummary({ report }).metrics.NET_CONFIRMED_ACQUISITION;
+  assert.equal(net.status, 'BLOCKED');
+  assert.equal(net.amount, null);
+  assert.equal(net.currency, null);
+  assert.equal(net.reasonCode, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+  assert.equal(net.reason, 'MULTI_CURRENCY_REQUIRES_SEPARATE_REPORT');
+});
+
+test('net remains ordinary when the returns metric is empty', () => {
+  const report = { proofFacts: [fact('CONFIRMED_ACQUISITION_VALUE', '10.01', 'CERTIFIED')] };
+  const net = buildAnalyticsSummary({ report }).metrics.NET_CONFIRMED_ACQUISITION;
+  assert.equal(net.status, 'CERTIFIED');
+  assert.equal(net.amount, '10.01');
+  assert.equal(net.currency, 'RUB');
+  assert.equal(net.reasonCode, null);
+});
