@@ -64,7 +64,7 @@ test('freshness module has a safe machine-readable contract and no data mutation
 });
 
 test('technical and timeout failures never become READY', () => {
-  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'READ_ONLY_PROBE_ERROR' }, exactRuns: [], previousReadyRun: null }).status, CERTIFICATION_FRESHNESS_STATUS.MISSING);
+  assert.equal(classifyCertificationFreshness({ reader: { ok: false, reasonCode: 'READ_ONLY_PROBE_ERROR' }, exactRuns: [], previousReadyRun: null, sourceStateKey: 'a'.repeat(64) }).status, CERTIFICATION_FRESHNESS_STATUS.TECHNICAL_ERROR);
   assert.equal(CERTIFICATION_FRESHNESS_STATUS.TECHNICAL_ERROR, 'TECHNICAL_ERROR');
 });
 
