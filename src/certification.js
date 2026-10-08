@@ -278,14 +278,15 @@ export function summarizeCertificationTotals(results, balances = {}) {
     const item = summarize(code, status);
     return reason === undefined ? item : { ...item, reason };
   };
+  const publicMetric = ({ currency, ...item }) => item;
   return {
-    confirmedAcquisitionValue: acquisition,
-    confirmedReturnValue: returns,
-    netConfirmedAcquisition: net,
-    fiscalNewMoney: metric('FISCAL_NEW_MONEY', 'PROVISIONAL', 'FUNDING_UNRECONCILED'),
+    confirmedAcquisitionValue: publicMetric(acquisition),
+    confirmedReturnValue: publicMetric(returns),
+    netConfirmedAcquisition: publicMetric(net),
+    fiscalNewMoney: publicMetric(metric('FISCAL_NEW_MONEY', 'PROVISIONAL', 'FUNDING_UNRECONCILED')),
     merchantAdvanceBalance: { amount: money(balances.merchantAdvance ?? '0.00'), status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' },
-    outstandingRefundReceivable: metric('OUTSTANDING_REFUND_RECEIVABLE', 'CERTIFIED'),
-    blockedExposure: metric('BLOCKED_EXPOSURE', 'BLOCKED'),
+    outstandingRefundReceivable: publicMetric(metric('OUTSTANDING_REFUND_RECEIVABLE', 'CERTIFIED')),
+    blockedExposure: publicMetric(metric('BLOCKED_EXPOSURE', 'BLOCKED')),
   };
 }
 
