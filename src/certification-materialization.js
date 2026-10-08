@@ -9,6 +9,7 @@ export const CERTIFICATION_MATERIALIZATION_VERSION = 'canonical-spending-certifi
 
 const FACT_FIELDS = ['run_id', 'scope_id', 'subject_type', 'subject_id', 'metric_code', 'dimension', 'status', 'amount', 'currency', 'event_at', 'reason_code', 'rule_code', 'rule_version', 'ledger_entry_id', 'business_event_id', 'graph_evidence_id', 'semantic_key', 'source_state_key'];
 const RESULT_FIELDS = ['run_id', 'metric_code', 'status', 'amount', 'currency', 'count_items', 'reason_code', 'semantic_key'];
+const SOURCE_STATE_KEY_PATTERN = /^[0-9a-f]{64}$/i;
 
 const canonicalValue = (value) => {
   if (value instanceof Date) return value.toISOString();
@@ -69,10 +70,35 @@ async function persistedRows(client, runId) {
 async function independentlyObservedSourceState(pool, scopeId, statementTimeoutMs) {
   const verifier = await pool.connect();
   try {
-    await verifier.query(`SET statement_timeout = '${statementTimeoutMs}ms'`);
-    return await certificationSourceStateKey(verifier, scopeId);
+    await verifier.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await verifier.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+    await verifier.query(`SET LOCAL lock_timeout = '${Math.min(statementTimeoutMs, 5000)}ms'`);
+    const key = await certificationSourceStateKey(verifier, scopeId);
+    await verifier.query('COMMIT');
+    return key;
+  } catch (error) {
+    try { await verifier.query('ROLLBACK'); } catch {}
+    throw error;
   } finally {
     verifier.release();
+  }
+}
+
+function assertDeadline(deadline) {
+  if (Date.now() > deadline) throw materializationError('Certification materialization exceeded its overall timeout', 'CERTIFICATION_MATERIALIZATION_TIMEOUT');
+}
+
+async function postCommitState(client, scopeId, expectedSourceStateKey, statementTimeoutMs) {
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+    await client.query(`SET LOCAL lock_timeout = '${Math.min(statementTimeoutMs, 5000)}ms'`);
+    const currentSourceStateKey = await certificationSourceStateKey(client, scopeId);
+    await client.query('COMMIT');
+    return { postCommitSourceStateKey: currentSourceStateKey, postCommitCurrent: currentSourceStateKey === expectedSourceStateKey };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    return { postCommitSourceStateKey: null, postCommitCurrent: null, postCommitCheckError: error.code ?? 'POSTCOMMIT_READ_FAILED' };
   }
 }
 
@@ -87,26 +113,33 @@ function assertPersistedProjection(run, projection, persisted) {
   if (!factsMatch || !resultsMatch) throw materializationError(`Certification run ${run.id} does not match the authoritative projection`);
 }
 
-async function materialize(pool, { scopeKey = 'default', lockTimeoutMs = 5000, statementTimeoutMs = 120000, failAfter = null, afterProjection = null } = {}) {
-  if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs <= 0 || !Number.isInteger(statementTimeoutMs) || statementTimeoutMs <= 0) {
+async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey, lockTimeoutMs = 5000, statementTimeoutMs = 120000, overallTimeoutMs = 180000, failAfter = null, afterProjection = null } = {}) {
+  if (!SOURCE_STATE_KEY_PATTERN.test(expectedSourceStateKey ?? '')) {
+    throw materializationError('An explicit SHA-256 expectedSourceStateKey is required', 'CERTIFICATION_EXPECTED_SOURCE_STATE_REQUIRED');
+  }
+  if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs <= 0 || !Number.isInteger(statementTimeoutMs) || statementTimeoutMs <= 0 || !Number.isInteger(overallTimeoutMs) || overallTimeoutMs <= 0) {
     throw materializationError('Materialization timeouts must be positive integers', 'CERTIFICATION_MATERIALIZATION_INVALID_OPTIONS');
   }
+  const deadline = Date.now() + overallTimeoutMs;
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
-    await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+    await client.query(`SET LOCAL statement_timeout = '${Math.min(statementTimeoutMs, overallTimeoutMs)}ms'`);
     const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
     if (!scope) throw materializationError(`Accounting scope not found: ${scopeKey}`, 'CERTIFICATION_SCOPE_NOT_FOUND');
 
     const sourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
+    if (sourceStateKey !== expectedSourceStateKey) throw materializationError('Expected source state differs from the authoritative transaction snapshot', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
     const projection = await rebuildCertification(client, { scopeKey, persist: false, sourceStateKey });
     if (projection.sourceStateKey !== sourceStateKey) throw materializationError('Projection source state differs from the locked source state', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
     if (afterProjection) await afterProjection();
+    assertDeadline(deadline);
     const recheckedSourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
     if (recheckedSourceStateKey !== sourceStateKey) throw materializationError('Source state changed during materialization', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
     const independentlyObservedKey = await independentlyObservedSourceState(pool, Number(scope.id), statementTimeoutMs);
     if (independentlyObservedKey !== sourceStateKey) throw materializationError('Source state changed outside the materialization snapshot', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
+    assertDeadline(deadline);
 
     const existing = (await client.query(`SELECT * FROM reconciliation_runs
       WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
@@ -117,27 +150,32 @@ async function materialize(pool, { scopeKey = 'default', lockTimeoutMs = 5000, s
       const run = existing[0];
       const persisted = await persistedRows(client, Number(run.id));
       assertPersistedProjection(run, projection, persisted);
+      assertDeadline(deadline);
       await client.query('COMMIT');
-      return { materialized: false, reused: true, runId: Number(run.id), sourceStateKey, facts: persisted.facts.length, results: persisted.results.length };
+      return { materialized: false, reused: true, runId: Number(run.id), sourceStateKey, facts: persisted.facts.length, results: persisted.results.length, ...(await postCommitState(client, Number(scope.id), sourceStateKey, statementTimeoutMs)) };
     }
 
+    assertDeadline(deadline);
     const run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,period_from,period_to,status,finished_at)
       VALUES($1,$2,$3,NULL,NULL,'READY',NOW()) RETURNING *`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
     if (failAfter === 'run') throw materializationError('Injected materialization failure after run', 'INJECTED_CERTIFICATION_MATERIALIZATION_FAILURE');
     for (const fact of projection.facts) {
+      assertDeadline(deadline);
       await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, [run.id, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
       if (failAfter === 'facts') throw materializationError('Injected materialization failure after facts', 'INJECTED_CERTIFICATION_MATERIALIZATION_FAILURE');
     }
     for (const result of projection.results) {
+      assertDeadline(deadline);
       await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, certificationResultSemanticKey(result, run.id)]);
     }
     if (failAfter === 'results') throw materializationError('Injected materialization failure after results', 'INJECTED_CERTIFICATION_MATERIALIZATION_FAILURE');
     const persisted = await persistedRows(client, Number(run.id));
     assertPersistedProjection(run, projection, persisted);
+    assertDeadline(deadline);
     await client.query('COMMIT');
-    return { materialized: true, reused: false, runId: Number(run.id), sourceStateKey, facts: persisted.facts.length, results: persisted.results.length };
+    return { materialized: true, reused: false, runId: Number(run.id), sourceStateKey, facts: persisted.facts.length, results: persisted.results.length, ...(await postCommitState(client, Number(scope.id), sourceStateKey, statementTimeoutMs)) };
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     if (error?.code === '40001' || error?.code === '40P01') {
@@ -152,8 +190,10 @@ async function materialize(pool, { scopeKey = 'default', lockTimeoutMs = 5000, s
 export async function materializeCurrentCertification(pool, options = {}) {
   return materialize(pool, {
     scopeKey: options.scopeKey,
+    expectedSourceStateKey: options.expectedSourceStateKey,
     lockTimeoutMs: options.lockTimeoutMs,
     statementTimeoutMs: options.statementTimeoutMs,
+    overallTimeoutMs: options.overallTimeoutMs,
   });
 }
 

@@ -37,13 +37,17 @@ guarded one-shot full unbounded certification writer. It uses one
 an accounting-scope lock, one authoritative source-state/projection snapshot,
 immutable historical runs, atomic run/fact/result insertion, exact semantic
 identity revalidation, and rollback on conflicts, timeouts, failures, or
-serialization retries. It never uses `replace=true`, deletes history, or
-invokes the matched-purchase writer.
+serialization retries. The production call requires the exact SHA-256
+`expectedSourceStateKey` from the approved read-only preflight; missing or
+mismatched identity fails before any INSERT. It never uses `replace=true`,
+deletes history, or invokes the matched-purchase writer.
 
 The disposable clone test contract covers creation of a full READY snapshot,
-current-snapshot reader READY compatibility, idempotent retry without extra
-rows, concurrent source-change fail-closed behavior, and injected failures
-after run/facts/results with exact rollback. Household/category/person
+current-snapshot reader READY compatibility, same-state per-currency
+household/category/person reconciliation, missing and wrong expected keys,
+idempotent retry without extra rows, concurrent source-change fail-closed
+behavior, overall timeout, and injected failures after run/facts/results with
+exact rollback. Household/category/person
 gross, returns, net, and unresolved/unclassified buckets must reconcile by
 currency using exact decimal arithmetic before any production approval.
 

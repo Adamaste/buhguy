@@ -6,11 +6,13 @@ writer trigger, replay, or backfill mechanism.
 
 ## Contract
 
-`materializeCurrentCertification()` uses one PostgreSQL client and one
-`SERIALIZABLE` transaction. It applies bounded `lock_timeout` and
-`statement_timeout`, locks the accounting scope, computes the authoritative
-source-state key and non-persisting projection in that transaction, and never
-uses `replace=true` or deletes historical runs, facts, or results.
+`materializeCurrentCertification()` requires the exact SHA-256
+`expectedSourceStateKey` returned by an approved read-only preflight. It uses
+one PostgreSQL client and one `SERIALIZABLE` transaction. It applies bounded
+`lock_timeout`, per-statement `statement_timeout`, and an overall transaction
+deadline, locks the accounting scope, computes the authoritative source-state
+key and non-persisting projection in that transaction, and never uses
+`replace=true` or deletes historical runs, facts, or results.
 
 An existing exact unbounded `READY` run is reused only after every persisted
 fact and result matches the current projection and semantic identity. Otherwise
@@ -34,15 +36,19 @@ source state. From an isolated exact-master checkout:
    person gross, returns, net, and unresolved buckets using exact decimal
    arithmetic. Do not compare aggregates from different source states.
 5. With the approved write-capable role, invoke exactly one guarded
-   `materializeCurrentCertification` call with bounded timeouts. Do not run
+   `materializeCurrentCertification` call with the exact preflight
+   `expectedSourceStateKey` and bounded per-statement/overall timeouts. Do not run
    `rebuildCertification({replace:true})`, generic migration runners, writers,
    replay, backfill, or accounting catch-up.
 6. Verify the committed run is the exact source state, unbounded, `READY`, and
    that all fact/result semantic keys and per-currency reconciliations match.
-   The final source-state recheck is independently observed through a bounded
-   read connection because a repeatable transaction snapshot cannot see a
-   concurrent commit that occurs after projection. The materialization
+   The final source-state recheck is independently observed through its own
+   bounded `REPEATABLE READ READ ONLY` transaction with `SET LOCAL` settings;
+   it cannot leak session settings into the pool. The materialization
    transaction remains the only connection that writes certification rows.
+   After commit, the same client performs a read-only READY/staleness check;
+   a source change after commit is reported stale and is never silently
+   treated as current.
 7. If any precheck, lock, timeout, source drift, conflict, or postcheck fails,
    stop and rollback. Do not retry blindly; take a new read-only snapshot.
 
@@ -55,6 +61,8 @@ read-only precheck and approval gate before any new materialization.
 ## Clone rehearsal
 
 The disposable PostgreSQL integration suite covers full creation, current
-reader `READY`, idempotent retry with no new rows, serializable concurrent
-source-change rejection, and injected failures after run/facts/results with
-rollback to the exact pre-call counts.
+reader `READY`, same-state per-currency household/category/person
+reconciliation, missing and wrong expected keys, idempotent retry with no new
+rows, serializable concurrent source-change rejection, overall timeout, and
+injected failures after run/facts/results with rollback to the exact pre-call
+counts.
