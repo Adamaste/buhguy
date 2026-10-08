@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Pool } from 'pg';
-import { certificationReport, rebuildCertification, refreshCertificationForEvents, CERTIFICATION_SOURCE_STATE_OVERRIDE } from '../src/certification.js';
+import { certificationReport, certificationResultSemanticKey, rebuildCertification, refreshCertificationForEvents, CERTIFICATION_SOURCE_STATE_OVERRIDE } from '../src/certification.js';
 
 test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
