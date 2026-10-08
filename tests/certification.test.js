@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveCertificationFacts } from '../src/certification.js';
+import { aggregateCertificationFacts, deriveCertificationFacts } from '../src/certification.js';
 
 const base = (id, rule, status = 'READY', amount = '100.00') => ({ id, scope_id: 1, source_event_id: id, derivation_rule: rule, derivation_status: status, currency: 'RUB', event_at: '2026-01-01T00:00:00Z', event_amount: amount });
 const posting = (entry, code, debit, credit) => ({ ledger_entry_id: entry, account_code: code, debit, credit });
@@ -41,3 +41,14 @@ test('facts preserve scope and never claim bank certification from clearing', ()
   assert.equal(facts[0].status, 'PROVISIONAL');
   assert.equal(facts.some((fact) => /BANK|CARD|CASH_ACCOUNT/.test(fact.metricCode) && fact.status === 'CERTIFIED'), false);
 });
+
+test('certification aggregates keep currencies separate and preserve result identity inputs', () => {
+  const results = aggregateCertificationFacts([
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.00', currency: 'RUB' },
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.00', currency: 'USD' },
+    { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '5.00', currency: 'RUB' },
+  ]);
+  assert.deepEqual(results.map((row) => [row.currency, row.amount, row.countItems]), [['RUB', '15.00', 2], ['USD', '10.00', 1]]);
+  assert.notEqual(results[0].semanticKey, results[1].semanticKey);
+});
+
