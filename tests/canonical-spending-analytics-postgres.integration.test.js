@@ -506,3 +506,37 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     FROM canonical_spending_household_summary_v1 WHERE scope_id=$1 AND source_state_key=$2`, [scope.id, snapshotKey])).rows[0];
   assert.deepEqual(afterSettlement, household);
 });
+
+ integration('canonical spending consumer keeps purchase grain, source snapshots, and currencies separate', { concurrency: false }, async () => {
+  await applyAnalyticsArtifact();
+  const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
+  const rows = (await pool.query(`SELECT certification_run_id,source_state_key,purchase_id,amount::text,currency
+    FROM canonical_spending_purchases_v1
+    WHERE scope_id=$1
+    ORDER BY certification_run_id,purchase_id`, [scope.id])).rows;
+  assert.ok(rows.length > 0);
+  const bySnapshot = new Map();
+  for (const row of rows) {
+    const key = `${row.certification_run_id}:${row.source_state_key}`;
+    const bucket = bySnapshot.get(key) ?? [];
+    bucket.push(row);
+    bySnapshot.set(key, bucket);
+  }
+  for (const bucket of bySnapshot.values()) {
+    assert.equal(new Set(bucket.map((row) => row.purchase_id)).size, bucket.length);
+    const byCurrency = new Map();
+    for (const row of bucket) {
+      const amounts = byCurrency.get(row.currency) ?? 0n;
+      byCurrency.set(row.currency, amounts + minorUnits(row.amount));
+    }
+    for (const [currency, total] of byCurrency) {
+      assert.equal(typeof currency, 'string');
+      assert.match(money(total), /^-?\\d+\\.\\d{2}$/);
+    }
+  }
+  const itemRows = (await pool.query(`SELECT purchase_id
+    FROM canonical_spending_items_v1
+    WHERE scope_id=$1
+    LIMIT 100`, [scope.id])).rows;
+  if (itemRows.length) assert.ok(itemRows.every((row) => rows.some((purchase) => purchase.purchase_id === row.purchase_id)));
+});

@@ -55,3 +55,36 @@ test('analytics source code never aggregates receipt total_sum directly', async 
   const source = await readFile(path.join(process.cwd(), 'src', 'analytics.js'), 'utf8');
   assert.equal(/receipts?\.total_sum|SUM\s*\(\s*total_sum\s*\)/i.test(source), false);
 });
+
+test('exact NUMERIC(18,2) money stays exact beyond JavaScript safe integers', () => {
+  const report = {
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '90071992547409.91', 'CERTIFIED'),
+      fact('CONFIRMED_ACQUISITION_VALUE', '0.09', 'CERTIFIED'),
+      fact('CONFIRMED_RETURN_VALUE', '0.01', 'CERTIFIED'),
+    ],
+  };
+  const summary = buildAnalyticsSummary({ report });
+  assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '90071992547410.00');
+  assert.equal(summary.metrics.CONFIRMED_RETURN_VALUE.amount, '0.01');
+  assert.equal(summary.metrics.NET_CONFIRMED_ACQUISITION.amount, '90071992547409.99');
+});
+
+test('analytics rejects facts from multiple certification source states', () => {
+  const report = {
+    sourceStateKey: 'a'.repeat(64),
+    proofFacts: [
+      fact('CONFIRMED_ACQUISITION_VALUE', '10.00', 'CERTIFIED'),
+      { ...fact('CONFIRMED_ACQUISITION_VALUE', '5.00', 'CERTIFIED'), sourceStateKey: 'b'.repeat(64) },
+    ],
+  };
+  assert.throws(() => buildAnalyticsSummary({ report }), /MULTIPLE_SOURCE_STATES_NOT_ALLOWED|SOURCE_STATE_IDENTITY_MISSING_OR_MISMATCHED/);
+});
+
+test('analytics keeps item-grain out of purchase-grain aggregation', () => {
+  const report = {
+    proofFacts: [fact('CONFIRMED_ACQUISITION_VALUE', '20.00', 'CERTIFIED', { subjectId: 42 })],
+  };
+  const summary = buildAnalyticsSummary({ report });
+  assert.equal(summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '20.00');
+});
