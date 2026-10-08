@@ -3,7 +3,7 @@ import { certificationReport } from './certification.js';
 export const ANALYTICS_MODEL_VERSION = 'analytics-v1';
 export const ACCOUNTING_TIMEZONE = 'Europe/Moscow';
 const METRICS = ['CONFIRMED_ACQUISITION_VALUE', 'CONFIRMED_RETURN_VALUE', 'FISCAL_NEW_MONEY', 'MERCHANT_ADVANCE_BALANCE', 'OUTSTANDING_REFUND_RECEIVABLE', 'BLOCKED_EXPOSURE'];
-const MONEY_PATTERN = /^-?\\d+(?:\\.\\d{1,2})?$/;
+const MONEY_PATTERN = /^-?\d+(?:\.\d{1,2})?$/;
 
 function moneyMinorUnits(value) {
   const text = String(value ?? '0');

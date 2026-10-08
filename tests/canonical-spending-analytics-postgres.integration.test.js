@@ -507,7 +507,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
   assert.deepEqual(afterSettlement, household);
 });
 
- integration('canonical spending consumer keeps purchase grain, source snapshots, and currencies separate', { concurrency: false }, async () => {
+integration('canonical spending consumer keeps purchase grain, source snapshots, and currencies separate', { concurrency: false }, async () => {
   await applyAnalyticsArtifact();
   const scope = (await pool.query("SELECT id FROM accounting_scopes WHERE scope_key='default'")).rows[0];
   const rows = (await pool.query(`SELECT certification_run_id,source_state_key,purchase_id,amount::text,currency
@@ -531,7 +531,7 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
     }
     for (const [currency, total] of byCurrency) {
       assert.equal(typeof currency, 'string');
-      assert.match(money(total), /^-?\\d+\\.\\d{2}$/);
+      assert.match(money(total), /^-?\d+\.\d{2}$/);
     }
   }
   const itemRows = (await pool.query(`SELECT purchase_id
