@@ -90,6 +90,20 @@ const canonicalRows = (rows, fields) => rows
 const FACT_FIELDS = ['run_id', 'scope_id', 'subject_type', 'subject_id', 'metric_code', 'dimension', 'status', 'amount', 'currency', 'event_at', 'reason_code', 'rule_code', 'rule_version', 'ledger_entry_id', 'business_event_id', 'graph_evidence_id', 'semantic_key', 'source_state_key'];
 const RESULT_FIELDS = ['run_id', 'metric_code', 'status', 'amount', 'currency', 'count_items', 'reason_code', 'semantic_key'];
 
+export function certificationResultSemanticKey(result, runId) {
+  return fiscalContentFingerprint({
+    metricCode: result.metricCode ?? result.metric_code,
+    status: result.status,
+    amount: result.amount,
+    currency: result.currency,
+    countItems: result.countItems ?? result.count_items,
+    reasonCode: result.reasonCode ?? result.reason_code,
+    runId: Number(runId),
+  });
+}
+
+const resultSemanticKey = certificationResultSemanticKey;
+
 async function insertFacts(client, runId, facts) {
   for (const fact of facts) await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,status=EXCLUDED.status,amount=EXCLUDED.amount`, [runId, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
 }
@@ -138,7 +152,7 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
         GROUP BY metric_code,status,currency,reason_code`, [existing.id])).rows.map((result) => ({
         ...result,
         run_id: existing.id,
-        semantic_key: fiscalContentFingerprint({ ...result, runId: Number(existing.id) }),
+        semantic_key: resultSemanticKey(result, existing.id),
       }));
       if (existing.status !== 'READY'
         || JSON.stringify(canonicalRows(persistedFacts, FACT_FIELDS)) !== JSON.stringify(canonicalRows(expectedFactRows, FACT_FIELDS))
@@ -153,7 +167,7 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
     await insertFacts(client, run.id, facts);
     await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
     const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;
-    for (const result of aggregates) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metric_code, result.status, result.amount, result.currency, result.count_items, result.reason_code, fiscalContentFingerprint({ ...result, runId: Number(run.id) })]);
+    for (const result of aggregates) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metric_code, result.status, result.amount, result.currency, result.count_items, result.reason_code, resultSemanticKey(result, run.id)]);
     if (ownsTransaction) await client.query('COMMIT');
     return { bounded: true, eventIds, facts: facts.length, runId: Number(run.id), sourceStateKey, reused: false, refreshed: true };
   } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
@@ -205,15 +219,17 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
   return facts;
 }
 
-function aggregateFacts(facts) {
+export function aggregateCertificationFacts(facts) {
   const result = new Map();
   for (const fact of facts) {
-    const key = `${fact.metricCode}|${fact.status}|${fact.reasonCode}`;
+    const key = `${fact.metricCode}|${fact.status}|${fact.reasonCode}|${fact.currency ?? ''}`;
     const current = result.get(key) ?? { metricCode: fact.metricCode, status: fact.status, amount: 0, currency: fact.currency, countItems: 0, reasonCode: fact.reasonCode };
     current.amount += n(fact.amount); current.countItems += 1; result.set(key, current);
   }
   return [...result.values()].map((item) => ({ ...item, amount: money(item.amount), semanticKey: fiscalContentFingerprint(item) }));
 }
+
+const aggregateFacts = aggregateCertificationFacts;
 
 export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
   if ((persist || replace) && providedSourceStateKey !== null) throw certificationSourceStateOverride();
@@ -234,7 +250,7 @@ export async function rebuildCertification(pool, { scopeKey = 'default', from = 
       await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO NOTHING`, [run.id, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
       if (failAfter !== null && index + 1 >= Number(failAfter)) throw new Error('injected certification failure');
     }
-    for (const result of results) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,amount=EXCLUDED.amount,count_items=EXCLUDED.count_items`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, fiscalContentFingerprint({ ...result, runId: Number(run.id) })]);
+    for (const result of results) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,amount=EXCLUDED.amount,count_items=EXCLUDED.count_items`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, resultSemanticKey(result, run.id)]);
     await client.query('COMMIT');
     return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
@@ -248,3 +264,4 @@ export async function certificationReport(pool, { scopeKey = 'default', from = n
   const returns = (byMetric.CONFIRMED_RETURN_VALUE ?? []).reduce((sum, item) => sum + n(item.amount), 0);
   return { model: projection.model, sourceStateKey: projection.sourceStateKey, period: { from, to, semantics: 'business event/ledger event_at, half-open [from,to)' }, metrics: { confirmedAcquisitionValue: { amount: money(acquisition), status: 'CERTIFIED' }, confirmedReturnValue: { amount: money(returns), status: 'CERTIFIED' }, netConfirmedAcquisition: { amount: money(acquisition - returns), status: 'CERTIFIED' }, fiscalNewMoney: { amount: money((byMetric.FISCAL_NEW_MONEY ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'PROVISIONAL', reason: 'FUNDING_UNRECONCILED' }, merchantAdvanceBalance: { amount: projection.balances.merchantAdvance, status: 'CERTIFIED', reason: 'BUSINESS_ADVANCE_RECONCILED' }, outstandingRefundReceivable: { amount: money((byMetric.OUTSTANDING_REFUND_RECEIVABLE ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'CERTIFIED' }, blockedExposure: { amount: money((byMetric.BLOCKED_EXPOSURE ?? []).reduce((sum, item) => sum + n(item.amount), 0)), status: 'BLOCKED' } }, results: projection.results, proofFacts: projection.facts };
 }
+

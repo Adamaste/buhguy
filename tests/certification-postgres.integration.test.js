@@ -114,3 +114,25 @@ test('persistent certification rejects a forged source-state identity without wr
     assert.ok(normal.runId);
   } finally { await pool.end(); }
 });
+
+test('full READY certification can be reused by bounded refresh without mutation', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const full = await rebuildCertification(pool, { scopeKey: 'default', persist: true, replace: true });
+    const eventId = Number((await pool.query("SELECT source_event_id FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key='default') ORDER BY id LIMIT 1")).rows[0].source_event_id);
+    const before = (await pool.query(`SELECT
+      (SELECT count(*) FROM reconciliation_runs)::int AS runs,
+      (SELECT count(*) FROM certification_facts)::int AS facts,
+      (SELECT count(*) FROM reconciliation_results)::int AS results`)).rows[0];
+    const bounded = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [eventId] });
+    assert.equal(bounded.runId, full.runId);
+    assert.equal(bounded.sourceStateKey, full.sourceStateKey);
+    assert.equal(bounded.reused, true);
+    assert.equal(bounded.refreshed, false);
+    assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*) FROM reconciliation_runs)::int AS runs,
+      (SELECT count(*) FROM certification_facts)::int AS facts,
+      (SELECT count(*) FROM reconciliation_results)::int AS results`)).rows[0], before);
+  } finally { await pool.end(); }
+});
+

@@ -1,5 +1,4 @@
-import { certificationSourceStateKey, rebuildCertification, CERTIFICATION_MODEL_VERSION } from './certification.js';
-import { fiscalContentFingerprint } from './fiscal-evidence.js';
+import { certificationResultSemanticKey, certificationSourceStateKey, rebuildCertification, CERTIFICATION_MODEL_VERSION } from './certification.js';
 import { createLogger } from './logger.js';
 
 export const CURRENT_SPENDING_SNAPSHOT_MODEL = 'canonical-spending-current-snapshot-v1';
@@ -104,7 +103,7 @@ async function loadSnapshotOnClient(client, { scopeKey = 'default' } = {}) {
     count_items: result.countItems,
     reason_code: result.reasonCode,
     // Preserve the existing certification writer's result identity contract.
-    semantic_key: fiscalContentFingerprint({ ...result, runId: Number(run.id) }),
+    semantic_key: certificationResultSemanticKey(result, run.id),
   }));
   const factsHaveForeignIdentity = facts.some((fact) => Number(fact.scope_id) !== Number(scope.id) || fact.source_state_key !== sourceStateKey || Number(fact.run_id) !== Number(run.id));
   const resultsHaveForeignIdentity = results.some((result) => Number(result.run_id) !== Number(run.id));
