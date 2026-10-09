@@ -37,6 +37,10 @@ function localParts(date, timezone) {
 
 function zonedMidnightUtc(date, timezone) {
   const day = localParts(date, timezone);
+  return zonedLocalDateMidnightUtc(day, timezone);
+}
+
+function zonedLocalDateMidnightUtc(day, timezone) {
   const targetUtc = Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day));
   let guess = targetUtc;
   for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -73,12 +77,14 @@ export function resolveSpendingPeriod({ period = 'today', timezone = 'Europe/Mos
     return { ok: true, timezone, from: start.toISOString(), to: end.toISOString(), semantics: 'event_at, half-open [from,to)' };
   }
   if (from !== null || to !== null || !['today', 'yesterday'].includes(period)) return { ok: false, reasonCode: SPENDING_QUERY_FAILURES.INVALID_PERIOD };
-  const midnight = zonedMidnightUtc(now, timezone);
   const day = localParts(now, timezone);
-  const localNoon = (delta) => new Date(Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day) + delta, 12));
-  const todayStart = zonedMidnightUtc(localNoon(0), timezone);
-  const tomorrowStart = zonedMidnightUtc(localNoon(1), timezone);
-  if (period === 'yesterday') return { ok: true, timezone, from: zonedMidnightUtc(localNoon(-1), timezone).toISOString(), to: todayStart.toISOString(), semantics: 'event_at, half-open [from,to)' };
+  const localCalendarDate = (delta) => {
+    const shifted = new Date(Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day) + delta));
+    return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth() + 1, day: shifted.getUTCDate() };
+  };
+  const todayStart = zonedLocalDateMidnightUtc(localCalendarDate(0), timezone);
+  const tomorrowStart = zonedLocalDateMidnightUtc(localCalendarDate(1), timezone);
+  if (period === 'yesterday') return { ok: true, timezone, from: zonedLocalDateMidnightUtc(localCalendarDate(-1), timezone).toISOString(), to: todayStart.toISOString(), semantics: 'event_at, half-open [from,to)' };
   const end = tomorrowStart;
   return { ok: true, timezone, from: todayStart.toISOString(), to: end.toISOString(), semantics: 'event_at, half-open [from,to)' };
 }
@@ -133,10 +139,13 @@ export async function queryCanonicalSpending(pool, {
       return { ...result, queryPeriod };
     }
     const args = [resolved.snapshot.scopeId, resolved.snapshot.runId, resolved.snapshot.sourceStateKey, queryPeriod.from, queryPeriod.to];
-    const [purchases, returns, household, category, person, results] = await Promise.all([
+    const [purchases, purchaseGrain, returns, household, category, person] = await Promise.all([
       client.query(`SELECT scope_id,certification_run_id,source_state_key,certification_fact_id,purchase_id,amount::text,currency,purchased_at,rule_code,rule_version,semantic_key
         FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
           AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz ORDER BY purchased_at,purchase_id LIMIT $6 OFFSET $7`, [...args, pageSize + 1, pageOffset]),
+      client.query(`SELECT certification_fact_id,purchase_id,semantic_key
+        FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
+          AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz ORDER BY purchased_at,purchase_id`, args),
       client.query(`SELECT scope_id,certification_run_id,source_state_key,certification_fact_id,return_id,return_amount::text,currency,returned_at
         FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
           AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz ORDER BY returned_at,return_id LIMIT $6 OFFSET $7`, [...args, pageSize + 1, pageOffset]),
@@ -144,11 +153,10 @@ export async function queryCanonicalSpending(pool, {
           SELECT currency,amount AS gross,0::numeric AS returns FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz
           UNION ALL SELECT currency,0::numeric,return_amount FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz
         ) SELECT currency,SUM(gross)::text AS gross_spend,SUM(returns)::text AS confirmed_returns,(SUM(gross)-SUM(returns))::text AS net_spend FROM monetary GROUP BY currency ORDER BY currency`, args),
-      client.query(`WITH p AS (SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT return_id AS subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz), a AS (SELECT x.* FROM spending_category_allocations x WHERE x.scope_id=$1 AND x.certification_run_id=$2 AND x.source_state_key=$3 AND NOT EXISTS (SELECT 1 FROM spending_category_allocations successor WHERE successor.scope_id=x.scope_id AND successor.certification_run_id=x.certification_run_id AND successor.source_state_key=x.source_state_key AND successor.allocation_kind=x.allocation_kind AND successor.subject_event_id=x.subject_event_id AND successor.supersedes_allocation_id=x.id)) SELECT a.currency,a.taxonomy_id,t.taxonomy_version,c.category_code,SUM(CASE WHEN a.allocation_kind='PURCHASE' AND p.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)::text AS gross_spend,SUM(CASE WHEN a.allocation_kind='RETURN' AND r.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)::text AS confirmed_returns,(SUM(CASE WHEN a.allocation_kind='PURCHASE' AND p.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)-SUM(CASE WHEN a.allocation_kind='RETURN' AND r.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END))::text AS net_spend FROM a JOIN spending_taxonomies t ON t.id=a.taxonomy_id JOIN spending_categories c ON c.taxonomy_id=a.taxonomy_id AND c.id=a.category_id LEFT JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency LEFT JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE (p.subject_event_id IS NOT NULL OR r.subject_event_id IS NOT NULL) GROUP BY a.currency,a.taxonomy_id,t.taxonomy_version,c.category_code ORDER BY a.currency,t.taxonomy_version,c.category_code`, args),
-      client.query(`WITH p AS (SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT return_id AS subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz), a AS (SELECT x.* FROM spending_person_allocations x WHERE x.scope_id=$1 AND x.certification_run_id=$2 AND x.source_state_key=$3 AND NOT EXISTS (SELECT 1 FROM spending_person_allocations successor WHERE successor.scope_id=x.scope_id AND successor.certification_run_id=x.certification_run_id AND successor.source_state_key=x.source_state_key AND successor.allocation_kind=x.allocation_kind AND successor.subject_event_id=x.subject_event_id AND successor.supersedes_allocation_id=x.id)) SELECT a.currency,a.person_id,CASE WHEN a.person_id IS NULL THEN 'UNATTRIBUTED' ELSE 'ATTRIBUTED' END AS attribution_status,SUM(CASE WHEN a.allocation_kind='PURCHASE' AND p.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)::text AS gross_spend,SUM(CASE WHEN a.allocation_kind='RETURN' AND r.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)::text AS confirmed_returns,(SUM(CASE WHEN a.allocation_kind='PURCHASE' AND p.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END)-SUM(CASE WHEN a.allocation_kind='RETURN' AND r.subject_event_id IS NOT NULL AND a.allocation_status='ALLOCATED' THEN a.amount ELSE 0 END))::text AS net_spend FROM a LEFT JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency LEFT JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE (p.subject_event_id IS NOT NULL OR r.subject_event_id IS NOT NULL) GROUP BY a.currency,a.person_id ORDER BY a.currency,a.person_id NULLS FIRST`, args),
-      client.query(`SELECT metric_code,status,amount::text,currency,count_items,reason_code FROM reconciliation_results WHERE run_id=$1 ORDER BY metric_code,status,currency,reason_code`, [resolved.snapshot.runId]),
+      client.query(`WITH p AS (SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT return_id AS subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz), a AS (SELECT * FROM canonical_spending_category_allocations_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3), filtered AS (SELECT a.currency,a.taxonomy_id,a.taxonomy_version,a.category_code,a.category_gross AS gross_spend, a.category_returns AS confirmed_returns FROM a JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency WHERE a.category_gross <> 0 UNION ALL SELECT a.currency,a.taxonomy_id,a.taxonomy_version,a.category_code,a.category_gross,a.category_returns FROM a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE a.category_returns <> 0) SELECT currency,taxonomy_id,taxonomy_version,category_code,SUM(gross_spend)::text AS gross_spend,SUM(confirmed_returns)::text AS confirmed_returns,(SUM(gross_spend)-SUM(confirmed_returns))::text AS net_spend FROM filtered GROUP BY currency,taxonomy_id,taxonomy_version,category_code ORDER BY currency,taxonomy_version,category_code`, args),
+      client.query(`WITH p AS (SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz), r AS (SELECT DISTINCT return_id AS subject_event_id,currency FROM canonical_spending_returns_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz), a AS (SELECT * FROM canonical_spending_person_allocations_v1 WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3), filtered AS (SELECT a.currency,a.person_id,a.person_gross AS gross_spend,a.person_returns AS confirmed_returns FROM a JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency WHERE a.person_gross <> 0 UNION ALL SELECT a.currency,a.person_id,a.person_gross,a.person_returns FROM a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency WHERE a.person_returns <> 0) SELECT currency,person_id,CASE WHEN person_id IS NULL THEN 'UNATTRIBUTED' ELSE 'ATTRIBUTED' END AS attribution_status,SUM(gross_spend)::text AS gross_spend,SUM(confirmed_returns)::text AS confirmed_returns,(SUM(gross_spend)-SUM(confirmed_returns))::text AS net_spend FROM filtered GROUP BY currency,person_id ORDER BY currency,person_id NULLS FIRST`, args),
     ]);
-    const duplicate = validatePurchaseGrainRows(purchases.rows);
+    const duplicate = validatePurchaseGrainRows(purchaseGrain.rows);
     if (!duplicate.ok) { await client.query('ROLLBACK'); return failure(duplicate.reasonCode, { detail: duplicate.detail, sourceStateKey: resolved.snapshot.sourceStateKey, runId: resolved.snapshot.runId, queryPeriod }); }
     const data = {
       grossReturnsNetByCurrency: safeRows(household.rows, ['currency', 'gross_spend', 'confirmed_returns', 'net_spend']).map((row) => ({ currency: row.currency, gross: row.gross_spend, returns: row.confirmed_returns, net: row.net_spend })),
@@ -178,3 +186,4 @@ export async function queryCanonicalSpending(pool, {
     return failure(isAccessError(error) ? SPENDING_QUERY_FAILURES.ACCESS_ERROR : 'TECHNICAL_ERROR', { reason: isAccessError(error) ? 'READ_ONLY_ACCESS_DENIED' : 'READ_ONLY_QUERY_FAILED', queryPeriod });
   } finally { client.release(); }
 }
+
