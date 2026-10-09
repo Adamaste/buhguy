@@ -42,7 +42,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
       UNION ALL
       SELECT a.currency,a.category_gross,a.category_returns FROM canonical_spending_category_allocations_v1 a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency
        WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND a.category_returns <> 0
-    ) SELECT currency,SUM(gross)::text AS gross,SUM(returns)::text AS returns,(SUM(gross)-SUM(returns))::text AS net FROM a GROUP BY currency`, args)).rows;
+    ) SELECT a.currency,SUM(a.gross)::text AS gross,SUM(a.returns)::text AS returns,(SUM(a.gross)-SUM(a.returns))::text AS net FROM a GROUP BY a.currency`, args)).rows;
     const person = (await pool.query(`WITH p AS (
       SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1
        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz
