@@ -273,7 +273,7 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       scopeKey, period: 'range', from: '2026-04-10T00:00:00Z', to: '2026-04-11T00:00:00Z',
     });
     assert.equal(purchaseDay.status, 'READY');
-    assert.deepEqual(purchaseDay.data.grossReturnsNetByCurrency, [{ currency: 'RUB', gross: '100.00', returns: '0.00', net: '100.00' }]);
+    assert.deepEqual(purchaseDay.data.grossReturnsNetByCurrency, [{ currency: 'RUB', gross: '100.00', returns: '0', net: '100.00' }]);
 
     const returnDay = await queryCanonicalSpending(pool, {
       scopeKey, period: 'range', from: '2026-04-11T00:00:00Z', to: '2026-04-12T00:00:00Z',
