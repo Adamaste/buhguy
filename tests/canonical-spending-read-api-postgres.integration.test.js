@@ -121,13 +121,13 @@ integration('duplicate matches fail closed and returns/currencies remain separat
 
 
 integration('deterministic disposable return proof is period-, currency-, and grain-safe', async () => {
-  const scopeKey = \`canonical-return-proof-\${process.pid}-\${Date.now()}\`;
+  const scopeKey = `canonical-return-proof-${process.pid}-${Date.now()}`;
   let scopeId;
   const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
-  const ruleRows = (await pool.query(\`SELECT rule_code,rule_version
+  const ruleRows = (await pool.query(`SELECT rule_code,rule_version
     FROM business_graph_rules
     WHERE rule_code IN ('STANDALONE_PURCHASE_V1','RETURN_REFUND_V1')
-    ORDER BY rule_code,rule_version\`)).rows;
+    ORDER BY rule_code,rule_version`)).rows;
   const rules = new Map(ruleRows.map((row) => [row.rule_code, row.rule_version]));
   assert.ok(rules.has('STANDALONE_PURCHASE_V1'));
   assert.ok(rules.has('RETURN_REFUND_V1'));
@@ -142,46 +142,46 @@ integration('deterministic disposable return proof is period-, currency-, and gr
 
     const insertReceipt = async (label, currency, amount, dateTime, itemSums = []) => {
       const receiptId = Number((await pool.query(
-        \`INSERT INTO receipts(fns_id,source,total_sum,currency,date_time)
-         VALUES($1,'fns_moi_cheki_online',$2,$3,$4) RETURNING id\`,
-        [\`return-proof-\${label}-\${process.pid}-\${Date.now()}\`, amount, currency, dateTime],
+        `INSERT INTO receipts(fns_id,source,total_sum,currency,date_time)
+         VALUES($1,'fns_moi_cheki_online',$2,$3,$4) RETURNING id`,
+        [`return-proof-${label}-${process.pid}-${Date.now()}`, amount, currency, dateTime],
       )).rows[0].id);
       receiptIds.push(receiptId);
       await pool.query('INSERT INTO receipt_raw(receipt_id,payload) VALUES($1,$2)', [receiptId, JSON.stringify({ fixture: label })]);
-      await pool.query(\`INSERT INTO receipt_fiscal_facts(
+      await pool.query(`INSERT INTO receipt_fiscal_facts(
         receipt_id,normalization_version,source_content_sha256,normalized_content_sha256,
         normalization_status,cash_total_state,ecash_total_sum,ecash_total_state,
         prepaid_state,credit_state,provision_state,payment_components_status,
         payment_stage,correction_status
       ) VALUES($1,'fiscal-normalizer-v1',$2,$3,'READY','EXPLICIT_ZERO',$4,'PRESENT_VALUE',
-        'EXPLICIT_ZERO','EXPLICIT_ZERO','EXPLICIT_ZERO','RECONCILED','SETTLEMENT_ONLY','NORMAL')\`,
-      [receiptId, hash(\`source-\${label}\`), hash(\`normalized-\${label}\`), amount]);
+        'EXPLICIT_ZERO','EXPLICIT_ZERO','EXPLICIT_ZERO','RECONCILED','SETTLEMENT_ONLY','NORMAL')`,
+      [receiptId, hash(`source-${label}`), hash(`normalized-${label}`), amount]);
       for (const [position, itemSum] of itemSums.entries()) {
-        const itemId = Number((await pool.query(\`INSERT INTO receipt_items(
+        const itemId = Number((await pool.query(`INSERT INTO receipt_items(
           receipt_id,position,name,quantity,price,item_sum
-        ) VALUES($1,$2,$3,1,$4,$4) RETURNING id\`, [receiptId, position + 1, \`fixture item \${position + 1}\`, itemSum])).rows[0].id);
-        await pool.query(\`INSERT INTO receipt_item_fiscal_facts(
+        ) VALUES($1,$2,$3,1,$4,$4) RETURNING id`, [receiptId, position + 1, `fixture item ${position + 1}`, itemSum])).rows[0].id);
+        await pool.query(`INSERT INTO receipt_item_fiscal_facts(
           receipt_item_id,normalization_version,payment_type_code,payment_type_semantic,normalized_content_sha256
-        ) VALUES($1,'fiscal-normalizer-v1',4,'ELECTRONIC',$2)\`, [itemId, hash(\`item-\${label}-\${position}\`)]);
+        ) VALUES($1,'fiscal-normalizer-v1',4,'ELECTRONIC',$2)`, [itemId, hash(`item-${label}-${position}`)]);
       }
       return receiptId;
     };
 
     const insertPurchase = async ({ label, amount, currency, dateTime, itemSums }) => {
       const receiptId = await insertReceipt(label, currency, amount, dateTime, itemSums);
-      const eventId = Number((await pool.query(\`INSERT INTO business_events(
+      const eventId = Number((await pool.query(`INSERT INTO business_events(
         scope_id,event_type,resolution_status,origin,graph_model_version,
         rule_code,rule_version,semantic_key,amount,currency,description
       ) VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
-        'STANDALONE_PURCHASE_V1',$2,$3,$4,$5,$6) RETURNING id\`,
-      [scopeId, rules.get('STANDALONE_PURCHASE_V1'), hash(\`purchase-event-\${label}\`), amount, currency, \`return-proof purchase \${label}\`])).rows[0].id);
+        'STANDALONE_PURCHASE_V1',$2,$3,$4,$5,$6) RETURNING id`,
+      [scopeId, rules.get('STANDALONE_PURCHASE_V1'), hash(`purchase-event-${label}`), amount, currency, `return-proof purchase ${label}`])).rows[0].id);
       eventIds.push(eventId);
-      await pool.query(\`INSERT INTO business_event_evidence(
+      await pool.query(`INSERT INTO business_event_evidence(
         event_id,receipt_id,normalization_version,evidence_role,origin,
         graph_model_version,rule_code,rule_version,semantic_key
       ) VALUES($1,$2,'fiscal-normalizer-v1','PURCHASE_EVIDENCE','SYSTEM_DERIVED',
-        'canonical-spending-return-proof-v1','STANDALONE_PURCHASE_V1',$3,$4)\`,
-      [eventId, receiptId, rules.get('STANDALONE_PURCHASE_V1'), hash(\`purchase-evidence-\${label}\`)]);
+        'canonical-spending-return-proof-v1','STANDALONE_PURCHASE_V1',$3,$4)`,
+      [eventId, receiptId, rules.get('STANDALONE_PURCHASE_V1'), hash(`purchase-evidence-${label}`)]);
       return { eventId, receiptId };
     };
 
@@ -198,34 +198,34 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       dateTime: '2026-05-01T00:00:00Z', itemSums: ['5.00'],
     });
 
-    const returnEventId = Number((await pool.query(\`INSERT INTO business_events(
+    const returnEventId = Number((await pool.query(`INSERT INTO business_events(
       scope_id,event_type,resolution_status,origin,graph_model_version,
       rule_code,rule_version,semantic_key,amount,currency,description
     ) VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
-      'RETURN_REFUND_V1',$2,$3,20.00,'RUB','return-proof refund') RETURNING id\`,
+      'RETURN_REFUND_V1',$2,$3,20.00,'RUB','return-proof refund') RETURNING id`,
     [scopeId, rules.get('RETURN_REFUND_V1'), hash('return-event')])).rows[0].id);
     eventIds.push(returnEventId);
-    await pool.query(\`INSERT INTO business_event_allocations(
+    await pool.query(`INSERT INTO business_event_allocations(
       scope_id,target_event_id,source_receipt_id,normalization_version,
       allocated_amount,currency,allocation_role,resolution_status,origin,
       graph_model_version,rule_code,rule_version,semantic_key
     ) VALUES($1,$2,$3,'fiscal-normalizer-v1',20.00,'RUB','RETURNED_ITEM',
       'CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
-      'RETURN_REFUND_V1',$4,$5)\`,
+      'RETURN_REFUND_V1',$4,$5)`,
     [scopeId, returnEventId, rubPurchase.receiptId, rules.get('RETURN_REFUND_V1'), hash('return-allocation')]);
-    await pool.query(\`INSERT INTO business_event_edges(
+    await pool.query(`INSERT INTO business_event_edges(
       scope_id,source_event_id,target_event_id,relation_type,resolution_status,
       origin,graph_model_version,rule_code,rule_version,semantic_key,explanation
     ) VALUES($1,$2,$3,'RETURNS','CONFIRMED','SYSTEM_DERIVED',
-      'canonical-spending-return-proof-v1','RETURN_REFUND_V1',$4,$5,'return proof')\`,
+      'canonical-spending-return-proof-v1','RETURN_REFUND_V1',$4,$5,'return proof')`,
     [scopeId, returnEventId, rubPurchase.eventId, rules.get('RETURN_REFUND_V1'), hash('return-edge')]);
 
     await rebuildLedger(pool, { scopeKey, eventIds });
     await rebuildCertification(pool, { scopeKey, persist: true });
-    const before = (await pool.query(\`SELECT
+    const before = (await pool.query(`SELECT
       (SELECT count(*) FROM reconciliation_runs WHERE scope_id=$1) AS runs,
       (SELECT count(*) FROM certification_facts WHERE scope_id=$1) AS facts,
-      (SELECT count(*) FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1)) AS results\`, [scopeId])).rows[0];
+      (SELECT count(*) FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1)) AS results`, [scopeId])).rows[0];
 
     const full = await queryCanonicalSpending(pool, {
       scopeKey, period: 'range', from: '2026-04-01T00:00:00Z', to: '2026-05-01T00:00:00Z', limit: 1,
@@ -238,10 +238,18 @@ integration('deterministic disposable return proof is period-, currency-, and gr
     assert.equal(full.data.confirmedPurchases.length, 1);
     assert.equal(full.data.pagination.purchases.hasMore, true);
     assert.equal(full.data.confirmedReturns.length, 1);
-    assert.deepEqual(full.data.category.reduce((sum, row) => sum + BigInt(String(row.gross).replace('.', '')), 0n), 10700n);
-    assert.deepEqual(full.data.category.reduce((sum, row) => sum + BigInt(String(row.returns).replace('.', '')), 0n), 2000n);
-    assert.deepEqual(full.data.person.reduce((sum, row) => sum + BigInt(String(row.gross).replace('.', '')), 0n), 10700n);
-    assert.deepEqual(full.data.person.reduce((sum, row) => sum + BigInt(String(row.returns).replace('.', '')), 0n), 2000n);
+    const minor = (value) => {
+      const [whole, fraction = ''] = String(value).split('.');
+      return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+    };
+    const byCurrency = (rows, field) => Object.fromEntries(rows.reduce((map, row) => {
+      map.set(row.currency, (map.get(row.currency) ?? 0n) + minor(row[field]));
+      return map;
+    }, new Map()));
+    assert.deepEqual(byCurrency(full.data.category, 'gross'), { RUB: 10000n, USD: 700n });
+    assert.deepEqual(byCurrency(full.data.category, 'returns'), { RUB: 2000n, USD: 0n });
+    assert.deepEqual(byCurrency(full.data.person, 'gross'), { RUB: 10000n, USD: 700n });
+    assert.deepEqual(byCurrency(full.data.person, 'returns'), { RUB: 2000n, USD: 0n });
     assert.ok(full.data.person.some((row) => row.personId === null && row.attributionStatus === 'UNATTRIBUTED'));
 
     const purchaseDay = await queryCanonicalSpending(pool, {
@@ -262,16 +270,16 @@ integration('deterministic disposable return proof is period-, currency-, and gr
     assert.equal(boundary.status, 'READY');
     assert.equal(boundary.data.confirmedPurchases.some((row) => row.amount === '5.00'), false);
 
-    assert.deepEqual((await pool.query(\`SELECT
+    assert.deepEqual((await pool.query(`SELECT
       (SELECT count(*) FROM reconciliation_runs WHERE scope_id=$1) AS runs,
       (SELECT count(*) FROM certification_facts WHERE scope_id=$1) AS facts,
-      (SELECT count(*) FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1)) AS results\`, [scopeId])).rows[0], before);
+      (SELECT count(*) FROM reconciliation_results WHERE run_id IN (SELECT id FROM reconciliation_runs WHERE scope_id=$1)) AS results`, [scopeId])).rows[0], before);
 
-    const driftEventId = Number((await pool.query(\`INSERT INTO business_events(
+    const driftEventId = Number((await pool.query(`INSERT INTO business_events(
       scope_id,event_type,resolution_status,origin,graph_model_version,
       rule_code,rule_version,semantic_key,amount,currency,description
     ) VALUES($1,'FEE','CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
-      'RETURN_REFUND_V1',$2,1.00,'RUB','source-state drift fixture') RETURNING id\`,
+      'RETURN_REFUND_V1',$2,1.00,'RUB','source-state drift fixture') RETURNING id`,
     [scopeId, hash('drift-event')])).rows[0].id);
     await rebuildLedger(pool, { scopeKey, eventIds: [driftEventId] });
     const stale = await queryCanonicalSpending(pool, { scopeKey, period: 'range', from: '2026-04-01T00:00:00Z', to: '2026-05-01T00:00:00Z' });
