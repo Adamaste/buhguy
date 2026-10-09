@@ -286,8 +286,10 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       offset: 0,
     }, { token: 'fixture-token' });
     const periodQueryWithGuardMs = performance.now() - periodQueryStarted;
+    const fixtureRowCount = Number((await pool.query('SELECT count(*)::int AS count FROM business_events WHERE scope_id=$1', [scopeId])).rows[0].count);
+    assert.ok(fixtureRowCount > 0);
     assert.ok(fingerprintMs >= 0 && fullReadyGuardMs >= 0 && periodQueryWithGuardMs >= 0);
-    console.log(`# canonical_spending_perf scope_rows=${scopeId} fingerprint_ms=${fingerprintMs.toFixed(2)} full_ready_guard_ms=${fullReadyGuardMs.toFixed(2)} period_query_with_guard_ms=${periodQueryWithGuardMs.toFixed(2)}`);
+    console.log(`# canonical_spending_perf fixture_rows=${fixtureRowCount} fingerprint_ms=${fingerprintMs.toFixed(2)} full_ready_guard_ms=${fullReadyGuardMs.toFixed(2)} period_query_with_guard_ms=${periodQueryWithGuardMs.toFixed(2)}`);
     assert.equal(serviceResult.status, 'READY');
     assert.deepEqual(serviceResult.data.grossReturnsNetByCurrency, [
       { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
