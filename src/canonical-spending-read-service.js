@@ -14,6 +14,25 @@ const DEFAULT_TIMEZONES = Object.freeze(['Europe/Moscow']);
 const DEFAULT_PERIODS = Object.freeze(['today', 'yesterday', 'range']);
 const SERVER_STATEMENT_TIMEOUT_MS = 120000;
 const SERVER_LOCK_TIMEOUT_MS = 5000;
+const SAFE_REASON_CODES = new Set([
+  'AUTHENTICATION_REQUIRED', 'SCOPE_FORBIDDEN', 'REQUEST_REQUIRED', 'PERIOD_NOT_ALLOWED',
+  'TIMEZONE_NOT_ALLOWED', 'RANGE_REQUIRED', 'PAGE_SIZE_OUT_OF_BOUNDS',
+  'PAGE_OFFSET_OUT_OF_BOUNDS', 'READY_RESULT_CONTRACT_INVALID', 'READ_ONLY_QUERY_FAILED',
+  'READ_ONLY_ACCESS_DENIED', 'PERIOD_TOO_WIDE', 'TIMEOUT_OUT_OF_BOUNDS',
+  'PAGINATION_OUT_OF_BOUNDS', 'DUPLICATE_PURCHASE_GRAIN', 'MISSING', 'STALE',
+  'CONFLICT', 'CORRUPT', 'ACCESS_ERROR', 'TECHNICAL_ERROR', 'INVALID_PERIOD',
+]);
+const SAFE_REASON_TEXT = Object.freeze({
+  AUTHENTICATION_REQUIRED: 'Authentication is required',
+  SCOPE_FORBIDDEN: 'Requested scope is not authorized',
+  READY_RESULT_CONTRACT_INVALID: 'READY result contract is invalid',
+  READ_ONLY_QUERY_FAILED: 'Read-only query failed',
+  READ_ONLY_ACCESS_DENIED: 'Read-only access denied',
+  PERIOD_TOO_WIDE: 'Requested period is too wide',
+  TIMEOUT_OUT_OF_BOUNDS: 'Query timeout is outside the server policy',
+  PAGINATION_OUT_OF_BOUNDS: 'Pagination is outside the server policy',
+  DUPLICATE_PURCHASE_GRAIN: 'Duplicate purchase grain detected',
+});
 
 function failure(reasonCode, reason = reasonCode, status = 'ACCESS_ERROR') {
   return {
@@ -77,6 +96,10 @@ function safeData(data) {
       || !data.bankOnlyIncomplete || typeof data.bankOnlyIncomplete !== 'object'
       || !Array.isArray(data.limitations)
       || !data.pagination || typeof data.pagination !== 'object') return null;
+  const rows = [data.grossReturnsNetByCurrency, data.confirmedPurchases, data.confirmedReturns, data.category, data.person]
+    .flat();
+  const nestedRows = Array.isArray(data.unresolved.unattributedPersonRows) ? data.unresolved.unattributedPersonRows : [];
+  if (rows.some((row) => !row || typeof row !== 'object') || nestedRows.some((row) => !row || typeof row !== 'object')) return null;
   const pagination = data.pagination;
   if (!Number.isInteger(pagination.limit) || !Number.isInteger(pagination.offset)
       || !pagination.purchases || typeof pagination.purchases.hasMore !== 'boolean'
@@ -198,15 +221,24 @@ export function createCanonicalSpendingReadService({
       const status = SAFE_STATUSES.has(result?.status) ? result.status : 'TECHNICAL_ERROR';
       const snapshot = safeSnapshot(result?.snapshot);
       const queryPeriod = safeQueryPeriod(result?.queryPeriod);
-      const readyData = result?.ok === true && status === 'READY' && snapshot && queryPeriod ? safeData(result?.data) : null;
+      let readyData = null;
+      try {
+        readyData = result?.ok === true && status === 'READY' && snapshot && queryPeriod ? safeData(result?.data) : null;
+      } catch {
+        readyData = null;
+      }
       const readyContractValid = Boolean(result?.ok === true && status === 'READY' && snapshot && queryPeriod && readyData);
+      const contradictoryReady = status === 'READY' && !readyContractValid;
+      const safeReasonCode = contradictoryReady
+        ? 'READY_RESULT_CONTRACT_INVALID'
+        : (SAFE_REASON_CODES.has(result?.reasonCode) ? result.reasonCode : (status === 'TECHNICAL_ERROR' ? 'READ_ONLY_QUERY_FAILED' : status));
       const safeResult = {
         ok: readyContractValid === true,
         modelVersion: CANONICAL_SPENDING_READ_SERVICE_MODEL,
-        status: readyContractValid === true ? 'READY' : (result?.ok === true && status === 'READY' ? 'CORRUPT' : status),
-        reasonCode: readyContractValid === true ? null : (result?.ok === true && status === 'READY' ? 'READY_RESULT_CONTRACT_INVALID' : (typeof result?.reasonCode === 'string' ? result.reasonCode.slice(0, 128) : null)),
-        reason: readyContractValid === true ? null : (typeof result?.reason === 'string' ? result.reason.slice(0, 256) : (result?.ok === true && status === 'READY' ? 'READY_RESULT_CONTRACT_INVALID' : null)),
-        snapshot: readyContractValid === true ? snapshot : (snapshot && status === 'READY' ? snapshot : null),
+        status: readyContractValid === true ? 'READY' : (contradictoryReady ? 'CORRUPT' : status),
+        reasonCode: readyContractValid === true ? null : safeReasonCode,
+        reason: readyContractValid === true ? null : (SAFE_REASON_TEXT[safeReasonCode] ?? safeReasonCode),
+        snapshot: readyContractValid === true ? snapshot : null,
         queryPeriod,
         data: readyContractValid === true ? readyData : null,
       };
