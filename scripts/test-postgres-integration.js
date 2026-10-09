@@ -29,6 +29,7 @@ const integrationFiles = [
   'tests/return-refund-postgres.integration.test.js',
   'tests/canonical-spending-analytics-postgres.integration.test.js',
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
+  'tests/canonical-spending-read-api-postgres.integration.test.js',
   'tests/certification-materialization-postgres.integration.test.js',
   'tests/certification-freshness-postgres.integration.test.js',
   'tests/migration-production-safety-postgres.integration.test.js',
