@@ -17,20 +17,20 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-09
-- Current implementation baseline: `f64d2399516aac2efff38feb2c9cf1ab046ebe49` (exact current master after PR #146; spending correctness MVP, certification exact-decimal correction, and the canonical spending read-only query API are merged)
+- Current implementation baseline: `b42403ac305ff72cecf4dbd28816ced0ea663202` (exact current master after PR #148; spending correctness, canonical read-only spending API, and the nonzero return proof are merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval. Spending correctness MVP is merged in PR #142, the exact-decimal certification arithmetic correction is merged through PR #144, and the canonical spending read-only query API is merged in PR #146. The API is read-only and not a production publication; its disposable PostgreSQL fixture has a non-zero purchase but no non-zero return in the selected period, so return-case publication evidence remains incomplete. Production read-only access is still blocked behind a security-reviewed curated publication path.
+- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval. Spending correctness MVP is merged in PR #142, the exact-decimal certification arithmetic correction is merged through PR #144, and the canonical spending read-only query API is merged in PR #146. The API is read-only and not a production publication. PR #148 merged a deterministic disposable PostgreSQL proof with `100.00 RUB` gross, `20.00 RUB` confirmed returns, and `80.00 RUB` net, including multi-currency separation, half-open boundaries, item-grain protection, pagination, reconciliation, and source-state drift. Production read-only access is still blocked behind a security-reviewed curated publication path.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `security-reviewed curated ChatGPT publication after nonzero return-case proof`
+- Next action: `security-reviewed repository-owned read-only spending connector/service`
 
 ## Canonical spending read-only query API v1 (merged)
 
-PR #146 is merged in master `f64d2399516aac2efff38feb2c9cf1ab046ebe49`. The
+PR #146 is merged in master `f64d2399516aac2efff38feb2c9cf1ab046ebe49`. PR #148 is merged in master `b42403ac305ff72cecf4dbd28816ced0ea663202`; its disposable PostgreSQL return proof establishes `100.00 RUB` gross, `20.00 RUB` returns, and `80.00 RUB` net. The
 read-only query API reuses the authoritative current-snapshot source-state
 fingerprint and READY guard, executes inside one bounded
 `REPEATABLE READ READ ONLY` transaction, keeps explicit scope/period/timezone
@@ -41,12 +41,13 @@ Bank-only or otherwise unresolved spending is reported as incomplete/excluded
 from certified acquisitions; certified acquisitions are not the complete set
 of personal expenses.
 
-The disposable PostgreSQL fixture proves non-zero purchase-period behavior,
-duplicate protection, period boundaries, multi-currency separation, and
-category/person reconciliation. It does not yet contain a non-zero return in
-the selected validation period, so publication requires a separate
-non-zero-return regression and reconciliation proof before exposing the
-result to ChatGPT.
+The disposable PostgreSQL fixture proves non-zero purchase and return-period behavior,
+including `100.00 RUB` gross, `20.00 RUB` returns, and `80.00 RUB` net,
+duplicate protection, period boundaries, multi-currency separation,
+item-grain fan-out protection, pagination, source-state drift, and
+category/person/unattributed reconciliation. This closes the return-case
+proof gate for the read-only publication design; it does not activate
+production publication.
 
 No direct SELECT on canonical `public` objects is granted to
 `chatgpt_reader`. The production read-only access path remains unfinished:
