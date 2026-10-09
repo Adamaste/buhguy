@@ -29,7 +29,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
       UNION ALL
       SELECT currency,0::numeric,return_amount FROM canonical_spending_returns_v1
        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz
-    ) SELECT currency,SUM(gross)::text AS gross,SUM(returns)::text AS returns,(SUM(gross)-SUM(returns))::text AS net FROM monetary GROUP BY currency`, args)).rows;
+    ) SELECT currency,gross::text,returns::text FROM monetary`, args)).rows;
     const category = (await pool.query(`WITH p AS (
       SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1
        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz
@@ -42,7 +42,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
       UNION ALL
       SELECT a.currency,a.category_gross,a.category_returns FROM canonical_spending_category_allocations_v1 a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency
        WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND a.category_returns <> 0
-    ) SELECT a.currency,SUM(a.gross)::text AS gross,SUM(a.returns)::text AS returns,(SUM(a.gross)-SUM(a.returns))::text AS net FROM a GROUP BY a.currency`, args)).rows;
+    ) SELECT a.currency,a.gross::text,a.returns::text FROM a`, args)).rows;
     const person = (await pool.query(`WITH p AS (
       SELECT DISTINCT purchase_id AS subject_event_id,currency FROM canonical_spending_purchases_v1
        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchased_at >= $4::timestamptz AND purchased_at < $5::timestamptz
@@ -55,8 +55,18 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
       UNION ALL
       SELECT a.currency,a.person_gross,a.person_returns FROM canonical_spending_person_allocations_v1 a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency
        WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND a.person_returns <> 0
-    ) SELECT currency,SUM(gross)::text AS gross,SUM(returns)::text AS returns,(SUM(gross)-SUM(returns))::text AS net FROM a GROUP BY currency`, args)).rows;
-    return { monetary, category, person };
+    ) SELECT a.currency,a.gross::text,a.returns::text FROM a`, args)).rows;
+    const aggregate = (rows) => {
+      const totals = new Map();
+      for (const row of rows) {
+        const item = totals.get(row.currency) ?? { currency: row.currency, gross: 0n, returns: 0n };
+        item.gross += decimal(row.gross);
+        item.returns += decimal(row.returns);
+        totals.set(row.currency, item);
+      }
+      return [...totals.values()].map((item) => ({ currency: item.currency, gross: item.gross.toString(), returns: item.returns.toString(), net: (item.gross - item.returns).toString() }));
+    };
+    return { monetary: aggregate(monetary), category: aggregate(category), person: aggregate(person) };
   };
   const periods = [
     { period: 'today' },
