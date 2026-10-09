@@ -37,7 +37,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
       SELECT DISTINCT return_id AS subject_event_id,currency FROM canonical_spending_returns_v1
        WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND returned_at >= $4::timestamptz AND returned_at < $5::timestamptz
     ), a AS (
-      SELECT currency,category_gross AS gross,category_returns AS returns FROM canonical_spending_category_allocations_v1 a JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency
+      SELECT a.currency,a.category_gross AS gross,a.category_returns AS returns FROM canonical_spending_category_allocations_v1 a JOIN p ON p.subject_event_id=a.subject_event_id AND p.currency=a.currency
        WHERE a.scope_id=$1 AND a.certification_run_id=$2 AND a.source_state_key=$3 AND a.category_gross <> 0
       UNION ALL
       SELECT a.currency,a.category_gross,a.category_returns FROM canonical_spending_category_allocations_v1 a JOIN r ON r.subject_event_id=a.subject_event_id AND r.currency=a.currency
