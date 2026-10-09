@@ -1,11 +1,14 @@
 import test, { before, after } from 'node:test';
+import { performance } from 'node:perf_hooks';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { queryCanonicalSpending, validatePurchaseGrainRows } from '../src/canonical-spending-read-api.js';
-import { rebuildCertification } from '../src/certification.js';
+import { certificationSourceStateKey, rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
+import { createCanonicalSpendingReadService } from '../src/canonical-spending-read-service.js';
+import { resolveCurrentSpendingSnapshotOnClient } from '../src/canonical-spending-current-snapshot.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -248,6 +251,50 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       scopeKey, period: 'range', from: '2026-04-01T00:00:00Z', to: '2026-05-01T00:00:00Z', limit: 1,
     });
     assert.equal(full.status, 'READY');
+    const perfClient = await pool.connect();
+    let fingerprintMs;
+    let fullReadyGuardMs;
+    try {
+      await perfClient.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await perfClient.query("SELECT set_config('statement_timeout','120000',true), set_config('lock_timeout','5000',true)");
+      const fingerprintStarted = performance.now();
+      const measuredSourceStateKey = await certificationSourceStateKey(perfClient, scopeId);
+      fingerprintMs = performance.now() - fingerprintStarted;
+      const guardStarted = performance.now();
+      const measuredSnapshot = await resolveCurrentSpendingSnapshotOnClient(perfClient, {
+        scopeKey,
+        sourceStateKey: measuredSourceStateKey,
+      });
+      fullReadyGuardMs = performance.now() - guardStarted;
+      assert.equal(measuredSnapshot.status, 'READY');
+      assert.equal(measuredSnapshot.snapshot.sourceStateKey, measuredSourceStateKey);
+      await perfClient.query('ROLLBACK');
+    } finally {
+      perfClient.release();
+    }
+    const periodQueryStarted = performance.now();
+    const readService = createCanonicalSpendingReadService({
+      pool,
+      authenticate: async (context) => context.token === 'fixture-token' ? { subject: 'fixture-person-1' } : null,
+      authorizeScope: async ({ principal }) => principal.subject === 'fixture-person-1' ? { scopeKey } : null,
+    });
+    const serviceResult = await readService.handle({
+      ...full.queryPeriod,
+      period: 'range',
+      scopeKey,
+      limit: 10,
+      offset: 0,
+    }, { token: 'fixture-token' });
+    const periodQueryWithGuardMs = performance.now() - periodQueryStarted;
+    const fixtureRowCount = Number((await pool.query('SELECT count(*)::int AS count FROM business_events WHERE scope_id=$1', [scopeId])).rows[0].count);
+    assert.ok(fixtureRowCount > 0);
+    assert.ok(fingerprintMs >= 0 && fullReadyGuardMs >= 0 && periodQueryWithGuardMs >= 0);
+    console.log(`# canonical_spending_perf fixture_rows=${fixtureRowCount} fingerprint_ms=${fingerprintMs.toFixed(2)} full_ready_guard_ms=${fullReadyGuardMs.toFixed(2)} period_query_with_guard_ms=${periodQueryWithGuardMs.toFixed(2)}`);
+    assert.equal(serviceResult.status, 'READY');
+    assert.deepEqual(serviceResult.data.grossReturnsNetByCurrency, [
+      { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
+      { currency: 'USD', gross: '7.00', returns: '0', net: '7.00' },
+    ]);
     assert.deepEqual(full.data.grossReturnsNetByCurrency, [
       { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
       { currency: 'USD', gross: '7.00', returns: '0', net: '7.00' },
