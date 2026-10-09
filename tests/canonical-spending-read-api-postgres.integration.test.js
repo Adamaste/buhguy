@@ -124,10 +124,17 @@ integration('deterministic disposable return proof is period-, currency-, and gr
   const scopeKey = `canonical-return-proof-${process.pid}-${Date.now()}`;
   let scopeId;
   const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
-  const ruleRows = (await pool.query(`SELECT rule_code,rule_version
+  let ruleRows = (await pool.query(`SELECT rule_code,rule_version
     FROM business_graph_rules
     WHERE rule_code IN ('STANDALONE_PURCHASE_V1','RETURN_REFUND_V1')
     ORDER BY rule_code,rule_version`)).rows;
+  let insertedReturnRule = false;
+  if (!ruleRows.some((row) => row.rule_code === 'RETURN_REFUND_V1')) {
+    await pool.query(`INSERT INTO business_graph_rules(rule_code,rule_version,description)
+      VALUES('RETURN_REFUND_V1','v1','Disposable canonical spending return proof rule')`);
+    ruleRows = [...ruleRows, { rule_code: 'RETURN_REFUND_V1', rule_version: 'v1' }];
+    insertedReturnRule = true;
+  }
   const rules = new Map(ruleRows.map((row) => [row.rule_code, row.rule_version]));
   assert.ok(rules.has('STANDALONE_PURCHASE_V1'));
   assert.ok(rules.has('RETURN_REFUND_V1'));
@@ -289,9 +296,12 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       await pool.query('DELETE FROM reconciliation_runs WHERE scope_id=$1', [scopeId]);
       await pool.query('DELETE FROM ledger_entries WHERE scope_id=$1', [scopeId]);
       await pool.query('DELETE FROM ledger_accounts WHERE scope_id=$1', [scopeId]);
+      await pool.query('DELETE FROM business_event_edges WHERE scope_id=$1', [scopeId]);
+      await pool.query('DELETE FROM business_event_allocations WHERE scope_id=$1', [scopeId]);
       await pool.query('DELETE FROM business_events WHERE scope_id=$1', [scopeId]);
       await pool.query('DELETE FROM receipts WHERE id = ANY($1::bigint[])', [receiptIds]);
       await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [scopeId]);
+      if (insertedReturnRule) await pool.query("DELETE FROM business_graph_rules WHERE rule_code='RETURN_REFUND_V1' AND rule_version='v1'");
     }
   }
 });
