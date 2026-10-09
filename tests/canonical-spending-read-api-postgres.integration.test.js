@@ -205,6 +205,7 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       dateTime: '2026-05-01T00:00:00Z', itemSums: ['5.00'],
     });
 
+    const returnReceiptId = await insertReceipt('rub-return', 'RUB', '20.00', '2026-04-11T10:00:00Z', ['20.00']);
     const returnEventId = Number((await pool.query(`INSERT INTO business_events(
       scope_id,event_type,resolution_status,origin,graph_model_version,
       rule_code,rule_version,semantic_key,amount,currency,description
@@ -217,7 +218,7 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       graph_model_version,rule_code,rule_version,semantic_key
     ) VALUES($1,$2,'fiscal-normalizer-v1','RETURN_EVIDENCE','SYSTEM_DERIVED',
       'canonical-spending-return-proof-v1','RETURN_REFUND_V1',$3,$4)`,
-    [returnEventId, rubPurchase.receiptId, rules.get('RETURN_REFUND_V1'), hash('return-evidence')]);
+    [returnEventId, returnReceiptId, rules.get('RETURN_REFUND_V1'), hash('return-evidence')]);
     await pool.query(`INSERT INTO business_event_allocations(
       scope_id,target_event_id,source_receipt_id,normalization_version,
       allocated_amount,currency,allocation_role,resolution_status,origin,
@@ -225,7 +226,7 @@ integration('deterministic disposable return proof is period-, currency-, and gr
     ) VALUES($1,$2,$3,'fiscal-normalizer-v1',20.00,'RUB','RETURNED_ITEM',
       'CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
       'RETURN_REFUND_V1',$4,$5)`,
-    [scopeId, returnEventId, rubPurchase.receiptId, rules.get('RETURN_REFUND_V1'), hash('return-allocation')]);
+    [scopeId, returnEventId, returnReceiptId, rules.get('RETURN_REFUND_V1'), hash('return-allocation')]);
     await pool.query(`INSERT INTO business_event_edges(
       scope_id,source_event_id,target_event_id,relation_type,resolution_status,
       origin,graph_model_version,rule_code,rule_version,semantic_key,explanation
