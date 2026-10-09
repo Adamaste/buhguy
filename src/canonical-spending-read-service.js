@@ -13,11 +13,11 @@ const SAFE_STATUSES = new Set(['READY', 'STALE', 'MISSING', 'CONFLICT', 'CORRUPT
 const DEFAULT_TIMEZONES = Object.freeze(['Europe/Moscow']);
 const DEFAULT_PERIODS = Object.freeze(['today', 'yesterday', 'range']);
 
-function failure(reasonCode, reason = reasonCode) {
+function failure(reasonCode, reason = reasonCode, status = 'ACCESS_ERROR') {
   return {
     ok: false,
     modelVersion: CANONICAL_SPENDING_READ_SERVICE_MODEL,
-    status: 'ACCESS_ERROR',
+    status,
     reasonCode,
     reason,
     snapshot: null,
@@ -153,7 +153,7 @@ export function createCanonicalSpendingReadService({
       try {
         result = await query(pool, options);
       } catch {
-        result = failure(READ_SERVICE_FAILURES.TECHNICAL_ERROR, 'READ_ONLY_QUERY_FAILED');
+        result = failure(READ_SERVICE_FAILURES.TECHNICAL_ERROR, 'READ_ONLY_QUERY_FAILED', 'TECHNICAL_ERROR');
       }
       const safeResult = {
         ok: result?.ok === true && result?.status === 'READY',
