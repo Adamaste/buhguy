@@ -21,6 +21,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
   const beforeRows = await snapshot();
   const decimal = (value) => { const [whole, fraction = ''] = String(value).split('.'); return BigInt(`${whole}${fraction.padEnd(2, '0')}`); };
   const normalized = (rows) => rows.map((row) => ({ currency: row.currency, gross: decimal(row.gross).toString(), returns: decimal(row.returns).toString(), net: decimal(row.net).toString() })).sort((a, b) => a.currency.localeCompare(b.currency));
+  const normalizedMinor = (rows) => rows.map((row) => ({ currency: row.currency, gross: String(row.gross), returns: String(row.returns), net: String(row.net) })).sort((a, b) => a.currency.localeCompare(b.currency));
   const directAggregates = async (queryPeriod, snapshot) => {
     const args = [snapshot.scopeId, snapshot.runId, snapshot.sourceStateKey, queryPeriod.from, queryPeriod.to];
     const monetary = (await pool.query(`WITH monetary AS (
@@ -77,13 +78,13 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
     const result = await queryCanonicalSpending(pool, { ...options, scopeKey: 'default', limit: 1000 });
     assert.equal(result.status, 'READY', `disposable fixture must provide READY for ${options.period}`);
     const direct = await directAggregates(result.queryPeriod, result.snapshot);
-    const directMonetary = direct.monetary.map((row) => ({ currency: row.currency, gross: decimal(row.gross).toString(), returns: decimal(row.returns).toString(), net: decimal(row.net).toString() }));
-    assert.deepEqual(normalized(result.data.grossReturnsNetByCurrency), normalized(directMonetary));
-    assert.deepEqual(normalized(result.data.category.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))), normalized(direct.category.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))));
-    assert.deepEqual(normalized(result.data.person.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))), normalized(direct.person.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))));
+    const directMonetary = direct.monetary;
+    assert.deepEqual(normalized(result.data.grossReturnsNetByCurrency), normalizedMinor(directMonetary));
+    assert.deepEqual(normalized(result.data.category.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))), normalizedMinor(direct.category));
+    assert.deepEqual(normalized(result.data.person.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))), normalizedMinor(direct.person));
     if (options.period === 'range') {
-      assert.ok(directMonetary.some((row) => decimal(row.gross) > 0n), 'fixed fixture range must provide a non-zero purchase');
-      assert.ok(directMonetary.some((row) => decimal(row.returns) > 0n), 'fixed fixture range must provide a non-zero return');
+      assert.ok(directMonetary.some((row) => BigInt(row.gross) > 0n), 'fixed fixture range must provide a non-zero purchase');
+      assert.ok(directMonetary.some((row) => BigInt(row.returns) > 0n), 'fixed fixture range must provide a non-zero return');
     }
     assert.equal(new Set(result.data.confirmedPurchases.map((row) => row.purchase_id)).size, result.data.confirmedPurchases.length);
     assert.ok(result.data.confirmedReturns.every((row) => typeof row.return_amount === 'string'));
