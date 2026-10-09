@@ -249,7 +249,7 @@ integration('deterministic disposable return proof is period-, currency-, and gr
     assert.equal(full.status, 'READY');
     assert.deepEqual(full.data.grossReturnsNetByCurrency, [
       { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
-      { currency: 'USD', gross: '7.00', returns: '0.00', net: '7.00' },
+      { currency: 'USD', gross: '7.00', returns: '0', net: '7.00' },
     ]);
     assert.equal(full.data.confirmedPurchases.length, 1);
     assert.equal(full.data.pagination.purchases.hasMore, true);
