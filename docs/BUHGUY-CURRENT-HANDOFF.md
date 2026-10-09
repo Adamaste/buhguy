@@ -63,15 +63,14 @@ exact-head measurement used fixture_rows=4 and reported fingerprint
 Earlier fixture values 3.43/8.90/24.31 ms are historical test measurements.
 None is a production benchmark or latency forecast.
 
-Custom MCP registration is not confirmed for the real ChatGPT account. OpenAI
-availability depends on the account plan and client support, so no MCP
-transport is to be designed or implemented until registration and the required
-client path are explicitly verified. The next stage is to confirm the actually
-available ChatGPT integration path, then conduct security review of a
-least-privilege production READ ONLY connection and authoritative
-current-state probe. No production grants, DDL, deployment, materialization,
-writer, replay, backfill, or automatic certification refresh is authorized by
-this closeout.
+Custom MCP registration UI is confirmed available in the real ChatGPT Desktop account
+(the UI exposes Server URL/Tunnel, OAuth, and Create as a plugin). This confirms
+registration UI availability only; end-to-end connect, OAuth, tool discovery,
+and tool invocation remain unverified. A non-production official SDK
+Streamable HTTP adapter is now under review in a separate feature PR and
+delegates to the existing canonical spending read service. No production
+transport, grants, DDL, deployment, materialization, writer, replay, backfill,
+or automatic certification refresh is authorized by this handoff.
 
 
 ## Canonical spending read-only query API v1 (merged)
@@ -2900,3 +2899,21 @@ backfill, deploy, or enable an automatic refresh trigger.
 
 After new bank or receipt ingestion, certification is not automatically current: the next controlled cycle must recompute source identity, run the non-persisting projection, classify the state, and only then use the separately approved materialization procedure. No automatic refresh, writer trigger, replay, or backfill is enabled.
 
+
+## Latest MCP transport stage
+
+The implementation-only `canonical-spending-mcp-v1` adapter uses the official
+JavaScript MCP SDK Streamable HTTP transport and exactly one read-only tool. It
+reuses `createCanonicalSpendingReadService() -> queryCanonicalSpending()`; it
+does not duplicate certification, source-state, ledger, matching, or SQL
+publication logic. Server-side authentication and scope authorization are
+injected callbacks, and missing auth, foreign scope, non-READY state, malformed
+input, rate limits, or technical errors fail closed without financial data.
+
+The ChatGPT Desktop custom-MCP registration UI is `CONFIRMED_AVAILABLE`, but a
+real connect/auth/tool call is `NOT_VERIFIED`. OAuth provider implementation,
+Secure Tunnel/Server URL hosting, production least-privilege DB access, and
+automatic certification freshness remain separate security-reviewed stages.
+The next action is one isolated synthetic Secure Tunnel/Server URL connection
+test after transport/security review; do not connect production or expose
+financial data before that gate.

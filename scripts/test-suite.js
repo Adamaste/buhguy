@@ -56,6 +56,7 @@ const unitFiles = [
   'tests/canonical-spending-current-snapshot.test.js',
   'tests/canonical-spending-read-api.test.js',
   'tests/canonical-spending-read-service.test.js',
+  'tests/canonical-spending-mcp.test.js',
   'tests/certification-materialization.test.js',
   'tests/certification-freshness.test.js',
 ];
