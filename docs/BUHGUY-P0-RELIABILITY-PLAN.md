@@ -1,9 +1,17 @@
 # BUHGUY P0 Reliability Plan
 
 This is the execution plan for making `buhguy` reliably process evidence from
-capture through certified accounting. It does not authorize production writes,
-deployment, migration, grants, replay, backfill, or automatic certification.
-Each stage requires its acceptance gates before the next stage starts.
+capture through certified accounting. The P0 end state is a continuously
+operating system that, without a manual trigger, receives FNS receipts and
+bank events when the source delivers them, recovers safely from bounded
+failures, deduplicates retries, automatically matches only provable bank+FNS
+purchases through the existing authoritative writer, prevents double counting
+in the ACTIVE ledger, and keeps certification current after source changes.
+
+This is a target, not current authorization. It does not authorize production
+writes, deployment, migration, grants, replay, backfill, or automatic
+certification. Each stage requires its acceptance gates before the next stage
+starts and a separate explicit approval before production activation.
 
 ## Operating principles
 
@@ -161,12 +169,118 @@ least-privilege access.
 snapshot, unresolved evidence, and accounting conflict without reading raw
 financial payloads.
 
+## Stage 6: automatic matching in shadow mode
+
+**Existing:** the authoritative bank-to-receipt matcher, matched-purchase
+writer, enrichment/provenance contracts, ACTIVE-ledger supersession rules,
+current-snapshot guard, and controlled one-by-one production evidence. Do not
+create a second matcher or writer.
+
+**Missing:** a bounded worker/orchestration path that continuously discovers
+new eligible evidence, evaluates it idempotently, and can recover without
+turning ambiguity into a write.
+
+**Smallest change:** add a manually enabled, then continuously runnable,
+read-only/shadow processing loop around the existing authoritative matcher.
+It must use a durable cursor or bounded source window, stable match and
+enrichment identities, server-side scope authorization, and a finite batch
+size/time budget. In shadow mode it produces safe decisions and metrics only;
+it does not invoke the writer.
+
+**Required decision states:** `PERSIST_REQUIRED`,
+`NOOP_ALREADY_PERSISTED`, `BLOCKED`, `AMBIGUOUS`, `UNMATCHED`, and
+`INELIGIBLE`. Only an authoritative `PERSIST_REQUIRED` decision may proceed
+to the later writer stage; all other states remain visible and fail closed.
+
+**Recovery/rollback:** retries reuse the same identity, never reprocess an
+unbounded history, resume from a durable checkpoint, and stop on source-state
+drift, conflicting provenance, timeout, serialization failure, or any partial
+write. The existing writer transaction is the only write boundary; failed
+items are retryable without deleting immutable evidence.
+
+**Tests/gates:** disposable PostgreSQL tests for concurrent workers, duplicate
+notifications, duplicate receipts, FNS+bank matching, FNS-only, bank-only,
+ambiguous candidates, protected/superseded ledger history, timeout/rollback,
+source-state drift, bounded resume, and exact idempotent replay. Run a
+long-running shadow soak with safe aggregate counts and no raw evidence.
+
+**Observability:** measure capture-to-match lag, eligible/blocked/ambiguous
+counts, retry age, permanent failures, writer-eligible decisions, and source
+drift. Redact payloads, balances, account/card references, secrets, and
+source-event identifiers.
+
+**Exit/activation gate:** no automatic production writer is enabled until the
+shadow results are reviewed, the clone gates pass, recovery is rehearsed, the
+operational owner approves bounded limits, and the user gives separate
+explicit production authorization. Android delivery gaps remain explicit:
+the collector cannot guarantee or reconstruct a notification that Android's
+OS never delivered to the listener.
+
+## Stage 7: automatic certification freshness and controlled activation
+
+**Existing:** the authoritative source-state fingerprint, exact-decimal
+certification projection, guarded materializer, current-snapshot reader,
+freshness statuses, and immutable historical runs.
+
+**Missing:** a continuously runnable freshness controller that notices source
+changes and safely materializes one current full READY snapshot without stale
+or duplicate runs.
+
+**Smallest change:** reuse the existing read-only freshness probe and guarded
+materializer in a bounded controller. On each cycle it must take one
+repeatable-read preflight, compute the authoritative source state once, and
+materialize only when the state is approved and not already covered by an
+exact unbounded READY run. The controller must not use latest-run timestamps,
+`replace=true`, or a second certification algorithm.
+
+**Source-state/idempotency contract:** the writer rechecks the expected key
+inside its serializable transaction, inserts immutable run/fact/result rows
+atomically, reuses an exact current run, and fails closed on missing,
+conflicting, corrupt, non-READY, or stale state. A source change between
+preflight and commit aborts without partial rows. One in-flight run per scope
+is enforced by existing locking/idempotency semantics.
+
+**Bounded processing and recovery:** finite transaction, statement, lock, and
+overall timeouts; no unbounded retries; retry only after a fresh read-only
+preflight; rollback on failure; safe backoff and alerting on repeated failure;
+historical runs remain immutable. A committed run receives an independent
+read-only postcheck and is never deleted by recovery.
+
+**Tests/gates:** disposable PostgreSQL tests for unchanged READY reuse,
+initial MISSING materialization, concurrent controllers, source drift,
+in-flight SQL timeout, injected rollback after run/facts/results, corrupt or
+foreign exact runs, per-currency reconciliation, unchanged history, and
+reader compatibility. Clone soak tests must show no unbounded queue or run
+fan-out.
+
+**Monitoring:** current/stale age, source-state mismatch, run status, fact and
+result counts, duration, retries, lock/timeout failures, and reconciliation
+disagreements are safe aggregate signals. Never log raw financial evidence.
+
+**Activation gate:** this controller remains disabled until Stage 6 and Stage
+7 clone/soak evidence, backup/restore and rollback procedures, least-
+privilege roles, alert ownership, and a production read-only rehearsal are
+reviewed. Enabling automatic certification requires a separate explicit user
+approval and a documented rollback/disable procedure. No current plan grants
+that approval.
+
+## P0 end-state acceptance
+
+P0 is complete only when the system continuously runs the existing capture,
+ingestion, matching, writer, ACTIVE-ledger, and certification mechanisms with
+bounded retries and observable recovery; every eligible automatic match is
+idempotent and provenance-checked; every certification is current for its
+authoritative source state or explicitly reports non-READY; and no Android,
+provider, scope, or bank-only completeness limitation is hidden. Certified
+spending remains distinct from all personal spending, and unresolved evidence
+remains visible rather than silently excluded.
+
 ## Deferred P1 work
 
 Product categorization, richer analytics convenience, MCP transport and
-automatic assistant workflows are P1. They cannot bypass P0 freshness,
-deduplication, ledger, authorization, and completeness gates. PR #152 remains
-open and unmerged; its code is not an authorization to deploy or publish data.
+assistant workflows are P1. They cannot bypass P0 freshness, deduplication,
+ledger, authorization, and completeness gates. PR #152 remains open and
+unmerged; its code is not an authorization to deploy or publish data.
 
 ## Change control
 
