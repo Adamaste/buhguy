@@ -23,11 +23,12 @@
   "engines": {
     "node": ">=22"
   },
-  "devDependencies": {
-  },
+  "devDependencies": {},
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "dotenv": "^17.4.2",
     "pg": "^8.23.0",
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "zod": "^3.25.76"
   }
 }
