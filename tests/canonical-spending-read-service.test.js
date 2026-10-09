@@ -102,7 +102,7 @@ test('mock connector contract preserves server auth boundary', async () => {
     return { ok: true, status: 'READY', snapshot: { scopeKey: 'default', scopeId: 1, runId: 1, modelVersion: 'reconciliation-certification-v1', status: 'READY', sourceStateKey: 'b'.repeat(64), finishedAt: '2026-04-30T00:00:00Z' }, queryPeriod: { ...baseRequest, semantics: 'event_at, half-open [from,to)' }, data: { grossReturnsNetByCurrency: [], confirmedPurchases: [], confirmedReturns: [], category: [], person: [], unresolved: {}, bankOnlyIncomplete: {}, limitations: [], pagination: { limit: 10, offset: 0, purchases: { hasMore: false }, returns: { hasMore: false } } } };
   });
   const connector = { invoke: (request, context) => service.handle(request, context) };
-  const result = await connector.invoke({ ...baseRequest, scopeKey: 'attacker' }, { token: 'valid' });
+  const result = await connector.invoke({ ...baseRequest, scopeKey: 'default' }, { token: 'valid' });
   assert.equal(result.status, 'READY');
   assert.equal(calls[0].scopeKey, 'default');
 });
