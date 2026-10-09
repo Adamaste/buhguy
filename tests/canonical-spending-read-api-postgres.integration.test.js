@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { queryCanonicalSpending, validatePurchaseGrainRows } from '../src/canonical-spending-read-api.js';
 import { rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
+import { createCanonicalSpendingReadService } from '../src/canonical-spending-read-service.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -248,6 +249,23 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       scopeKey, period: 'range', from: '2026-04-01T00:00:00Z', to: '2026-05-01T00:00:00Z', limit: 1,
     });
     assert.equal(full.status, 'READY');
+    const readService = createCanonicalSpendingReadService({
+      pool,
+      authenticate: async (context) => context.token === 'fixture-token' ? { subject: 'fixture-person-1' } : null,
+      authorizeScope: async ({ principal }) => principal.subject === 'fixture-person-1' ? { scopeKey } : null,
+    });
+    const serviceResult = await readService.handle({
+      ...full.queryPeriod,
+      period: 'range',
+      scopeKey: 'caller-supplied-ignored',
+      limit: 10,
+      offset: 0,
+    }, { token: 'fixture-token' });
+    assert.equal(serviceResult.status, 'READY');
+    assert.deepEqual(serviceResult.data.grossReturnsNetByCurrency, [
+      { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
+      { currency: 'USD', gross: '7.00', returns: '0', net: '7.00' },
+    ]);
     assert.deepEqual(full.data.grossReturnsNetByCurrency, [
       { currency: 'RUB', gross: '100.00', returns: '20.00', net: '80.00' },
       { currency: 'USD', gross: '7.00', returns: '0', net: '7.00' },
