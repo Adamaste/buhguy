@@ -10,6 +10,10 @@ test('periods use explicit Europe/Moscow half-open boundaries', () => {
   assert.deepEqual([spring.from, spring.to], ['2026-03-08T05:00:00.000Z', '2026-03-09T04:00:00.000Z']);
   const autumn = resolveSpendingPeriod({ period: 'today', timezone: 'America/New_York', now: new Date('2026-11-01T17:00:00.999Z') });
   assert.deepEqual([autumn.from, autumn.to], ['2026-11-01T04:00:00.000Z', '2026-11-02T05:00:00.000Z']);
+  const auckland = resolveSpendingPeriod({ period: 'today', timezone: 'Pacific/Auckland', now: new Date('2026-01-15T12:00:00.123Z') });
+  assert.deepEqual([auckland.from, auckland.to], ['2026-01-15T11:00:00.000Z', '2026-01-16T11:00:00.000Z']);
+  const kiritimati = resolveSpendingPeriod({ period: 'today', timezone: 'Pacific/Kiritimati', now: new Date('2026-01-15T12:00:00.999Z') });
+  assert.deepEqual([kiritimati.from, kiritimati.to], ['2026-01-15T10:00:00.000Z', '2026-01-16T10:00:00.000Z']);
 });
 
 test('timeouts and result pages are bounded', async () => {
@@ -24,6 +28,15 @@ test('timeouts and result pages are bounded', async () => {
 test('duplicate purchase matches fail closed and item fan-out stays purchase-grain', () => {
   assert.equal(validatePurchaseGrainRows([{ purchase_id: 1, certification_fact_id: 2, semantic_key: 'a' }, { purchase_id: 1, certification_fact_id: 3, semantic_key: 'b' }]).reasonCode, SPENDING_QUERY_FAILURES.CORRUPT);
   assert.equal(validatePurchaseGrainRows([{ purchase_id: 1, certification_fact_id: 2, semantic_key: 'a' }]).ok, true);
+});
+
+test('duplicate purchase grain outside the first page is still corrupt', () => {
+  const fullPeriodRows = [
+    { purchase_id: 1, certification_fact_id: 11, semantic_key: 'a' },
+    { purchase_id: 2, certification_fact_id: 12, semantic_key: 'b' },
+    { purchase_id: 1, certification_fact_id: 13, semantic_key: 'c' },
+  ];
+  assert.equal(validatePurchaseGrainRows(fullPeriodRows).reasonCode, SPENDING_QUERY_FAILURES.CORRUPT);
 });
 
 test('currency and return rows remain separate decimal strings', () => {
@@ -54,3 +67,4 @@ test('read-only contract is transaction-bound and does not contain writers', asy
   assert.doesNotMatch(source, /\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE)\b/);
   assert.equal(CANONICAL_SPENDING_QUERY_MODEL, 'canonical-spending-read-api-v1');
 });
+
