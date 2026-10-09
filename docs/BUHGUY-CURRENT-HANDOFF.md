@@ -17,16 +17,36 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-09
-- Current implementation baseline: `cd73f80010906362e1c45ab1a8813573e3667323` (exact current master after squash-merge of PR #150; the guarded canonical spending read service is merged)
-- Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
-- Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval. Spending correctness MVP is merged in PR #142, the exact-decimal certification arithmetic correction is merged through PR #144, and the canonical spending read-only query API is merged in PR #146. The API is read-only and not a production publication. PR #148 merged a deterministic disposable PostgreSQL proof with `100.00 RUB` gross, `20.00 RUB` confirmed returns, and `80.00 RUB` net, including multi-currency separation, half-open boundaries, item-grain protection, pagination, reconciliation, and source-state drift. Production read-only access is still blocked behind a security-reviewed curated publication path.
+- Current implementation baseline: `bab619143a1bfde82bb9e126a1b47b9dd460d979` (exact current master after the PR #151 documentation closeout; the guarded canonical spending read service remains merged)
+- Current phase: `P0_RELIABILITY_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase and certification evidence remains documented and immutable
+- Current blocker: No parser gap blocks Person 1 MVP, but end-to-end autonomous reliability is not yet proven. Production migration 019 and analytics 011 are installed and the first separately authorized full unbounded certification materialization is recorded as READY run `3961` for scope `default`/id `1`; future ingestion can make it stale and no automatic rematerialization is enabled. Spending correctness, exact-decimal certification, the canonical read API, and the disposable return proof are merged. PR #152 is an open, unmerged MCP transport experiment and must not be continued or merged without a separate decision; MCP is not a current priority. The active P0 gap is bounded ingestion/retry/recovery, deduplication, evidence-to-ledger safety, certification freshness, and health/observability under normal failures. Production writes, deployment, replay, backfill, grants, and automatic materialization remain separately authorized operations only.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `confirm available ChatGPT integration path, then security-review production least-privilege READ ONLY access and an authoritative current-state probe; automatic certification freshness remains a separate design task`
+- Next action: `produce the read-only P0 reliability baseline for Android capture/outbox, backend ingestion, deduplication, recovery and certification freshness, then implement the smallest reviewed reliability fix; do not continue PR #152`
+
+## Account-transfer preparation closeout
+
+The GitHub source of truth was rechecked at master
+`bab619143a1bfde82bb9e126a1b47b9dd460d979`. PR #152, `feat: add
+non-production canonical spending MCP transport`, remains OPEN and is not
+merged. Its implementation, dependencies, and transport are not part of the
+current recommended path.
+
+The local Windows SSH configuration is already prepared for the next account:
+the per-user OpenSSH config contains the `github-buhguy` alias, uses only the
+registered `github_buhguy_ed25519` identity for that alias, and preserves the
+existing included host configuration. Git origin in the primary local repo is
+`git@github-buhguy:Adamaste/buhguy.git`. A local-only inventory was created
+outside the repository; it must never be committed or uploaded.
+
+All existing worktrees and the primary worktree's uncommitted state are
+preserved. A new session must use a fresh clean worktree for changes and must
+not reset, clean, stash, checkout, or overwrite the primary dirty worktree.
+See `docs/BUHGUY-ACCOUNT-TRANSFER.md` for the manual account-transfer steps.
 ## Permanent engineering rule: SIMPLE-FIRST / REUSE-FIRST
 
 For every structural change, first evaluate and reuse existing repository
