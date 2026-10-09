@@ -296,8 +296,8 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       scope_id,event_type,resolution_status,origin,graph_model_version,
       rule_code,rule_version,semantic_key,amount,currency,description
     ) VALUES($1,'FEE','CONFIRMED','SYSTEM_DERIVED','canonical-spending-return-proof-v1',
-      'RETURN_REFUND_V1',$2,1.00,'RUB','source-state drift fixture') RETURNING id`,
-    [scopeId, hash('drift-event')])).rows[0].id);
+      'RETURN_REFUND_V1',$2,$3,1.00,'RUB','source-state drift fixture') RETURNING id`,
+    [scopeId, rules.get('RETURN_REFUND_V1'), hash('drift-event')])).rows[0].id);
     await rebuildLedger(pool, { scopeKey, eventIds: [driftEventId] });
     const stale = await queryCanonicalSpending(pool, { scopeKey, period: 'range', from: '2026-04-01T00:00:00Z', to: '2026-05-01T00:00:00Z' });
     assert.equal(stale.status, 'STALE');
