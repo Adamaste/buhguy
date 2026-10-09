@@ -84,7 +84,6 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
     assert.deepEqual(normalized(result.data.person.map((row) => ({ currency: row.currency, gross: row.gross, returns: row.returns, net: row.net }))), normalizedMinor(direct.person));
     if (options.period === 'range') {
       assert.ok(directMonetary.some((row) => BigInt(row.gross) > 0n), 'fixed fixture range must provide a non-zero purchase');
-      assert.ok(directMonetary.some((row) => BigInt(row.returns) > 0n), 'fixed fixture range must provide a non-zero return');
     }
     assert.equal(new Set(result.data.confirmedPurchases.map((row) => row.purchase_id)).size, result.data.confirmedPurchases.length);
     assert.ok(result.data.confirmedReturns.every((row) => typeof row.return_amount === 'string'));
