@@ -124,3 +124,53 @@ test('non-ready or contradictory READY results never expose financial data', asy
     assert.notEqual(result.status, 'READY');
   }
 });
+
+
+test('ok=false with READY is contradictory and fail closed', async () => {
+  const { service } = serviceFor(async () => ({
+    ok: false,
+    status: 'READY',
+    reasonCode: 'password=secret',
+    reason: 'raw payload secret',
+    snapshot: { scopeKey: 'default', scopeId: 1, runId: 2, modelVersion: 'reconciliation-certification-v1', status: 'READY', sourceStateKey: 'd'.repeat(64), finishedAt: '2026-04-30T00:00:00Z' },
+    queryPeriod: { timezone: 'Europe/Moscow', from: baseRequest.from, to: baseRequest.to, semantics: 'event_at, half-open [from,to)' },
+    data: { grossReturnsNetByCurrency: [], confirmedPurchases: [], confirmedReturns: [], category: [], person: [], unresolved: {}, bankOnlyIncomplete: {}, limitations: [], pagination: { limit: 10, offset: 0, purchases: { hasMore: false }, returns: { hasMore: false } } },
+  }));
+  const result = await service.handle(baseRequest, { token: 'valid' });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'CORRUPT');
+  assert.equal(result.reasonCode, 'READY_RESULT_CONTRACT_INVALID');
+  assert.equal(result.data, null);
+  assert.doesNotMatch(JSON.stringify(result), /password|secret|raw payload/);
+});
+
+test('untrusted failure text is replaced by a closed safe reason contract', async () => {
+  const { service } = serviceFor(async () => ({
+    ok: false,
+    status: 'STALE',
+    reasonCode: 'password=secret',
+    reason: 'raw bank payload secret',
+    snapshot: null,
+    data: null,
+  }));
+  const result = await service.handle(baseRequest, { token: 'valid' });
+  assert.equal(result.status, 'STALE');
+  assert.equal(result.reasonCode, 'STALE');
+  assert.equal(result.reason, 'STALE');
+  assert.doesNotMatch(JSON.stringify(result), /password|secret|raw bank payload/);
+});
+
+test('malformed nested data arrays become CORRUPT without throwing', async () => {
+  const { service } = serviceFor(async () => ({
+    ok: true,
+    status: 'READY',
+    snapshot: { scopeKey: 'default', scopeId: 1, runId: 3, modelVersion: 'reconciliation-certification-v1', status: 'READY', sourceStateKey: 'e'.repeat(64), finishedAt: '2026-04-30T00:00:00Z' },
+    queryPeriod: { timezone: 'Europe/Moscow', from: baseRequest.from, to: baseRequest.to, semantics: 'event_at, half-open [from,to)' },
+    data: { grossReturnsNetByCurrency: [null], confirmedPurchases: [], confirmedReturns: [], category: [], person: [], unresolved: { unattributedPersonRows: [null] }, bankOnlyIncomplete: {}, limitations: [], pagination: { limit: 10, offset: 0, purchases: { hasMore: false }, returns: { hasMore: false } } },
+  }));
+  const result = await service.handle(baseRequest, { token: 'valid' });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'CORRUPT');
+  assert.equal(result.reasonCode, 'READY_RESULT_CONTRACT_INVALID');
+  assert.equal(result.data, null);
+});
