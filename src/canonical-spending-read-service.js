@@ -229,9 +229,12 @@ export function createCanonicalSpendingReadService({
       }
       const readyContractValid = Boolean(result?.ok === true && status === 'READY' && snapshot && queryPeriod && readyData);
       const contradictoryReady = status === 'READY' && !readyContractValid;
+      const normalizedReasonCode = result?.reasonCode === 'TECHNICAL_ERROR'
+        ? 'READ_ONLY_QUERY_FAILED'
+        : (result?.reasonCode === 'ACCESS_ERROR' ? 'READ_ONLY_ACCESS_DENIED' : result?.reasonCode);
       const safeReasonCode = contradictoryReady
         ? 'READY_RESULT_CONTRACT_INVALID'
-        : (SAFE_REASON_CODES.has(result?.reasonCode) ? result.reasonCode : (status === 'TECHNICAL_ERROR' ? 'READ_ONLY_QUERY_FAILED' : status));
+        : (SAFE_REASON_CODES.has(normalizedReasonCode) ? normalizedReasonCode : (status === 'TECHNICAL_ERROR' ? 'READ_ONLY_QUERY_FAILED' : status));
       const safeResult = {
         ok: readyContractValid === true,
         modelVersion: CANONICAL_SPENDING_READ_SERVICE_MODEL,
