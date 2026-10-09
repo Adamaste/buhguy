@@ -76,3 +76,25 @@ A future activation review must establish:
 No `SECURITY DEFINER`, `GRANT`, `REVOKE`, DDL, timer, writer,
 materialization, replay, backfill, deployment, or automatic classification is
 part of this PR.
+
+## Fail-closed service gates
+
+The adapter exposes financial data only when the delegated result is
+simultaneously `ok=true`, `status=READY`, and has a complete validated
+snapshot, half-open query period, pagination contract, and curated data shape.
+Any contradictory or incomplete READY-shaped result is returned as
+`CORRUPT` with `data=null`. Foreign explicit scope selection is rejected;
+the service never substitutes `default`. Caller timeout fields are ignored;
+server-owned bounded timeout values are passed to the authoritative query.
+
+## Disposable performance evidence
+
+The PostgreSQL integration fixture measures three distinct operations inside
+an isolated `REPEATABLE READ READ ONLY` transaction: the existing
+`certificationSourceStateKey` fingerprint, the current-snapshot READY guard
+using that measured key, and the complete period query including its own
+snapshot guard. It records only elapsed milliseconds and fixture row scope in
+test output; it does not benchmark production or perform writes. The
+measurement is available when `TEST_DATABASE_URL` points to the disposable
+PostgreSQL fixture. If that gate is unavailable, performance remains
+`UNMEASURED` rather than being inferred from unit tests.
