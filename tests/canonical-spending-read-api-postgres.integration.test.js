@@ -212,6 +212,12 @@ integration('deterministic disposable return proof is period-, currency-, and gr
       'RETURN_REFUND_V1',$2,$3,20.00,'RUB','return-proof refund') RETURNING id`,
     [scopeId, rules.get('RETURN_REFUND_V1'), hash('return-event')])).rows[0].id);
     eventIds.push(returnEventId);
+    await pool.query(`INSERT INTO business_event_evidence(
+      event_id,receipt_id,normalization_version,evidence_role,origin,
+      graph_model_version,rule_code,rule_version,semantic_key
+    ) VALUES($1,$2,'fiscal-normalizer-v1','RETURN_EVIDENCE','SYSTEM_DERIVED',
+      'canonical-spending-return-proof-v1','RETURN_REFUND_V1',$3,$4)`,
+    [returnEventId, rubPurchase.receiptId, rules.get('RETURN_REFUND_V1'), hash('return-evidence')]);
     await pool.query(`INSERT INTO business_event_allocations(
       scope_id,target_event_id,source_receipt_id,normalization_version,
       allocated_amount,currency,allocation_role,resolution_status,origin,
@@ -228,6 +234,9 @@ integration('deterministic disposable return proof is period-, currency-, and gr
     [scopeId, returnEventId, rubPurchase.eventId, rules.get('RETURN_REFUND_V1'), hash('return-edge')]);
 
     await rebuildLedger(pool, { scopeKey, eventIds });
+    assert.deepEqual((await pool.query(`SELECT derivation_rule,derivation_status
+      FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2`, [scopeId, returnEventId])).rows,
+    [{ derivation_rule: 'LEDGER_RETURN_V1', derivation_status: 'READY' }]);
     await rebuildCertification(pool, { scopeKey, persist: true });
     const before = (await pool.query(`SELECT
       (SELECT count(*) FROM reconciliation_runs WHERE scope_id=$1) AS runs,
