@@ -17,7 +17,7 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-09
-- Current implementation baseline: `b42403ac305ff72cecf4dbd28816ced0ea663202` (exact current master after PR #148; spending correctness, canonical read-only spending API, and the nonzero return proof are merged)
+- Current implementation baseline: `cd73f80010906362e1c45ab1a8813573e3667323` (exact current master after squash-merge of PR #150; the guarded canonical spending read service is merged)
 - Current phase: `RECONCILIATION_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase E2E is proven for the canary plus the reviewed 12-item expansion
 - Current blocker: No parser gap blocks Person 1 MVP. Production schema-only rollout migration 019 and analytics 011 is complete and verified. The first separately authorized full unbounded certification materialization completed for scope `default`/id `1` as READY run `3961` on source state `fd410badc5b1d1ac33b22ddebfeb31902b733ef9dfef03347fe77380334a6b01`; no deployment, replay, backfill, grant change, or unrelated production write occurred. Future ingestion can make this snapshot stale; any new materialization requires a fresh read-only source-state preflight and separate approval. Spending correctness MVP is merged in PR #142, the exact-decimal certification arithmetic correction is merged through PR #144, and the canonical spending read-only query API is merged in PR #146. The API is read-only and not a production publication. PR #148 merged a deterministic disposable PostgreSQL proof with `100.00 RUB` gross, `20.00 RUB` confirmed returns, and `80.00 RUB` net, including multi-currency separation, half-open boundaries, item-grain protection, pagination, reconciliation, and source-state drift. Production read-only access is still blocked behind a security-reviewed curated publication path.
 
@@ -26,7 +26,53 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `security-reviewed repository-owned read-only spending connector/service`
+- Next action: `confirm available ChatGPT integration path, then security-review production least-privilege READ ONLY access and an authoritative current-state probe; automatic certification freshness remains a separate design task`
+## Permanent engineering rule: SIMPLE-FIRST / REUSE-FIRST
+
+For every structural change, first evaluate and reuse existing repository
+components before introducing a new service, protocol, publication layer, or
+parallel accounting implementation. The decision record must compare
+implementation cost, execution speed, dependency count, diagnostic complexity,
+operational support burden, security surface, and failure/recovery behavior.
+Add a new component only when the existing mechanism cannot satisfy the
+reviewed contract, and record the concrete gap and the smallest alternative.
+
+This rule is permanent. The canonical spending read service from PR #150 is a
+thin adapter around the existing queryCanonicalSpending() and current
+source-state/READY guard; it is not a second SQL accounting implementation or
+PostgreSQL publication layer.
+
+## Canonical spending read service v1 closeout
+
+PR #150 was squash-merged in cd73f80010906362e1c45ab1a8813573e3667323.
+The implementation remains read-only and reuses the authoritative
+queryCanonicalSpending() path. Its exact-head CI passed as run
+37936606016: unit tests, PostgreSQL integration, full suite, and syntax/check
+gates passed; Android jobs were skipped because the diff was backend/docs-only.
+
+The service enforces authenticated server-side scope authorization, rejects
+foreign explicit scopes, ignores caller timeout settings in favor of bounded
+server values, and exposes only a curated fail-closed result. Contradictory
+READY results, unsafe reason text, and malformed nested data are rejected as
+CORRUPT without financial data. The disposable return proof remains
+100.00 RUB gross, 20.00 RUB returns, and 80.00 RUB net.
+
+Performance evidence is limited to a small disposable fixture: the current
+exact-head measurement used fixture_rows=4 and reported fingerprint
+2.32 ms, full READY guard 7.01 ms, and period query with guard 16.14 ms.
+Earlier fixture values 3.43/8.90/24.31 ms are historical test measurements.
+None is a production benchmark or latency forecast.
+
+Custom MCP registration is not confirmed for the real ChatGPT account. OpenAI
+availability depends on the account plan and client support, so no MCP
+transport is to be designed or implemented until registration and the required
+client path are explicitly verified. The next stage is to confirm the actually
+available ChatGPT integration path, then conduct security review of a
+least-privilege production READ ONLY connection and authoritative
+current-state probe. No production grants, DDL, deployment, materialization,
+writer, replay, backfill, or automatic certification refresh is authorized by
+this closeout.
+
 
 ## Canonical spending read-only query API v1 (merged)
 
