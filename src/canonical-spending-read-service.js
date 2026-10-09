@@ -12,6 +12,8 @@ export const READ_SERVICE_FAILURES = Object.freeze({
 const SAFE_STATUSES = new Set(['READY', 'STALE', 'MISSING', 'CONFLICT', 'CORRUPT', 'ACCESS_ERROR', 'TECHNICAL_ERROR', 'INVALID_PERIOD']);
 const DEFAULT_TIMEZONES = Object.freeze(['Europe/Moscow']);
 const DEFAULT_PERIODS = Object.freeze(['today', 'yesterday', 'range']);
+const SERVER_STATEMENT_TIMEOUT_MS = 120000;
+const SERVER_LOCK_TIMEOUT_MS = 5000;
 
 function failure(reasonCode, reason = reasonCode, status = 'ACCESS_ERROR') {
   return {
@@ -26,54 +28,91 @@ function failure(reasonCode, reason = reasonCode, status = 'ACCESS_ERROR') {
   };
 }
 
+function validSourceStateKey(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
 function safeSnapshot(snapshot) {
-  if (!snapshot) return null;
+  if (!snapshot || !Number.isSafeInteger(Number(snapshot.scopeId)) || Number(snapshot.scopeId) < 1
+      || !Number.isSafeInteger(Number(snapshot.runId)) || Number(snapshot.runId) < 1
+      || !validSourceStateKey(snapshot.sourceStateKey)
+      || snapshot.status !== 'READY'
+      || typeof snapshot.scopeKey !== 'string'
+      || typeof snapshot.modelVersion !== 'string') return null;
   return {
-    scopeId: snapshot.scopeId ?? null,
-    runId: snapshot.runId ?? null,
-    sourceStateKey: snapshot.sourceStateKey ?? null,
+    scopeKey: snapshot.scopeKey,
+    scopeId: Number(snapshot.scopeId),
+    runId: Number(snapshot.runId),
+    modelVersion: snapshot.modelVersion,
+    sourceStateKey: snapshot.sourceStateKey,
+    status: 'READY',
+    currency: typeof snapshot.currency === 'string' ? snapshot.currency : null,
+    currencies: Array.isArray(snapshot.currencies) ? snapshot.currencies.filter((value) => typeof value === 'string') : [],
+    finishedAt: typeof snapshot.finishedAt === 'string' ? snapshot.finishedAt : null,
+  };
+}
+
+function safeQueryPeriod(queryPeriod) {
+  if (!queryPeriod || typeof queryPeriod !== 'object'
+      || typeof queryPeriod.timezone !== 'string'
+      || typeof queryPeriod.from !== 'string'
+      || typeof queryPeriod.to !== 'string'
+      || queryPeriod.semantics !== 'event_at, half-open [from,to)') return null;
+  return {
+    timezone: queryPeriod.timezone,
+    from: queryPeriod.from,
+    to: queryPeriod.to,
+    semantics: queryPeriod.semantics,
   };
 }
 
 function safeData(data) {
-  if (!data) return null;
+  if (!data || typeof data !== 'object'
+      || !Array.isArray(data.grossReturnsNetByCurrency)
+      || !Array.isArray(data.confirmedPurchases)
+      || !Array.isArray(data.confirmedReturns)
+      || !Array.isArray(data.category)
+      || !Array.isArray(data.person)
+      || !data.unresolved || typeof data.unresolved !== 'object'
+      || !data.bankOnlyIncomplete || typeof data.bankOnlyIncomplete !== 'object'
+      || !Array.isArray(data.limitations)
+      || !data.pagination || typeof data.pagination !== 'object') return null;
+  const pagination = data.pagination;
+  if (!Number.isInteger(pagination.limit) || !Number.isInteger(pagination.offset)
+      || !pagination.purchases || typeof pagination.purchases.hasMore !== 'boolean'
+      || !pagination.returns || typeof pagination.returns.hasMore !== 'boolean') return null;
   return {
-    grossReturnsNetByCurrency: Array.isArray(data.grossReturnsNetByCurrency)
-      ? data.grossReturnsNetByCurrency.map(({ currency, gross, returns, net }) => ({ currency, gross, returns, net }))
-      : [],
-    confirmedPurchases: Array.isArray(data.confirmedPurchases)
-      ? data.confirmedPurchases.map(({ purchase_id, amount, currency, purchased_at, rule_code, rule_version }) => ({
-        purchase_id, amount, currency, purchased_at, rule_code, rule_version,
-      }))
-      : [],
-    confirmedReturns: Array.isArray(data.confirmedReturns)
-      ? data.confirmedReturns.map(({ return_id, return_amount, currency, returned_at }) => ({
-        return_id, return_amount, currency, returned_at,
-      }))
-      : [],
-    category: Array.isArray(data.category)
-      ? data.category.map(({ currency, taxonomyId, taxonomyVersion, categoryCode, allocationStatus, gross, returns, net }) => ({
-        currency, taxonomyId, taxonomyVersion, categoryCode, allocationStatus, gross, returns, net,
-      }))
-      : [],
-    person: Array.isArray(data.person)
-      ? data.person.map(({ currency, personId, attributionStatus, allocationStatus, gross, returns, net }) => ({
-        currency, personId, attributionStatus, allocationStatus, gross, returns, net,
-      }))
-      : [],
-    unresolved: data.unresolved ? {
+    grossReturnsNetByCurrency: data.grossReturnsNetByCurrency.map(({ currency, gross, returns, net }) => ({ currency, gross, returns, net })),
+    confirmedPurchases: data.confirmedPurchases.map(({ purchase_id, amount, currency, purchased_at, rule_code, rule_version }) => ({
+      purchase_id, amount, currency, purchased_at, rule_code, rule_version,
+    })),
+    confirmedReturns: data.confirmedReturns.map(({ return_id, return_amount, currency, returned_at }) => ({
+      return_id, return_amount, currency, returned_at,
+    })),
+    category: data.category.map(({ currency, taxonomyId, taxonomyVersion, categoryCode, allocationStatus, gross, returns, net }) => ({
+      currency, taxonomyId, taxonomyVersion, categoryCode, allocationStatus, gross, returns, net,
+    })),
+    person: data.person.map(({ currency, personId, attributionStatus, allocationStatus, gross, returns, net }) => ({
+      currency, personId, attributionStatus, allocationStatus, gross, returns, net,
+    })),
+    unresolved: {
       blockedExposureStatus: data.unresolved.blockedExposureStatus ?? null,
       blockedExposureReasonCode: data.unresolved.blockedExposureReasonCode ?? null,
       unattributedPersonRows: Array.isArray(data.unresolved.unattributedPersonRows)
         ? data.unresolved.unattributedPersonRows.map(({ currency, gross, returns, net }) => ({ currency, gross, returns, net }))
         : [],
-    } : null,
-    bankOnlyIncomplete: data.bankOnlyIncomplete ? {
+    },
+    bankOnlyIncomplete: {
       status: data.bankOnlyIncomplete.status ?? null,
       reasonCode: data.bankOnlyIncomplete.reasonCode ?? null,
-    } : null,
-    limitations: Array.isArray(data.limitations) ? [...data.limitations] : [],
-    pagination: data.pagination ?? null,
+    },
+    limitations: data.limitations.filter((value) => typeof value === 'string').slice(0, 32),
+    pagination: {
+      limit: pagination.limit,
+      offset: pagination.offset,
+      purchases: { hasMore: pagination.purchases.hasMore },
+      returns: { hasMore: pagination.returns.hasMore },
+    },
   };
 }
 
@@ -133,11 +172,12 @@ export function createCanonicalSpendingReadService({
       if (invalid) return failure(READ_SERVICE_FAILURES.INVALID_REQUEST, invalid);
       let scope;
       try {
-        scope = await authorizeScope({ principal, requestedScopeKey: request.scopeKey ?? 'default' });
+        scope = await authorizeScope({ principal, requestedScopeKey: request.scopeKey ?? null });
       } catch {
         return failure(READ_SERVICE_FAILURES.SCOPE_FORBIDDEN);
       }
-      if (!scope || typeof scope.scopeKey !== 'string') return failure(READ_SERVICE_FAILURES.SCOPE_FORBIDDEN);
+      if (!scope || typeof scope.scopeKey !== 'string'
+          || (request.scopeKey !== undefined && request.scopeKey !== scope.scopeKey)) return failure(READ_SERVICE_FAILURES.SCOPE_FORBIDDEN);
       const options = {
         scopeKey: scope.scopeKey,
         period: request.period ?? 'today',
@@ -146,8 +186,8 @@ export function createCanonicalSpendingReadService({
         to: request.to ?? null,
         limit: request.limit ?? 100,
         offset: request.offset ?? 0,
-        statementTimeoutMs: request.statementTimeoutMs,
-        lockTimeoutMs: request.lockTimeoutMs,
+        statementTimeoutMs: SERVER_STATEMENT_TIMEOUT_MS,
+        lockTimeoutMs: SERVER_LOCK_TIMEOUT_MS,
       };
       let result;
       try {
@@ -155,15 +195,20 @@ export function createCanonicalSpendingReadService({
       } catch {
         result = failure(READ_SERVICE_FAILURES.TECHNICAL_ERROR, 'READ_ONLY_QUERY_FAILED', 'TECHNICAL_ERROR');
       }
+      const status = SAFE_STATUSES.has(result?.status) ? result.status : 'TECHNICAL_ERROR';
+      const snapshot = safeSnapshot(result?.snapshot);
+      const queryPeriod = safeQueryPeriod(result?.queryPeriod);
+      const readyData = result?.ok === true && status === 'READY' && snapshot && queryPeriod ? safeData(result?.data) : null;
+      const readyContractValid = result?.ok === true && status === 'READY' && snapshot && queryPeriod && readyData;
       const safeResult = {
-        ok: result?.ok === true && result?.status === 'READY',
+        ok: readyContractValid === true,
         modelVersion: CANONICAL_SPENDING_READ_SERVICE_MODEL,
-        status: SAFE_STATUSES.has(result?.status) ? result.status : 'TECHNICAL_ERROR',
-        reasonCode: result?.reasonCode ?? null,
-        reason: result?.reason ?? null,
-        snapshot: safeSnapshot(result?.snapshot),
-        queryPeriod: result?.queryPeriod ?? null,
-        data: safeData(result?.data),
+        status: readyContractValid === true ? 'READY' : (result?.ok === true && status === 'READY' ? 'CORRUPT' : status),
+        reasonCode: readyContractValid === true ? null : (result?.ok === true && status === 'READY' ? 'READY_RESULT_CONTRACT_INVALID' : (typeof result?.reasonCode === 'string' ? result.reasonCode.slice(0, 128) : null)),
+        reason: readyContractValid === true ? null : (typeof result?.reason === 'string' ? result.reason.slice(0, 256) : (result?.ok === true && status === 'READY' ? 'READY_RESULT_CONTRACT_INVALID' : null)),
+        snapshot: readyContractValid === true ? snapshot : (snapshot && status === 'READY' ? snapshot : null),
+        queryPeriod,
+        data: readyContractValid === true ? readyData : null,
       };
       try {
         logger.info('canonical_spending_read_service_completed', safeSummary(safeResult, scope.scopeKey));
