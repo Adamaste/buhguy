@@ -93,8 +93,11 @@ The PostgreSQL integration fixture measures three distinct operations inside
 an isolated `REPEATABLE READ READ ONLY` transaction: the existing
 `certificationSourceStateKey` fingerprint, the current-snapshot READY guard
 using that measured key, and the complete period query including its own
-snapshot guard. It records only elapsed milliseconds and fixture row scope in
-test output; it does not benchmark production or perform writes. The
-measurement is available when `TEST_DATABASE_URL` points to the disposable
-PostgreSQL fixture. If that gate is unavailable, performance remains
-`UNMEASURED` rather than being inferred from unit tests.
+snapshot guard. It records only elapsed milliseconds and the actual disposable fixture row
+count in test output; it does not benchmark production or perform writes. The
+reviewed small fixture measured fingerprint `3.43 ms`, full READY guard
+`8.90 ms`, and period query with guard `24.31 ms` for three fixture rows.
+These values are evidence of the test path only and do not predict production
+latency or capacity. The measurement is available when `TEST_DATABASE_URL`
+points to the disposable PostgreSQL fixture. If that gate is unavailable,
+performance remains `UNMEASURED` rather than being inferred from unit tests.
