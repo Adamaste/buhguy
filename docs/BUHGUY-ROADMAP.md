@@ -38,19 +38,34 @@ Core rules:
 ## Current position
 
 The project already has a substantial receipt/FNS and accounting-proof foundation.
+The canonical spending read model and guarded read-only query service are
+merged, but the project is not yet an autonomously reliable accounting
+service. The active priority is P0 reliability: lossless capture/delivery,
+safe retries and recovery, evidence deduplication, no-double-count ledger
+behavior, certification freshness, and operational observability.
+
+MCP and other ChatGPT transport work is explicitly deferred. PR #152 is open
+but unmerged and is not a dependency of the P0 plan. Existing repository
+mechanisms remain the default path under the permanent SIMPLE-FIRST /
+REUSE-FIRST rule.
 
 The active development area is the bank evidence path, specifically reliable Android notification capture on a real Samsung device.
 
 Current sequence:
 
-1. stabilize Android bank notification capture/delivery
-2. implement bank-specific parsers and normalization
-3. project proven bank cash-flow and movement semantics
-4. build/extend business-event semantics
-5. recognize internal transfers only with independently proven two-sided own-account evidence
-6. integrate sufficiently proven events into accounting/ledger workflows
-7. use bank-to-receipt matching as additional independent purchase evidence
-8. expand analytics, monitoring, and automation
+1. prove lossless Android capture, collector outbox delivery, backend ingestion and bounded recovery
+2. prove idempotent observation/transaction/document deduplication under retries and partial failures
+3. preserve bank-specific parser and normalization fail-closed behavior while measuring unresolved evidence
+4. preserve no-double-count cash-flow, matched-purchase and ACTIVE-ledger invariants during recovery
+5. keep certification/current-snapshot state explicit, bounded and observable after new data
+6. implement only the smallest reviewed operational reliability fixes
+7. continue bank-specific parsers and normalization where evidence justifies them
+8. use internal-transfer matching only with independently proven two-sided own-account evidence
+9. expand analytics and assistant access only after freshness, completeness and security gates pass
+
+P1 work such as richer product categorization, broad analytics convenience,
+MCP transport and higher-level automation remains deferred until the P0 gates
+are measurable and stable.
 
 The exact live blocker and next command-level action are maintained in `docs/BUHGUY-CURRENT-HANDOFF.md`.
 
