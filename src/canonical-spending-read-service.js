@@ -199,7 +199,7 @@ export function createCanonicalSpendingReadService({
       const snapshot = safeSnapshot(result?.snapshot);
       const queryPeriod = safeQueryPeriod(result?.queryPeriod);
       const readyData = result?.ok === true && status === 'READY' && snapshot && queryPeriod ? safeData(result?.data) : null;
-      const readyContractValid = result?.ok === true && status === 'READY' && snapshot && queryPeriod && readyData;
+      const readyContractValid = Boolean(result?.ok === true && status === 'READY' && snapshot && queryPeriod && readyData);
       const safeResult = {
         ok: readyContractValid === true,
         modelVersion: CANONICAL_SPENDING_READ_SERVICE_MODEL,
