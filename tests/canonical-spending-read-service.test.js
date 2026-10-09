@@ -91,7 +91,8 @@ test('database and connector failures are redacted', async () => {
   const { service } = serviceFor(async () => { throw new Error('password=secret raw payload'); });
   const result = await service.handle(baseRequest, { token: 'valid' });
   assert.equal(result.status, 'TECHNICAL_ERROR');
-  assert.equal(result.reason, 'READ_ONLY_QUERY_FAILED');
+  assert.equal(result.reasonCode, 'READ_ONLY_QUERY_FAILED');
+  assert.equal(result.reason, 'Read-only query failed');
   assert.doesNotMatch(JSON.stringify(result), /password|secret|raw payload/);
 });
 
