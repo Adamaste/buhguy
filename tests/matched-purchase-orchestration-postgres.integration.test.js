@@ -195,17 +195,7 @@ integration('real enrichment loader uses explicit columns in a read-only transac
     try {
       await client.query('BEGIN');
       await client.query('SET TRANSACTION READ ONLY');
-      const readOnly = {
-        query: async (text, params) => {
-          const sql = String(text);
-          queries.push(sql);
-          assert.match(sql, /^\s*SELECT\b/i);
-          assert.doesNotMatch(sql, /\bSELECT\s+\*/i);
-          assert.doesNotMatch(sql, /\b(?:e|le|lp|l)\.\*/i);
-          assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
-          return client.query(text, params);
-        },
-      };
+      const readOnly = readOnlyPool({ query: (text, params) => client.query(text, params) }, queries);
       const result = await loadMatchedPurchaseEnrichment(readOnly, {
         scopeKey: fixture.scopeKey,
         internalTransferMaxTimeDeltaMs: 300000,
