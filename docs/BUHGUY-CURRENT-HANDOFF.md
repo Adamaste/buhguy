@@ -36,7 +36,7 @@ reported exact master `f5530daf2d07f5258a31cc589c33bb817748e7a1`,
 scope `default`, period
 `2026-09-27T13:48:18Z`–`2026-10-10T16:18:16.138Z`,
 `PREVIEW_EXECUTED=YES`, `PREVIEW_RUN_COUNT=1`. This authorization has
-been **consumed**, including though the command failed.
+been **consumed**, even though the command failed.
 
 Previously private local stdout/stderr/exit artifacts were inspected without
 new production access. Stdout contained one valid **technical error** envelope:
