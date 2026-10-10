@@ -1,10 +1,11 @@
 name: CI
 
+# TEMPORARY PAUSE until the 2026-11-01 GitHub Actions monthly reset.
+# No automatic push/PR workflows: GitHub-hosted minutes are exhausted.
+# Manual dispatch is retained for exceptional, explicitly approved use only.
+# Restore the original push/master and pull_request/master triggers after
+# verifying the quota has reset. See docs/BUHGUY-LOCAL-TESTING.md.
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
   workflow_dispatch:
     inputs:
       build_signed_apk:

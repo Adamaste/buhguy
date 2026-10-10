@@ -1,5 +1,24 @@
 # Instructions for Codex sessions
 
+## Temporary CI policy (2026-10-10 until quota reset)
+
+GitHub Actions automatic push/PR triggers are temporarily paused because
+the Adamaste account used all 2,000 included monthly Actions minutes.
+See `docs/BUHGUY-LOCAL-TESTING.md`. Until the included minutes reset on
+2026-11-01 and workflow triggers are deliberately restored:
+
+- Do not request, trigger or require GitHub-hosted CI.
+- For functional/financial changes, require exact-PR-HEAD local checks:
+  Node 22+, `npm run check`, `npm run test:unit`, and
+  `npm run test:integration` with a **disposable PostgreSQL test database**;
+  Android tests/build on a local SDK host when Android code changes.
+- Never run integration tests against production DB or change production
+  services to support testing. Treat skipped/missing integration tests as
+  NOT TESTED, not PASS.
+- Review PR diff, threads, mergeability and local evidence before merge.
+- After quota reset, restore push/PR CI triggers and resume exact-head
+  GitHub CI gates. This pause does not change production safety rules.
+
 ## Bootstrap
 
 - Read `docs/BUHGUY-CURRENT-HANDOFF.md` and `docs/BUHGUY-ROADMAP.md` before technical work.
