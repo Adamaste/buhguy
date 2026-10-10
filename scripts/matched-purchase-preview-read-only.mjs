@@ -27,19 +27,43 @@ const SUMMARY_FIELDS = Object.freeze([
 ]);
 const READINESS = new Set(['READY', 'REVIEW_REQUIRED']);
 const SAFE_REASON_CODES = new Set(['MATCHING_WINDOW_INVARIANCE_MISMATCH']);
-const PREVIEW_FAILURE_STAGES = new Set([
+export const PREVIEW_FAILURE_STAGE_CODES = Object.freeze([
   'POOL_CONNECT',
   'TRANSACTION_BEGIN',
   'SESSION_READ_ONLY',
   'NARROW_PREVIEW',
   'WIDE_PREVIEW',
+  'RESULT_VALIDATION',
   'ROLLBACK',
 ]);
-const PREVIEW_FAILURE_STAGE = Symbol('previewFailureStage');
+const PREVIEW_FAILURE_STAGES = new Set(PREVIEW_FAILURE_STAGE_CODES);
+const PREVIEW_FAILURE_STAGE_BY_ERROR = new WeakMap();
 
 export function previewFailureStage(error) {
-  const stage = error?.[PREVIEW_FAILURE_STAGE];
+  const stage = error && (typeof error === 'object' || typeof error === 'function')
+    ? PREVIEW_FAILURE_STAGE_BY_ERROR.get(error)
+    : null;
   return PREVIEW_FAILURE_STAGES.has(stage) ? stage : 'UNKNOWN';
+}
+
+function tagPreviewFailure(error, stage) {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    PREVIEW_FAILURE_STAGE_BY_ERROR.set(error, stage);
+    return error;
+  }
+  const safeError = new Error('read-only preview failed');
+  PREVIEW_FAILURE_STAGE_BY_ERROR.set(safeError, stage);
+  return safeError;
+}
+
+export function technicalFailurePayload(error) {
+  return {
+    ok: false,
+    status: 'TECHNICAL_ERROR',
+    reasonCode: 'READ_ONLY_PREVIEW_FAILED',
+    stage: previewFailureStage(error),
+    data: null,
+  };
 }
 
 function canonicalize(value) {
@@ -121,9 +145,10 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
   positiveBoundedInteger(PREVIEW_LOCK_TIMEOUT_MS, 'lockTimeoutMs');
   const preview = options.preview ?? previewMatchedPurchaseOrchestration;
   let stage = 'POOL_CONNECT';
-  const client = await pool.connect();
+  let client = null;
   let transactionOpen = false;
   try {
+    client = await pool.connect();
     stage = 'TRANSACTION_BEGIN';
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     transactionOpen = true;
@@ -147,6 +172,7 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
       ...previewOptions,
       internalTransferMaxTimeDeltaMs: INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
     });
+    stage = 'RESULT_VALIDATION';
     const safe = matchingWindowInvariantHolds(narrowResult, wideResult)
       ? sanitizeReadOnlyPreview(narrowResult)
       : sanitizeReadOnlyPreview({
@@ -155,21 +181,24 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
         reasonCode: 'MATCHING_WINDOW_INVARIANCE_MISMATCH',
         summary: narrowResult?.summary,
       });
+    stage = 'ROLLBACK';
     await client.query('ROLLBACK');
     transactionOpen = false;
     return safe;
   } catch (error) {
-    Object.defineProperty(error, PREVIEW_FAILURE_STAGE, { value: stage, configurable: true });
-    if (transactionOpen) {
+    const failureStage = stage;
+    if (transactionOpen && failureStage !== 'ROLLBACK') {
+      stage = 'ROLLBACK';
       try {
         await client.query('ROLLBACK');
-      } catch {
-        Object.defineProperty(error, PREVIEW_FAILURE_STAGE, { value: 'ROLLBACK', configurable: true });
+        transactionOpen = false;
+      } catch (rollbackError) {
+        throw tagPreviewFailure(rollbackError, 'ROLLBACK');
       }
     }
-    throw error;
+    throw tagPreviewFailure(error, failureStage);
   } finally {
-    client.release();
+    try { client?.release(); } catch { /* release must not replace the safe result */ }
   }
 }
 
@@ -200,7 +229,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
     return result.readiness === 'READY' ? 0 : 2;
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, status: 'TECHNICAL_ERROR', reasonCode: 'READ_ONLY_PREVIEW_FAILED', stage: previewFailureStage(error), data: null })}\n`);
+    process.stdout.write(`${JSON.stringify(technicalFailurePayload(error))}\n`);
     return 1;
   } finally {
     await pool?.end().catch(() => {});
