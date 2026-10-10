@@ -7,6 +7,7 @@ import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
 import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
+import { loadMatchedPurchaseEnrichment } from '../src/matched-purchase-enrichment-projection.js';
 import { runReadOnlyMatchedPurchasePreview } from '../scripts/matched-purchase-preview-read-only.mjs';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -181,6 +182,44 @@ integration('real standalone purchase previews REFINE without invoking the write
     const refine = await previewMatchedPurchaseOrchestration(pool, options);
     assert.equal(refine.summary.persistRequired, 1);
     assert.equal(refine.decisions[0].ledgerDisposition, 'REFINE_EXISTING_FISCAL_FUNDING');
+  } finally { await pool.end(); }
+});
+
+integration('real enrichment loader uses explicit columns in a read-only transaction', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-explicit-columns', { standalone: true });
+    const before = await snapshot(pool);
+    const client = await pool.connect();
+    const queries = [];
+    try {
+      await client.query('BEGIN');
+      await client.query('SET TRANSACTION READ ONLY');
+      const readOnly = {
+        query: async (text, params) => {
+          const sql = String(text);
+          queries.push(sql);
+          assert.match(sql, /^\s*SELECT\b/i);
+          assert.doesNotMatch(sql, /\bSELECT\s+\*/i);
+          assert.doesNotMatch(sql, /\b(?:e|le|lp|l)\.\*/i);
+          assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
+          return client.query(text, params);
+        },
+      };
+      const result = await loadMatchedPurchaseEnrichment(readOnly, {
+        scopeKey: fixture.scopeKey,
+        internalTransferMaxTimeDeltaMs: 300000,
+        receiptMaxTimeDeltaMs: 300000,
+      });
+      assert.equal(result.projectionStatus, 'PROJECTED');
+      assert.equal(result.ledgerDisposition, 'REFINE_EXISTING_FISCAL_FUNDING');
+      assert.ok(queries.length > 5);
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+    assert.equal(await snapshot(pool), before);
   } finally { await pool.end(); }
 });
 
