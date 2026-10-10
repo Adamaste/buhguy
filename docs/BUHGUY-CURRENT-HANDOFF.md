@@ -18,15 +18,61 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 - Last updated: 2026-10-10
 - Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
-- Current phase: `P0_READ_ONLY_MATCHING_PREVIEW_RESULT_RECOVERY`; the first separately authorized one-shot production preview was executed, but its safe aggregate result was lost in terminal output, so no new match count or readiness is confirmed
-- Current blocker: The first bounded preview was executed with privilege, SSH and one-scope gates reported PASS, but the aggregate-only stdout was not recoverable after terminal-output overflow. Operator reported NOLOGIN, revocation of all 23 column grants, DROP ROLE, tunnel closed, no writer or runtime change. Postcheck showed certification-table changes of unresolved origin, compatible with but not proven to be concurrent activity. Do not treat the first preview as READY or its unknown counts as zero.
+- Current phase: `P0_LOCAL_SSH_TUNNEL_LIFECYCLE_REHEARSAL`; three separately authorized production preview cycles have produced no recoverable authoritative preview aggregates. The first ran but lost stdout; the second and third never reached the runner. All temporary access from the third attempt has now been cleaned up.
+- Current blocker: The third authorized preview stopped before the runner because the private SSH loopback tunnel disappeared after the local invoking process ended (`PRIVATE_SSH_TUNNEL_DID_NOT_PERSIST`). Cleanup initially blocked on five idle/ClientRead sessions owned by the third temporary preview role; the operator subsequently verified and terminated exactly those five under separate explicit approval and completed all grant revocation / role removal. No new preview counts exist, and first-preview certification changes remain of unproven provenance.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: the original safe JSON is confirmed NOT_RECOVERED; local private-file output capture rehearsal PASS. Certification-table replacement-pattern changes have no established writer provenance; preserve UNCONFIRMED, do not assert normal/authorized or unauthorized origin. Before an additional production preview, obtain a NEW explicit one-shot production authorization, revalidate all scope/grant/SSH gates, and save the bounded aggregate JSON directly to a private local file (strictly validated) with cleanup. No writer, deploy, replay or materialization.
+- Next action: **local-only** demonstrate that the approved persistent private SSH-forwarding process survives launcher/process boundaries and exits cleanly, with process ownership, explicit readiness/liveness checks, bounded timeouts and cleanup, using an isolated local test endpoint only. Do not connect to production or create/grant any role during rehearsal. The previously tested PowerShell 7 JSON capture harness remains local-only and must not be regenerated through JS template literals. If all local gates pass, request a NEW separately bounded production authorization before any fourth attempt. `WRITER_PROVENANCE=UNCONFIRMED` for the first preview's certification-only delta; no financial writer, deploy, replay, or materialization.
+
+## Third preview attempt and independently approved cleanup (2026-10-10)
+
+The operator reported a locally validated PowerShell 7 capture harness
+(`ProcessStartInfo.ArgumentList`, separate private stdout/stderr capture,
+strict aggregate allowlist). Synthetic E2E cases passed: READY/exit 0,
+REVIEW_REQUIRED/exit 2, TECHNICAL_ERROR/exit 1, malformed or extra stdout,
+unexpected stderr, and process crash. This was a **local rehearsal**, not
+evidence that the production runner executed.
+
+In the third separately authorized one-shot cycle, the private SSH loopback
+did not persist across the local command boundary. The database identity
+probe failed and the actual production preview runner was **NOT EXECUTED**.
+`PREVIEW_READINESS` and all ten matching/eligibility counts remain
+`UNCONFIRMED`; `JSON_CAPTURE_VALIDATED=NO`;
+`PERSISTENCE_POSTCHECK=NOT_RUN`; `CERTIFICATION_DELTA=NOT_RUN`.
+Do not turn those unknown values into zero or infer a ready state.
+
+The third temporary PostgreSQL role was
+`buhguy_preview_ro_20261010_third`. The initial cleanup stopped with the
+role set to `NOLOGIN`, but all 23 column-level grants still present and five
+own `idle / ClientRead` loopback sessions remaining. A subsequent
+**separately explicit user authorization** approved only the targeted
+termination of these five role-owned sessions, after checking exact role,
+database, backend identity/state and absence of drift. Operator-reported
+final cleanup:
+- all five approved sessions terminated; zero role sessions remained;
+- no unrelated sessions touched;
+- all 23 explicit column SELECT grants plus schema USAGE/database CONNECT
+  revoked, no role-specific effective grants or owned objects remaining;
+- `DROP ROLE` succeeded and the role was absent from `pg_roles`;
+- SSH tunnel closed; `PRODUCTION_FINANCIAL_WRITES=NO`.
+
+The normal `PUBLIC` baseline database CONNECT / schema USAGE privileges
+remain unchanged. They are **not** residual grants belonging to the deleted
+temporary role. No new preview JSON, payment matching decisions, or
+certification provenance were obtained. The third one-shot authorization
+and the separate targeted termination authorization are both consumed.
+
+**Next action:** a synthetic/local-only persistence and teardown rehearsal
+for SSH forwarding using an isolated test target. Verify process ownership
+across launcher boundaries and durable port binding; close the process
+without leaving sessions. Do **not** start a fourth production preview,
+recreate the temporary role, open a production tunnel, access production
+data or enable financial writers without a further explicit approval.
+GitHub Actions remains paused under the temporary October policy.
 
 ## Certification postcheck provenance follow-up (2026-10-10)
 
