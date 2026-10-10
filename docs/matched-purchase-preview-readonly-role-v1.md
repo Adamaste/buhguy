@@ -116,7 +116,7 @@ Git, logs, a PR, or the runner output.
 
 ```sql
 CREATE ROLE buhguy_preview_ro_YYYYMMDD
-  LOGIN PASSWORD '<temporary-secret-from-approved-secret-store>'
+  NOLOGIN PASSWORD NULL
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 
 REVOKE ALL PRIVILEGES ON DATABASE finance_receipt_collector
@@ -160,6 +160,22 @@ GRANT SELECT (id, account_code) ON public.ledger_accounts TO buhguy_preview_ro_Y
 GRANT SELECT (id, ledger_entry_id, business_event_id, graph_evidence_id, graph_allocation_id, receipt_id, normalization_version, link_role, bank_receipt_match_id, bank_transaction_id) ON public.ledger_source_links TO buhguy_preview_ro_YYYYMMDD;
 GRANT SELECT (id, match_key) ON public.bank_receipt_matches TO buhguy_preview_ro_YYYYMMDD;
 ```
+
+Only after inspecting the complete grant matrix and confirming approved operator access,
+set the password interactively with psql's `\\password
+buhguy_preview_ro_YYYYMMDD` meta-command (entered in psql as a single line),
+using the approved temporary secret. Do not interpolate a plaintext password
+into SQL, shell arguments, command histories, CI, or operator logs. Enable
+`LOGIN` only when the role and private authentication path are ready:
+
+```sql
+ALTER ROLE buhguy_preview_ro_YYYYMMDD LOGIN;
+```
+
+Confirm the existing PostgreSQL host authentication rules accept this
+credential through the SSH-forwarded loopback connection. If authentication
+requires a production `pg_hba.conf` change, public exposure, or a service
+restart, STOP and request a separate review; do not change them here.
 
 The role must not be granted membership in `pg_read_all_data`,
 `pg_read_all_settings`, an application role, or any other group. It must not
@@ -271,8 +287,11 @@ The following sequence is intentionally one-shot and fail-closed:
 3. Run the complete role, schema, column, DML, membership, and one-scope
    preflight. Stop on any unexpected result.
 4. Capture aggregate before counts/hashes for the selected matched-purchase,
-   ledger, and certification persistence tables. Do not export rows or
-   payloads.
+   ledger, and certification persistence tables using the **separately approved
+   existing admin read-only path**, in a bounded READ ONLY transaction. The
+   temporary preview role intentionally has no certification-table access;
+   never extend its column grants to run this control. Record only safe
+   aggregate verification results, not rows or payloads.
 5. Start the exact runner once with scope `default`, explicit `from` and
    `to`, and the existing bounded settings. Its transaction must report
    `transaction_read_only=on` and must end with `ROLLBACK`.
@@ -280,13 +299,68 @@ The following sequence is intentionally one-shot and fail-closed:
    not authorization to write. `STALE`, `MISSING`, `CONFLICT`, `CORRUPT`,
    `AMBIGUOUS`, `UNMATCHED`, `INELIGIBLE`, or a technical error is reported
    as-is; no historical number is substituted.
-7. Repeat the aggregate before/after count/hash check. It must be identical.
-   If any persistence count/hash changes, stop and treat the operation as a
-   safety incident; do not retry or repair in this procedure.
-8. Close the tunnel. The administrator then revokes the temporary grants,
-   sets `NOLOGIN`, verifies no active session remains, and drops the temporary
-   role. Cleanup is a separate approved admin action; do not force-terminate a
-   session automatically.
+7. Repeat the aggregate before/after count/hash check via the same
+   independently approved, bounded admin READ ONLY path. Account for normal
+   concurrent ingestion: changed counts are an investigation/STOP signal,
+   not proof that the preview caused a write. Do not retry or repair here.
+8. Close the tunnel. The administrator sets the temporary role to `NOLOGIN`,
+   verifies no active session remains, explicitly revokes its **column-level**
+   grants and its schema/database privileges, and drops it. The exact cleanup
+   commands are below. No backend session is terminated automatically.
+
+## Explicit role cleanup (approved operation only)
+
+Table-level `REVOKE ALL` is not a substitute for revoking separately
+granted column-level SELECT privileges. Perform cleanup only under the
+separately approved administrator session. First close the local tunnel,
+disable login, and verify there are no active sessions using the role:
+
+```sql
+ALTER ROLE buhguy_preview_ro_YYYYMMDD NOLOGIN;
+-- Independently check pg_stat_activity for remaining sessions of this role;
+-- STOP and escalate if any remain. Do not force-terminate sessions.
+```
+
+Revoke the same **23 column allowlists** granted above:
+
+```sql
+REVOKE SELECT (id, scope_key) ON public.accounting_scopes FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id) ON public.bank_sources FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (bank_source_id, person_id) ON public.bank_source_person FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, scope_id) ON public.persons FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, bank_source_id) ON public.bank_event_observations FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, observation_id, occurred_at, amount, currency, event_type, direction, normalization_status, evidence_quality) ON public.bank_transactions FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (bank_transaction_id, financial_account_id, resolution_state, provenance) ON public.bank_transaction_account_resolution FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, scope_id) ON public.financial_accounts FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (financial_account_id, person_id, relation_type, provenance) ON public.financial_account_person_relations FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (receipt_id, fns_source_id) ON public.receipt_source_observations FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, scope_id) ON public.fns_sources FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, date_time, currency, total_sum) ON public.receipts FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (receipt_id, normalization_version, normalized_content_sha256, normalization_status, fiscal_operation_type, household_cash_direction, payment_components_status, payment_stage, correction_status, ecash_total_sum, ecash_total_state, cash_total_sum, cash_total_state, prepaid_sum, prepaid_state, credit_sum, credit_state, provision_sum, provision_state) ON public.receipt_fiscal_facts FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, receipt_id) ON public.receipt_items FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (receipt_item_id, normalization_version, payment_type_code) ON public.receipt_item_fiscal_facts FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, scope_id, event_type, resolution_status, amount, currency) ON public.business_events FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, event_id, receipt_id, normalization_version) ON public.business_event_evidence FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, scope_id, source_event_id, currency, derivation_rule, derivation_status) ON public.ledger_entries FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (scope_id, superseded_ledger_entry_id) ON public.ledger_entry_supersessions FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, ledger_entry_id, account_id, currency, debit, credit) ON public.ledger_postings FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, account_code) ON public.ledger_accounts FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, ledger_entry_id, business_event_id, graph_evidence_id, graph_allocation_id, receipt_id, normalization_version, link_role, bank_receipt_match_id, bank_transaction_id) ON public.ledger_source_links FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE SELECT (id, match_key) ON public.bank_receipt_matches FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE USAGE ON SCHEMA public FROM buhguy_preview_ro_YYYYMMDD;
+REVOKE CONNECT ON DATABASE finance_receipt_collector FROM buhguy_preview_ro_YYYYMMDD;
+```
+
+Independently verify zero remaining effective application-object grants,
+zero memberships, and zero objects owned by the temporary role. Only then:
+
+```sql
+DROP ROLE buhguy_preview_ro_YYYYMMDD;
+```
+
+If verification or `DROP ROLE` fails, keep `NOLOGIN`, STOP and escalate.
+Do not run blanket `DROP OWNED`, `REASSIGN OWNED`, `CASCADE`, or forceful
+session termination as an automatic workaround.
 
 ## STOP and recovery rules
 
