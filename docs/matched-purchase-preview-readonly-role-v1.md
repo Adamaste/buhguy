@@ -162,8 +162,7 @@ GRANT SELECT (id, match_key) ON public.bank_receipt_matches TO buhguy_preview_ro
 ```
 
 Only after inspecting the complete grant matrix and confirming approved operator access,
-set the password interactively with psql's `\\password
-buhguy_preview_ro_YYYYMMDD` meta-command (entered in psql as a single line),
+set the password interactively with psql's `\password buhguy_preview_ro_YYYYMMDD` meta-command,
 using the approved temporary secret. Do not interpolate a plaintext password
 into SQL, shell arguments, command histories, CI, or operator logs. Enable
 `LOGIN` only when the role and private authentication path are ready:
