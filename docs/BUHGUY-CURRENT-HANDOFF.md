@@ -18,15 +18,49 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 - Last updated: 2026-10-10
 - Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
-- Current phase: `P0_FOURTH_READ_ONLY_PREVIEW_TECHNICAL_ERROR_DIAGNOSTICS`; fourth separately approved production preview executed exactly once and returned only a validated technical-error envelope. All ten matching aggregate counts remain `UNCONFIRMED`. Authorization is consumed; no fifth run approved.
-- Current blocker: fourth-run root cause is `UNCONFIRMED`: exact-master runner suppresses exception details and returned `TECHNICAL_ERROR/READ_ONLY_PREVIEW_FAILED` without a stage. A safe stage-only diagnostic change is proposed in draft PR #163 but not yet fully tested or merged. Original matching counts/readiness remain `UNCONFIRMED`. First-preview certification-only delta still has no established writer provenance.
+- Current phase: `P0_ACCOUNTING_CHURN_REMEDIATION`; PR #165 contains the minimal no-op guard for unchanged certification and ledger projections. No production code is deployed from this branch and no production operation was performed for this change.
+- Current blocker: local Node 22 checks pass, but disposable PostgreSQL integration is not yet verified because Docker is unavailable and `TEST_DATABASE_URL` is unset. PR #165 must remain unmerged until that gate is run in an isolated PostgreSQL environment.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: complete draft PR #163 review fixes and exact-HEAD isolated Node 22 + disposable PostgreSQL integration testing; synchronize the private strict JSON validator with the new allowlisted technical stage envelope. No further production preview, SSH/database access, role/grants, financial writer, deploy, replay, or certification materialization without a fresh explicit authorization. Do not rerun automatically.
+- Next action: run the exact PR #165 PostgreSQL regression gate in a disposable environment, review, and only then decide whether to merge. After merge, inspect production runtime identity before any separately approved maintenance. Do not run production writer, VACUUM, DROP, `pg_terminate_backend`, deploy, replay, or certification materialization.
+
+## Accounting churn remediation checkpoint (2026-10-10)
+
+The preceding disk cleanup removed 17 confirmed disposable clone databases and
+reclaimed 462.4 MB; the primary production database and business data were not
+changed. Read-only metadata showed substantial dead tuples in
+`certification_facts`, `fns_source_receipt_refs`, and `ledger_entries`, while
+two long-lived `idle in transaction` sessions remained unaddressed.
+
+The reviewed code path showed that scheduled sync performed a full accounting
+catch-up and then persisted certification with `replace=true` on every run.
+The resulting delete/insert cycle was the confirmed churn mechanism for full
+certification snapshots. `fns_source_receipt_refs` lifecycle updates were not
+classified as redundant because `last_seen_at` is part of its source lifecycle
+contract.
+
+PR #165 adds exact snapshot reuse for an unchanged READY certification,
+replaces the current full snapshot only after source-state change, and skips
+unchanged active ledger projections without writes. It adds regression coverage
+for orchestration, repeated certification, source-state change, rollback, and
+ledger write counters. The feature branch was locally checked with Node 22:
+`npm run check` passed, the targeted accounting/certification/ledger/sync set
+passed 29/29, and the full suite passed 457 tests with 61 PostgreSQL-dependent
+tests skipped because no disposable PostgreSQL was available. The project
+integration command reported `NOT RUN`, not PASS.
+
+The two production `idle in transaction` sessions were not terminated. A
+future approved read-only diagnostic must identify their exact role, owner,
+`backend_xmin`, transaction age and query state before any separate decision;
+no automatic termination is permitted.
+
+After the no-op fix is verified and reviewed, physical table shrink remains a
+separate maintenance operation requiring backup, temporary space, lock/WAL
+budget, clone rehearsal, and explicit production approval.
 
 ## Fourth one-shot production read-only preview result (operator report, 2026-10-10)
 
