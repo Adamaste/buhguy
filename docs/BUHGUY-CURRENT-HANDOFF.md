@@ -18,15 +18,51 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 - Last updated: 2026-10-10
 - Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
-- Current phase: `P0_LOCAL_SSH_TUNNEL_LIFECYCLE_REHEARSAL`; three separately authorized production preview cycles have produced no recoverable authoritative preview aggregates. The first ran but lost stdout; the second and third never reached the runner. All temporary access from the third attempt has now been cleaned up.
-- Current blocker: The third authorized preview stopped before the runner because the private SSH loopback tunnel disappeared after the local invoking process ended (`PRIVATE_SSH_TUNNEL_DID_NOT_PERSIST`). Cleanup initially blocked on five idle/ClientRead sessions owned by the third temporary preview role; the operator subsequently verified and terminated exactly those five under separate explicit approval and completed all grant revocation / role removal. No new preview counts exist, and first-preview certification changes remain of unproven provenance.
+- Current phase: `P0_AWAITING_FOURTH_ONE_SHOT_READ_ONLY_PREVIEW_AUTHORIZATION`; three separately authorized production preview cycles produced no recoverable authoritative aggregates (first executed but stdout lost; second and third did not execute the runner). After complete cleanup, operator-reported synthetic local SSH forwarding and JSON capture gates PASS. No new production approval has been given.
+- Current blocker: The local SSH tunnel's sandbox/job lifecycle failure has an operator-reported local-only fix and synthetic PASS, but no fourth production preview has been authorized. Original matching counts/readiness remain UNCONFIRMED. The first-preview certification-only delta has no established writer provenance; do not classify it as routine or attributable to the preview.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: **local-only** demonstrate that the approved persistent private SSH-forwarding process survives launcher/process boundaries and exits cleanly, with process ownership, explicit readiness/liveness checks, bounded timeouts and cleanup, using an isolated local test endpoint only. Do not connect to production or create/grant any role during rehearsal. The previously tested PowerShell 7 JSON capture harness remains local-only and must not be regenerated through JS template literals. If all local gates pass, request a NEW separately bounded production authorization before any fourth attempt. `WRITER_PROVENANCE=UNCONFIRMED` for the first preview's certification-only delta; no financial writer, deploy, replay, or materialization.
+- Next action: request separate explicit approval before a **fourth** strictly bounded one-shot production READ ONLY matching preview. If approved, recheck exact master/runbook, reproduce the already tested private PowerShell 7 capture and SSH lifecycle checks, verify least-privilege temporary role/scope/private loopback, use direct private stdout/stderr files and strict validation, then close and independently verify temporary access cleanup. No authorization is implied by the local PASS. No financial writer, deploy, replay, certification materialization, or automatic retries.
+
+## Local SSH forwarding lifecycle rehearsal completed (operator report, 2026-10-10)
+
+The operator reported a **local-only**, privately stored PowerShell 7
+lifecycle wrapper fix: the old SSH child process inherited the invoking
+sandbox/job lifetime and disappeared across separate Codex calls. The
+previous harness also lacked PID start-time identity checks and could
+mistake an occupied port for healthy forwarding. The corrected private
+wrapper uses a persistent process outside the ephemeral sandbox,
+PID-plus-start-time identity, readiness and forwarded-endpoint liveness,
+bounded timeouts, PID reuse/occupied-port rejection, and idempotent cleanup.
+It reuses the independently rehearsed local JSON capture rather than
+rebuilding it using JavaScript template literals.
+
+Operator-reported gates:
+- `SSH_PERSISTENCE_ACROSS_COMMANDS=PASS`
+- `FORWARDED_ENDPOINT_TEST=PASS`
+- `READINESS_LIVENESS=PASS`
+- `FAILURE_CASES=PASS` (occupied port, premature exit, PID reuse,
+  stale process state, repeat cleanup)
+- `CLEANUP_NO_LEAKS=PASS`, with local test server stopped and ports freed
+- `PRODUCTION_TOUCHED=NO`, no repository code changes or PR for the
+  private-only launcher; `READY_FOR_NEW_AUTHORIZATION=YES`.
+
+The source of the private PowerShell wrapper and its synthetic runtime
+evidence were **not** copied into GitHub and have not been independently
+code-reviewed from the repository. These results document the operator's
+local rehearsal, not a production-level preview success. The first preview's
+aggregate JSON remains unrecovered, all matched-purchase preview decision
+counts are `UNCONFIRMED`, and the old certification delta's writer remains
+`UNCONFIRMED`.
+
+**Gate:** a fourth production preview is NOT authorized by these local
+results. Obtain fresh explicit one-shot approval first and apply the
+existing temporary-role/private-loopback/read-only/strict-output-validation
+and independent cleanup runbook without changes to financial data.
 
 ## Third preview attempt and independently approved cleanup (2026-10-10)
 
