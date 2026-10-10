@@ -26,7 +26,7 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `obtain separate approval for a short-lived least-privilege preview role, independently verify its exact 23-table column grants and single-scope boundary, then run one bounded exact-master read-only preview for literal scope `default`; do not run a writer, materialization, or automatic process
+- Next action: obtain separate approval for a short-lived least-privilege preview role, independently verify its exact 23-table column grants and single-scope boundary, then run one bounded exact-master read-only preview for literal scope `default`; do not run a writer, materialization, or automatic process.
 
 ## Read-only matching preview access preparation
 
