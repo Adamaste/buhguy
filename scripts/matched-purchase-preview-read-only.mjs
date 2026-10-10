@@ -27,6 +27,20 @@ const SUMMARY_FIELDS = Object.freeze([
 ]);
 const READINESS = new Set(['READY', 'REVIEW_REQUIRED']);
 const SAFE_REASON_CODES = new Set(['MATCHING_WINDOW_INVARIANCE_MISMATCH']);
+const PREVIEW_FAILURE_STAGES = new Set([
+  'POOL_CONNECT',
+  'TRANSACTION_BEGIN',
+  'SESSION_READ_ONLY',
+  'NARROW_PREVIEW',
+  'WIDE_PREVIEW',
+  'ROLLBACK',
+]);
+const PREVIEW_FAILURE_STAGE = Symbol('previewFailureStage');
+
+export function previewFailureStage(error) {
+  const stage = error?.[PREVIEW_FAILURE_STAGE];
+  return PREVIEW_FAILURE_STAGES.has(stage) ? stage : 'UNKNOWN';
+}
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -106,11 +120,14 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
   positiveBoundedInteger(PREVIEW_STATEMENT_TIMEOUT_MS, 'statementTimeoutMs');
   positiveBoundedInteger(PREVIEW_LOCK_TIMEOUT_MS, 'lockTimeoutMs');
   const preview = options.preview ?? previewMatchedPurchaseOrchestration;
+  let stage = 'POOL_CONNECT';
   const client = await pool.connect();
   let transactionOpen = false;
   try {
+    stage = 'TRANSACTION_BEGIN';
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     transactionOpen = true;
+    stage = 'SESSION_READ_ONLY';
     await client.query("SELECT set_config('statement_timeout',$1,true)", [`${PREVIEW_STATEMENT_TIMEOUT_MS}ms`]);
     await client.query("SELECT set_config('lock_timeout',$1,true)", [`${PREVIEW_LOCK_TIMEOUT_MS}ms`]);
     const readOnly = await client.query("SELECT current_setting('transaction_read_only') AS value");
@@ -120,10 +137,12 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
       receiptMaxTimeDeltaMs: APPROVED_RECEIPT_WINDOW_MS,
       logger: { info() {} },
     };
+    stage = 'NARROW_PREVIEW';
     const narrowResult = await preview(client, {
       ...previewOptions,
       internalTransferMaxTimeDeltaMs: APPROVED_INTERNAL_TRANSFER_WINDOW_MS,
     });
+    stage = 'WIDE_PREVIEW';
     const wideResult = await preview(client, {
       ...previewOptions,
       internalTransferMaxTimeDeltaMs: INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
@@ -140,7 +159,14 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
     transactionOpen = false;
     return safe;
   } catch (error) {
-    if (transactionOpen) await client.query('ROLLBACK').catch(() => {});
+    Object.defineProperty(error, PREVIEW_FAILURE_STAGE, { value: stage, configurable: true });
+    if (transactionOpen) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        Object.defineProperty(error, PREVIEW_FAILURE_STAGE, { value: 'ROLLBACK', configurable: true });
+      }
+    }
     throw error;
   } finally {
     client.release();
@@ -173,8 +199,8 @@ export async function main(argv = process.argv.slice(2)) {
     const result = await runReadOnlyMatchedPurchasePreview(pool, args);
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
     return result.readiness === 'READY' ? 0 : 2;
-  } catch {
-    process.stdout.write(`${JSON.stringify({ ok: false, status: 'TECHNICAL_ERROR', reasonCode: 'READ_ONLY_PREVIEW_FAILED', data: null })}\n`);
+  } catch (error) {
+    process.stdout.write(`${JSON.stringify({ ok: false, status: 'TECHNICAL_ERROR', reasonCode: 'READ_ONLY_PREVIEW_FAILED', stage: previewFailureStage(error), data: null })}\n`);
     return 1;
   } finally {
     await pool?.end().catch(() => {});

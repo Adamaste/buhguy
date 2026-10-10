@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
+  previewFailureStage,
   runReadOnlyMatchedPurchasePreview,
 } from '../scripts/matched-purchase-preview-read-only.mjs';
 
@@ -96,13 +97,35 @@ test('runner fails closed when the wide-window purchase identities or edges diff
 
 test('runner rolls back when the authoritative preview fails', async () => {
   const { pool, queries } = fakePool();
-  await assert.rejects(() => runReadOnlyMatchedPurchasePreview(pool, {
-    scopeKey: 'default',
-    from: '2026-10-06T00:00:00.000Z',
-    to: '2026-10-07T00:00:00.000Z',
-    preview: async () => { throw new Error('secret payload must not escape'); },
-  }), /secret payload/);
+  let error;
+  await assert.rejects(
+    () => runReadOnlyMatchedPurchasePreview(pool, {
+      scopeKey: 'default',
+      from: '2026-10-06T00:00:00.000Z',
+      to: '2026-10-07T00:00:00.000Z',
+      preview: async () => { throw new Error('secret payload must not escape'); },
+    }),
+    (candidate) => { error = candidate; return /secret payload/.test(candidate.message); },
+  );
+  assert.equal(previewFailureStage(error), 'NARROW_PREVIEW');
   assert.equal(queries.filter((query) => query.text === 'ROLLBACK').length, 1);
+});
+
+test('preview failure diagnostics expose only an allowlisted stage', async () => {
+  const { pool } = fakePool();
+  let error;
+  await assert.rejects(
+    () => runReadOnlyMatchedPurchasePreview(pool, {
+      scopeKey: 'default',
+      from: '2026-10-06T00:00:00.000Z',
+      to: '2026-10-07T00:00:00.000Z',
+      preview: async () => { throw new Error('secret payload'); },
+    }),
+    (candidate) => { error = candidate; return true; },
+  );
+  assert.equal(previewFailureStage(error), 'NARROW_PREVIEW');
+  assert.equal(Object.keys(error).includes('message'), false);
+  assert.equal(previewFailureStage(new Error('unknown')), 'UNKNOWN');
 });
 
 test('runner fails closed for invalid result contracts and bounded periods', async () => {
