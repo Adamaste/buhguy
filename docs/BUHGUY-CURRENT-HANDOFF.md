@@ -16,17 +16,42 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-09
-- Current implementation baseline: `bab619143a1bfde82bb9e126a1b47b9dd460d979` (exact current master after the PR #151 documentation closeout; the guarded canonical spending read service remains merged)
-- Current phase: `P0_RELIABILITY_DEVELOPMENT`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase and certification evidence remains documented and immutable
-- Current blocker: No parser gap blocks Person 1 MVP, but end-to-end autonomous reliability is not yet proven. Production migration 019 and analytics 011 are installed and the first separately authorized full unbounded certification materialization is recorded as READY run `3961` for scope `default`/id `1`; future ingestion can make it stale and no automatic rematerialization is enabled. Spending correctness, exact-decimal certification, the canonical read API, and the disposable return proof are merged. PR #152 is an open, unmerged MCP transport experiment and must not be continued or merged without a separate decision; MCP is not a current priority. The active P0 gap is bounded ingestion/retry/recovery, deduplication, evidence-to-ledger safety, certification freshness, and health/observability under normal failures. Production writes, deployment, replay, backfill, grants, and automatic materialization remain separately authorized operations only.
+- Last updated: 2026-10-10
+- Current implementation baseline: `8e2268f47eb80e8b69b5b88e3a1d65517cbe622d` (exact current master after merged PR #155 and PR #156; the exact-master read-only matched-purchase preview runner and explicit SQL-column projections are present)
+- Current phase: `P0_READ_ONLY_MATCHING_PREVIEW_PREPARATION`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase and certification evidence remains documented and immutable
+- Current blocker: The exact-master preview runner is ready, but no safe production preview credential exists. `receipt_collector` is unsuitable because it has DML and is missing seven required table SELECTs; `chatgpt_reader` has no access to the 23-table matching path; the private SSH path is currently catalog/admin-only. A short-lived column-allowlisted preview role and one fixed-scope operator run remain separately approved operations. No production role has been created and no preview has run.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: `produce the read-only P0 reliability baseline for Android capture/outbox, backend ingestion, deduplication, recovery and certification freshness, then implement the smallest reviewed reliability fix; do not continue PR #152`
+- Next action: `obtain separate approval for a short-lived least-privilege preview role, independently verify its exact 23-table column grants and single-scope boundary, then run one bounded exact-master read-only preview for literal scope `default`; do not run a writer, materialization, or automatic process
+
+## Read-only matching preview access preparation
+
+PR #155 and PR #156 are merged. The verified master is
+`8e2268f47eb80e8b69b5b88e3a1d65517cbe622d`; master CI
+`38048318293` passed. PR #156 removed wildcard reads from the matching and
+enrichment SQL path without changing the authoritative matcher or writer.
+
+The merged runner needs SELECT on 23 existing `public` tables, with an exact
+column allowlist documented in
+`docs/matched-purchase-preview-readonly-role-v1.md`. The prior bounded catalog
+audit found seven missing table SELECTs on `receipt_collector`, and that role
+also has DML, so it must not be reused. `chatgpt_reader` has no access to the
+path. One current accounting scope, `default`/id `1`, was observed, but
+column grants are not row isolation; the fixed operator scope and one-scope
+preflight are therefore mandatory.
+
+The next operational step is not yet executed: an independently approved
+administrator may create a short-lived LOGIN role with only the documented
+column SELECT grants, use the existing private SSH loopback for the exact
+master local runner, perform exactly one bounded `REPEATABLE READ READ ONLY`
+preview with literal scope `default`, verify aggregate persistence state is
+unchanged, and revoke/disable/drop the role. No role, grant, preview, writer,
+materialization, deployment, replay, backfill, or production data change was
+performed for this preparation.
 
 ## Account-transfer preparation closeout
 
