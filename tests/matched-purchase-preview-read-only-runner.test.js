@@ -16,7 +16,7 @@ function fakePool() {
       if (String(text).includes("current_setting('transaction_read_only')")) return { rows: [{ value: 'on' }] };
       return { rows: [] };
     },
-    release() { queries.push({ text: 'RELEASE' }); },
+    release(destroy = false) { queries.push({ text: 'RELEASE', destroy }); },
   };
   return { pool: { async connect() { return client; } }, client, queries };
 }
@@ -30,7 +30,7 @@ function configurablePool({ connect, query, release } = {}) {
       if (String(text).includes("current_setting('transaction_read_only')")) return { rows: [{ value: 'on' }] };
       return { rows: [] };
     },
-    release() { queries.push({ text: 'RELEASE' }); release?.(); },
+    release(destroy = false) { queries.push({ text: 'RELEASE', destroy }); release?.(destroy); },
   };
   return {
     pool: { async connect() { if (connect) return connect(client, queries); return client; } },
@@ -89,6 +89,7 @@ test('runner passes one transaction client to the authoritative preview and emit
   assert.deepEqual(queries.slice(1, 3).map((query) => query.params[0]), ['120000ms', '5000ms']);
   assert.equal(queries.some((query) => /INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP/i.test(query.text)), false);
   assert.equal(queries.at(-2).text, 'ROLLBACK');
+  assert.deepEqual(queries.at(-1), { text: 'RELEASE', destroy: false });
 });
 
 test('runner fails closed when the wide-window purchase identities or edges differ', async () => {
@@ -160,6 +161,7 @@ test('runner classifies read-only, wide preview, result validation and rollback 
     scopeKey: 'default', from: '2026-10-06T00:00:00.000Z', to: '2026-10-07T00:00:00.000Z',
     preview: async () => ({ modelVersion: 'matched-purchase-writer-orchestration-v1', readiness: 'READY', summary: validSummary }),
   }), (error) => { assert.equal(previewFailureStage(error), 'ROLLBACK'); return true; });
+  assert.deepEqual(rollbackFailure.queries.at(-1), { text: 'RELEASE', destroy: true });
 
   const cleanupRollbackFailure = configurablePool({ query: async (text) => {
     if (text === 'ROLLBACK') throw new Error('database secret');
@@ -170,6 +172,7 @@ test('runner classifies read-only, wide preview, result validation and rollback 
     preview: async () => { throw 'preview secret'; },
   }), (error) => { assert.equal(previewFailureStage(error), 'ROLLBACK'); return true; });
   assert.equal(cleanupRollbackFailure.queries.filter((query) => query.text === 'ROLLBACK').length, 1);
+  assert.deepEqual(cleanupRollbackFailure.queries.at(-1), { text: 'RELEASE', destroy: true });
 });
 
 test('technical output is exact, safe, and stage-enum compatible', () => {

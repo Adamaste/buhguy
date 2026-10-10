@@ -147,6 +147,7 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
   let stage = 'POOL_CONNECT';
   let client = null;
   let transactionOpen = false;
+  let destroyClient = false;
   try {
     client = await pool.connect();
     stage = 'TRANSACTION_BEGIN';
@@ -187,18 +188,20 @@ export async function runReadOnlyMatchedPurchasePreview(pool, options = {}) {
     return safe;
   } catch (error) {
     const failureStage = stage;
+    if (failureStage === 'ROLLBACK') destroyClient = true;
     if (transactionOpen && failureStage !== 'ROLLBACK') {
       stage = 'ROLLBACK';
       try {
         await client.query('ROLLBACK');
         transactionOpen = false;
       } catch (rollbackError) {
+        destroyClient = true;
         throw tagPreviewFailure(rollbackError, 'ROLLBACK');
       }
     }
     throw tagPreviewFailure(error, failureStage);
   } finally {
-    try { client?.release(); } catch { /* release must not replace the safe result */ }
+    try { client?.release(destroyClient); } catch { /* release must not replace the safe result */ }
   }
 }
 
