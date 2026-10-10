@@ -160,6 +160,16 @@ test('runner classifies read-only, wide preview, result validation and rollback 
     scopeKey: 'default', from: '2026-10-06T00:00:00.000Z', to: '2026-10-07T00:00:00.000Z',
     preview: async () => ({ modelVersion: 'matched-purchase-writer-orchestration-v1', readiness: 'READY', summary: validSummary }),
   }), (error) => { assert.equal(previewFailureStage(error), 'ROLLBACK'); return true; });
+
+  const cleanupRollbackFailure = configurablePool({ query: async (text) => {
+    if (text === 'ROLLBACK') throw new Error('database secret');
+    return String(text).includes("current_setting('transaction_read_only')") ? { rows: [{ value: 'on' }] } : { rows: [] };
+  } });
+  await assert.rejects(() => runReadOnlyMatchedPurchasePreview(cleanupRollbackFailure.pool, {
+    scopeKey: 'default', from: '2026-10-06T00:00:00.000Z', to: '2026-10-07T00:00:00.000Z',
+    preview: async () => { throw 'preview secret'; },
+  }), (error) => { assert.equal(previewFailureStage(error), 'ROLLBACK'); return true; });
+  assert.equal(cleanupRollbackFailure.queries.filter((query) => query.text === 'ROLLBACK').length, 1);
 });
 
 test('technical output is exact, safe, and stage-enum compatible', () => {
