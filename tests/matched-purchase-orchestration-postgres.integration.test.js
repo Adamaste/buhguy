@@ -217,6 +217,37 @@ integration('read-only runner uses one PostgreSQL snapshot and leaves persistenc
   } finally { await pool.end(); }
 });
 
+integration('read-only runner stops when the wide window changes a purchase edge', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-runner-invariance');
+    const before = await snapshot(pool);
+    const result = await runReadOnlyMatchedPurchasePreview(pool, {
+      scopeKey: fixture.scopeKey,
+      from: '2026-10-06T00:00:00.000Z',
+      to: '2026-10-07T00:00:00.000Z',
+      preview: async (client, options) => {
+        const result = await previewMatchedPurchaseOrchestration(client, {
+          scopeKey: fixture.scopeKey,
+          from: options.from,
+          to: options.to,
+          internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
+          receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
+          logger: options.logger,
+        });
+        if (options.internalTransferMaxTimeDeltaMs === 5000) return result;
+        return {
+          ...result,
+          decisions: result.decisions.map((row) => ({ ...row, matchKey: 'b'.repeat(64) })),
+        };
+      },
+    });
+    assert.equal(result.readiness, 'REVIEW_REQUIRED');
+    assert.equal(result.reasonCode, 'MATCHING_WINDOW_INVARIANCE_MISMATCH');
+    assert.equal(await snapshot(pool), before);
+  } finally { await pool.end(); }
+});
+
 integration('read-only runner rejects a mutation at the PostgreSQL boundary and rolls back', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {

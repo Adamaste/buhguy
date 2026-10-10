@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runReadOnlyMatchedPurchasePreview } from '../scripts/matched-purchase-preview-read-only.mjs';
+import {
+  INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
+  runReadOnlyMatchedPurchasePreview,
+} from '../scripts/matched-purchase-preview-read-only.mjs';
 
 function fakePool() {
   const queries = [];
@@ -30,17 +33,17 @@ const validSummary = {
 
 test('runner passes one transaction client to the authoritative preview and emits aggregate-only output', async () => {
   const { pool, client, queries } = fakePool();
-  let receivedClient = null;
+  const calls = [];
   const result = await runReadOnlyMatchedPurchasePreview(pool, {
     scopeKey: 'default',
     from: '2026-10-06T00:00:00.000Z',
     to: '2026-10-07T00:00:00.000Z',
     preview: async (previewClient, options) => {
-      receivedClient = previewClient;
+      calls.push({ previewClient, options });
       assert.equal(options.scopeKey, 'default');
       assert.equal(options.from, '2026-10-06T00:00:00.000Z');
       assert.equal(options.to, '2026-10-07T00:00:00.000Z');
-      assert.equal(options.internalTransferMaxTimeDeltaMs, 5000);
+      assert.ok([5000, INVARIANT_INTERNAL_TRANSFER_WINDOW_MS].includes(options.internalTransferMaxTimeDeltaMs));
       assert.equal(options.receiptMaxTimeDeltaMs, 300000);
       assert.equal(typeof options.logger.info, 'function');
       return {
@@ -51,7 +54,10 @@ test('runner passes one transaction client to the authoritative preview and emit
       };
     },
   });
-  assert.equal(receivedClient, client);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].previewClient, client);
+  assert.equal(calls[1].previewClient, client);
+  assert.deepEqual(calls.map(({ options }) => options.internalTransferMaxTimeDeltaMs), [5000, INVARIANT_INTERNAL_TRANSFER_WINDOW_MS]);
   assert.deepEqual(result, {
     modelVersion: 'matched-purchase-writer-orchestration-v1',
     readiness: 'READY',
@@ -62,6 +68,30 @@ test('runner passes one transaction client to the authoritative preview and emit
   assert.deepEqual(queries.slice(1, 3).map((query) => query.params[0]), ['120000ms', '5000ms']);
   assert.equal(queries.some((query) => /INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP/i.test(query.text)), false);
   assert.equal(queries.at(-2).text, 'ROLLBACK');
+});
+
+test('runner fails closed when the wide-window purchase identities or edges differ', async () => {
+  const { pool, queries } = fakePool();
+  const result = await runReadOnlyMatchedPurchasePreview(pool, {
+    scopeKey: 'default',
+    from: '2026-10-06T00:00:00.000Z',
+    to: '2026-10-07T00:00:00.000Z',
+    preview: async (_client, options) => ({
+      modelVersion: 'matched-purchase-writer-orchestration-v1',
+      readiness: 'READY',
+      summary: validSummary,
+      decisions: options.internalTransferMaxTimeDeltaMs === 5000 ? [{ matchKey: 'a'.repeat(64) }] : [{ matchKey: 'b'.repeat(64) }],
+      bankStatuses: [],
+      receiptStatuses: [],
+    }),
+  });
+  assert.deepEqual(result, {
+    modelVersion: 'matched-purchase-writer-orchestration-v1',
+    readiness: 'REVIEW_REQUIRED',
+    reasonCode: 'MATCHING_WINDOW_INVARIANCE_MISMATCH',
+    summary: validSummary,
+  });
+  assert.equal(queries.filter((query) => query.text === 'ROLLBACK').length, 1);
 });
 
 test('runner rolls back when the authoritative preview fails', async () => {
