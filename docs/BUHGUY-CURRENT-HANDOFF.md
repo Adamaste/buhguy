@@ -18,15 +18,61 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 
 - Last updated: 2026-10-10
 - Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
-- Current phase: `P0_AWAITING_FOURTH_ONE_SHOT_READ_ONLY_PREVIEW_AUTHORIZATION`; three separately authorized production preview cycles produced no recoverable authoritative aggregates (first executed but stdout lost; second and third did not execute the runner). After complete cleanup, operator-reported synthetic local SSH forwarding and JSON capture gates PASS. No new production approval has been given.
-- Current blocker: The local SSH tunnel's sandbox/job lifecycle failure has an operator-reported local-only fix and synthetic PASS, but no fourth production preview has been authorized. Original matching counts/readiness remain UNCONFIRMED. The first-preview certification-only delta has no established writer provenance; do not classify it as routine or attributable to the preview.
+- Current phase: `P0_FOURTH_READ_ONLY_PREVIEW_TECHNICAL_ERROR_DIAGNOSTICS`; fourth separately approved production preview executed exactly once and returned only a validated technical-error envelope. All ten matching aggregate counts remain `UNCONFIRMED`. Authorization is consumed; no fifth run approved.
+- Current blocker: fourth-run root cause is `UNCONFIRMED`: exact-master runner suppresses exception details and returned `TECHNICAL_ERROR/READ_ONLY_PREVIEW_FAILED` without a stage. A safe stage-only diagnostic change is proposed in draft PR #163 but not yet fully tested or merged. Original matching counts/readiness remain `UNCONFIRMED`. First-preview certification-only delta still has no established writer provenance.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: request separate explicit approval before a **fourth** strictly bounded one-shot production READ ONLY matching preview. If approved, recheck exact master/runbook, reproduce the already tested private PowerShell 7 capture and SSH lifecycle checks, verify least-privilege temporary role/scope/private loopback, use direct private stdout/stderr files and strict validation, then close and independently verify temporary access cleanup. No authorization is implied by the local PASS. No financial writer, deploy, replay, certification materialization, or automatic retries.
+- Next action: complete draft PR #163 review fixes and exact-HEAD isolated Node 22 + disposable PostgreSQL integration testing; synchronize the private strict JSON validator with the new allowlisted technical stage envelope. No further production preview, SSH/database access, role/grants, financial writer, deploy, replay, or certification materialization without a fresh explicit authorization. Do not rerun automatically.
+
+## Fourth one-shot production read-only preview result (operator report, 2026-10-10)
+
+The user separately and explicitly authorized the **fourth** one-shot
+production read-only matched-purchase preview on 2026-10-10. The operator
+reported exact master `f5530daf2d07f5258a31cc589c33bb817748e7a1`,
+scope `default`, period
+`2026-09-27T13:48:18Z`–`2026-10-10T16:18:16.138Z`,
+`PREVIEW_EXECUTED=YES`, `PREVIEW_RUN_COUNT=1`. This authorization has
+been **consumed**, including though the command failed.
+
+Previously private local stdout/stderr/exit artifacts were inspected without
+new production access. Stdout contained one valid **technical error** envelope:
+`ok=false`, `status=TECHNICAL_ERROR`,
+`reasonCode=READ_ONLY_PREVIEW_FAILED`, `data=null`; stderr was empty and
+native exit code was 1. `TECHNICAL_ERROR_ENVELOPE_VALID=YES` is **not**
+an aggregate-output validation pass:
+`JSON_CAPTURE_VALIDATED=NO`, `PREVIEW_READINESS=TECHNICAL_ERROR`,
+and **all ten preview matching/eligibility counts remain `UNCONFIRMED`**.
+The exact-master runner catches errors without emitting an error stage.
+`ROOT_CAUSE=UNCONFIRMED` — do not assert any particular SQL, connection,
+permission, timeout or matcher failure.
+
+Operator-reported persistence postcheck found no changes in the compared
+counts (`NO_OBSERVED_CHANGE_IN_COMPARED_COUNTS`). Exact certification delta
+is `UNCONFIRMED` because the complete fact baseline was not captured.
+The report states temporary role cleanup `COMPLETE`, SSH cleanup
+`COMPLETE`, and `PRODUCTION_FINANCIAL_WRITES=NO`. These are operator
+reports, not independent live verification.
+
+A minimal diagnostic-stage branch was pushed at
+`dc6ef11e220e8b097510ce764d14ddde17e45431`, now under **draft
+PR #163**. Initial local synthetic stage tests, targeted checks,
+`npm run check`, and `git diff --check` were reported PASS, but the full
+suite failed in a Windows sandbox (`EPERM`/`fetch failed`) and isolated
+PostgreSQL integration was **NOT RUN** (Docker unavailable).
+Independent review of PR #163 identified stage coverage and strict JSON
+capture compatibility gaps. PR #163 must not merge until repaired and the
+exact-head local/disposable PostgreSQL acceptance gate passes per
+`docs/BUHGUY-LOCAL-TESTING.md`. No GitHub Actions runs were triggered.
+
+**Next gate:** finish local-only diagnostics, fix/test the strict stage-coded
+envelope, then decide whether an independently approved narrowly bounded
+production diagnostic is even needed. There is **no authorization** for a
+fifth preview, new production tunnel, grants or role, writer, deployment,
+replay, catch-up, certification materialization, or automatic retry.
 
 ## Local SSH forwarding lifecycle rehearsal completed (operator report, 2026-10-10)
 
