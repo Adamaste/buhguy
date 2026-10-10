@@ -277,6 +277,69 @@ scope value other than `default` is a STOP condition. The runner's approved
 receipt window is 300000ms and its internal-transfer window is 5000ms, with a
 same-snapshot invariance check at 3600000ms.
 
+## Terminal-independent aggregate capture and recovery
+
+**2026-10-10 operator observation:** the first approved production preview was
+invoked, but the safe output could not be recovered after terminal overflow.
+The operator reported full role/tunnel cleanup. No authoritative decision
+counts were recovered; certification-table changes in the persistence
+postcheck have not had their provenance independently verified. This
+observation does not authorize another production run.
+
+Before any new production access, check whether the *existing* local session
+already retained the original JSON result (redirected stdout file, local
+process transcript, or original command-session capture). Do not re-execute a
+command to obtain it. Examine only local files already created by the
+previous session; never display unreviewed stdout/stderr or shell transcripts
+in ChatGPT, Git, CI, or a shared terminal. Reject incomplete, truncated,
+multi-object, or unvalidated output. If absent, record `NOT_RECOVERED`.
+
+The Node runner itself emits one short, curated JSON object to stdout
+(`ok`, `modelVersion`, `readiness`, optional `reasonCode`, and the
+ten bounded nonnegative integer summary fields), or one generic
+`TECHNICAL_ERROR` object. It does not normally emit raw evidence.
+Terminal wrappers, shells, or unexpected dependencies may print more.
+For **a separately approved future run**, redirect the process stdout
+directly to a private local file, not through a tool that truncates terminal
+output. Keep stderr in a separate private file, never print it without
+review. For example, in an approved local PowerShell operator session:
+
+```powershell
+# Ensure this directory has operator-only ACLs before creating files;
+# otherwise STOP. It must be outside Git, backups and shared/cloud sync.
+$dir = Join-Path $env:LOCALAPPDATA 'buhguy-private-preview'
+$stdout = Join-Path $dir 'preview-aggregate.json'
+$stderr = Join-Path $dir 'preview-stderr.private'
+# The operator must independently choose and record one concrete UTC cutoff.
+# Run the exact approved command once, with all approved role/tunnel gates.
+& node scripts/matched-purchase-preview-read-only.mjs `
+  --scope-key default `
+  --from 2026-09-27T13:48:18Z `
+  --to <approved-utc-cutoff> 1> $stdout 2> $stderr
+$exitCode = $LASTEXITCODE
+# Do NOT output these files to the terminal. Validate privately first.
+```
+
+This is a **capture illustration**, not permission to execute it now.
+Before displaying *any* result, locally verify that stdout is a single JSON
+object of bounded size, with exactly the allowed keys and all ten summary
+counts present, nonnegative safe integers. Verify `ok`, `readiness`,
+`reasonCode`, and native process exit code are consistent (READY=0,
+REVIEW_REQUIRED=2, technical failure=1). Refuse unknown keys, extra text,
+missing fields, malformed or truncated JSON, or nonempty unexpected stderr.
+Only then print a constructed allowlisted aggregate report, never the
+unreviewed file content. Store files temporarily with private ACLs and
+delete them under the operator's normal local retention rules after safely
+recording the verified aggregate report.
+
+If certification-table counts or hashes change during verification, use
+the already authorized independent read-only provenance/audit path to
+determine the actor and run/reason, if available. Concurrent ingestion is a
+possibility, not evidence of an authorized certification write. Stop the
+operation rather than classifying unexplained certification changes as
+benign. No replay, materialization, writer, or grants are authorized by
+this section.
+
 ## One-run procedure
 
 The following sequence is intentionally one-shot and fail-closed:
