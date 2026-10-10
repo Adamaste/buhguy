@@ -19,9 +19,9 @@ export async function runAccountingCatchup(pool, {
   const standalone = await standaloneMatcher(pool, { scopeKey });
   const returns = await returnMatcher(pool, { scopeKey });
   const ledger = await ledgerBuilder(pool, { scopeKey });
-  // Replace only this accounting scope's derived certification run so a
-  // changed source-state fingerprint cannot accumulate duplicate facts.
-  const certification = await certificationBuilder(pool, { scopeKey, persist: true, replace: true });
+  // Reuse an exact READY snapshot, but replace the current snapshot when the
+  // source state changes so routine catch-up cannot accumulate old full runs.
+  const certification = await certificationBuilder(pool, { scopeKey, persist: true, replace: true, reuseUnchanged: true });
   const result = { prepayments, standalone, returns, ledger, certification };
   logger.info?.('accounting_catchup_completed', {
     scopeKey,

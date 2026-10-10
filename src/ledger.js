@@ -184,6 +184,55 @@ async function ensureAccounts(tx, scopeKey) {
   return accounts;
 }
 
+async function loadPersistedLedgerState(pool, scopeKey, eventIds = null) {
+  const scope = (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
+  if (!scope) return { entries: [], postings: [], links: [] };
+  const filter = eventIds?.length ? ' AND e.source_event_id = ANY($2::bigint[])' : '';
+  const params = eventIds?.length ? [scope.id, eventIds] : [scope.id];
+  const entries = (await pool.query(`SELECT e.id,e.source_event_id,e.currency,e.event_at,e.semantic_key,e.derivation_rule,e.derivation_version,e.derivation_status,e.certification_status,e.reason_code,e.description
+    FROM ledger_entries e
+    WHERE e.scope_id=$1 AND e.origin='SYSTEM_DERIVED'
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter}
+    ORDER BY e.id`, params)).rows;
+  const entryIds = entries.map((entry) => Number(entry.id));
+  if (!entryIds.length) return { entries, postings: [], links: [] };
+  const postings = (await pool.query(`SELECT p.ledger_entry_id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id
+    FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id
+    WHERE p.ledger_entry_id=ANY($1::bigint[]) ORDER BY p.ledger_entry_id,p.id`, [entryIds])).rows;
+  const links = (await pool.query(`SELECT ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role
+    FROM ledger_source_links WHERE ledger_entry_id=ANY($1::bigint[]) ORDER BY ledger_entry_id,id`, [entryIds])).rows;
+  return { entries, postings, links };
+}
+
+function ledgerProjectionMatches(projection, persisted) {
+  const existingByEvent = new Map(persisted.entries.map((entry) => [String(entry.source_event_id), entry]));
+  const persistedEntryById = new Map(persisted.entries.map((entry) => [Number(entry.id), entry]));
+  const stableRows = (rows) => rows
+    .map((row) => row.map((value) => value === null || value === undefined ? null : String(value)))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const projectedPostings = projection.entries.flatMap((entry) => entry.postings.map((posting) => [entry.sourceEventId, posting.account, entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]));
+  const persistedPostings = persisted.postings.map((posting) => [persistedEntryById.get(Number(posting.ledger_entry_id))?.source_event_id, posting.account_code, posting.currency, posting.debit, posting.credit, posting.source_allocation_id, posting.source_receipt_id]);
+  const projectedLinks = projection.entries.flatMap((entry) => entry.links.map((link) => [entry.sourceEventId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role]));
+  const persistedLinks = persisted.links.map((link) => [persistedEntryById.get(Number(link.ledger_entry_id))?.source_event_id, link.business_event_id, link.graph_evidence_id, link.graph_allocation_id, link.receipt_id, link.normalization_version, link.link_role]);
+  const projectedEntries = projection.entries.map((entry) => [entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.reasonCode ?? null, entry.description ?? null]);
+  const persistedEntryRows = persisted.entries.map((entry) => [entry.source_event_id, entry.currency, entry.event_at, entry.semantic_key, entry.derivation_rule, entry.derivation_version, entry.derivation_status, entry.certification_status, entry.reason_code, entry.description]);
+  return persisted.entries.length === projection.entries.length
+    && JSON.stringify(stableRows(persistedEntryRows)) === JSON.stringify(stableRows(projectedEntries))
+    && JSON.stringify(stableRows(persistedPostings)) === JSON.stringify(stableRows(projectedPostings))
+    && JSON.stringify(stableRows(persistedLinks)) === JSON.stringify(stableRows(projectedLinks))
+    && projection.entries.every((entry) => {
+      const current = existingByEvent.get(String(entry.sourceEventId));
+      return current
+        && current.semantic_key === entry.semanticKey
+        && current.derivation_rule === entry.derivationRule
+        && current.derivation_version === entry.derivationVersion
+        && current.derivation_status === entry.derivationStatus
+        && current.certification_status === entry.certificationStatus
+        && current.reason_code === (entry.reasonCode ?? null)
+        && current.description === (entry.description ?? null);
+    });
+}
+
 async function persistEntry(tx, entry, accounts) {
   const row = (await tx.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description)
     VALUES((SELECT id FROM accounting_scopes WHERE scope_key=$1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
@@ -209,6 +258,12 @@ async function persistEntry(tx, entry, accounts) {
 export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null, projection: providedProjection = null, client: transactionClient = null } = {}) {
   const projection = providedProjection ?? await loadLedgerProjection(pool, scopeKey, eventIds);
   if (dryRun) return summarizeLedgerProjection(projection);
+  if (!replace && !transactionClient) {
+    const persisted = await loadPersistedLedgerState(pool, scopeKey, eventIds);
+    if (ledgerProjectionMatches(projection, persisted)) {
+      return { ...summarizeLedgerProjection(projection), changed: false, created: { entries: 0, postings: 0, links: 0, blocked: 0 }, balancedViolations: 0 };
+    }
+  }
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {

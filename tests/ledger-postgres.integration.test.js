@@ -21,6 +21,16 @@ integration('Ledger V1 clone persist, idempotency, concurrency and rollback', { 
     assert.ok(baselineEntries >= 0);
     const after = (await pool.query('SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM receipt_items) AS items,(SELECT count(*) FROM receipt_raw) AS raw,(SELECT count(*) FROM receipt_fiscal_facts) AS facts,(SELECT count(*) FROM receipt_item_fiscal_facts) AS item_facts,(SELECT count(*) FROM business_events) AS events,(SELECT count(*) FROM business_event_edges) AS edges,(SELECT count(*) FROM business_event_allocations) AS allocations')).rows[0];
     assert.deepEqual(after, before);
+    const persistedFirst = await rebuildLedger(pool, { eventIds });
+    const writeStatsBeforeReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('ledger_entries','ledger_postings','ledger_source_links') ORDER BY relname`)).rows;
+    const persistedSecond = await rebuildLedger(pool, { eventIds });
+    assert.equal(persistedSecond.changed, false);
+    assert.equal(persistedSecond.created.entries, 0);
+    assert.equal(persistedFirst.entries, persistedSecond.entries);
+    const writeStatsAfterReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('ledger_entries','ledger_postings','ledger_source_links') ORDER BY relname`)).rows;
+    assert.deepEqual(writeStatsAfterReplay, writeStatsBeforeReplay);
     const balance = await pool.query('SELECT count(*) AS violations FROM (SELECT ledger_entry_id FROM ledger_postings GROUP BY ledger_entry_id HAVING SUM(debit) <> SUM(credit)) q');
     assert.equal(Number(balance.rows[0].violations), 0);
   } finally {

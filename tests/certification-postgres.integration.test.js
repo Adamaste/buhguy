@@ -28,12 +28,25 @@ test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe',
     assert.equal(bounded.bounded, true);
     const second = await rebuildCertification(pool, { persist: true, from, to });
     assert.equal(second.facts.length, first.facts.length);
+    assert.equal(second.reused, true);
     const secondRows = await pool.query('SELECT (SELECT count(*) FROM reconciliation_runs)::int AS runs, (SELECT count(*) FROM reconciliation_results)::int AS results');
     assert.ok(secondRows.rows[0].runs >= firstRows.rows[0].runs);
     assert.ok(secondRows.rows[0].results >= firstRows.rows[0].results);
+    const writeStatsBeforeReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('reconciliation_runs','certification_facts','reconciliation_results') ORDER BY relname`)).rows;
     const repeated = [];
     for (let index = 0; index < 3; index += 1) repeated.push(await rebuildCertification(pool, { persist: true, from, to }));
     assert.equal(repeated.length, 3);
+    assert.ok(repeated.every((result) => result.reused === true && result.refreshed === false));
+    const writeStatsAfterReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('reconciliation_runs','certification_facts','reconciliation_results') ORDER BY relname`)).rows;
+    assert.deepEqual(writeStatsAfterReplay, writeStatsBeforeReplay);
+    const stateBeforeChange = second.sourceStateKey;
+    await pool.query("UPDATE ledger_entries SET description=COALESCE(description,'') || ' noop-gate-fixture-change' WHERE id=(SELECT id FROM ledger_entries ORDER BY id LIMIT 1)");
+    const changed = await rebuildCertification(pool, { persist: true, replace: true, reuseUnchanged: true, from, to });
+    assert.notEqual(changed.sourceStateKey, stateBeforeChange);
+    assert.equal(changed.reused, false);
+    assert.equal(Number((await pool.query('SELECT count(*) FROM reconciliation_runs')).rows[0].count), 1);
     const baseline = await counts();
     await assert.rejects(() => rebuildCertification(pool, { persist: true, replace: true, from, to, failAfter: 1 }), /injected certification failure/);
     const afterFailure = await counts();
