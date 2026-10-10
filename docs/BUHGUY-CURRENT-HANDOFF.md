@@ -26,7 +26,47 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: search for the original preview's safe JSON in existing local session files/transcripts WITHOUT any DB operation or exposing secrets; independently establish certification change provenance by existing approved bounded READ ONLY evidence if available. If JSON is unrecoverable, rehearse a local terminal-independent JSON capture/validation mechanism on synthetic data, then obtain a NEW explicit approval before another temporary role, grants or production preview. No writer, deploy or materialization.
+- Next action: the original safe JSON is confirmed NOT_RECOVERED; local private-file output capture rehearsal PASS. Certification-table replacement-pattern changes have no established writer provenance; preserve UNCONFIRMED, do not assert normal/authorized or unauthorized origin. Before an additional production preview, obtain a NEW explicit one-shot production authorization, revalidate all scope/grant/SSH gates, and save the bounded aggregate JSON directly to a private local file (strictly validated) with cleanup. No writer, deploy, replay or materialization.
+
+## Certification postcheck provenance follow-up (2026-10-10)
+
+The operator investigated the first preview's unexplained certification-table
+postcheck change **without production access or code changes**. The original
+JSON could not be recovered (terminal output truncated; no separate file).
+A local rehearsal of direct safe JSON capture completed PASS, but no real
+preview readiness or match counts have been recovered.
+
+The observed before/after counts and maximum sequence IDs were:
+- `reconciliation_runs`: count 1 -> 1; max ID 4125 -> 4126
+- `certification_facts`: count 5875 -> 5875; max ID 13487702 -> 13493577
+- `reconciliation_results`: count 8 -> 8; max ID 24702 -> 24710
+
+The only established bounding window is
+2026-10-10T11:51:50.675Z–2026-10-10T12:09:21.935Z. The identical row
+counts and exactly count-sized ID deltas are **consistent with** a full
+certification snapshot replacement. They do not prove a particular SQL
+statement or writer. The source-controlled
+`runAccountingCatchup() -> rebuildCertification(persist=true, replace=true)`
+path is one plausible source; ledger/writer-triggered refresh, explicit CLI,
+guarded materialization, and scheduled sync paths also exist. The one-shot
+matched-purchase preview is READ ONLY and has no certification write path.
+
+`WRITER_PROVENANCE=UNCONFIRMED` and
+`UNAUTHORIZED_WRITE_EVIDENCE=NOT_PROVEN`. The retained local artifacts
+contain no historical PostgreSQL statement audit, actor identity, or
+authoritative run metadata for this interval. Do not infer an actor or
+legitimate schedule from the counts, nor expect missing historical
+statement-level logs to be recreated retroactively. If reliable existing
+server logs or run metadata later become available, review them via an
+independently authorized narrow READ ONLY investigation; no further
+unbounded archaeology is a release gate for a non-mutating preview.
+
+A second production read-only preview remains separately authorized only
+after new explicit approval, because the previously approved one-shot cycle
+was consumed. It must record stdout in a private file, validate exactly the
+safe JSON contract/exit status, report only aggregates, recheck isolation
+and persistence, and remove the temporary role. This is **not** permission
+to write, catch up, certify, backfill, or deploy.
 
 ## Temporary GitHub Actions pause and local test gate (2026-10-10)
 
