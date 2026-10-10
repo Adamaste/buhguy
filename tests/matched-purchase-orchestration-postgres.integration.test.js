@@ -7,6 +7,7 @@ import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
 import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
+import { runReadOnlyMatchedPurchasePreview } from '../scripts/matched-purchase-preview-read-only.mjs';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -194,6 +195,42 @@ integration('preview snapshot remains unchanged for ambiguous and unmatched evid
     assert.equal(result.summary.matchedPairs, 0);
     assert.equal(result.summary.ambiguousBankPurchases, 2);
     assert.equal(result.summary.ambiguousReceipts, 2);
+    assert.equal(await snapshot(pool), before);
+  } finally { await pool.end(); }
+});
+
+integration('read-only runner uses one PostgreSQL snapshot and leaves persistence unchanged', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-runner');
+    const before = await snapshot(pool);
+    const result = await runReadOnlyMatchedPurchasePreview(pool, {
+      scopeKey: fixture.scopeKey,
+      from: '2026-10-06T00:00:00.000Z',
+      to: '2026-10-07T00:00:00.000Z',
+    });
+    assert.equal(result.ok, undefined);
+    assert.equal(result.readiness, 'READY');
+    assert.equal(result.summary.persistRequired, 1);
+    assert.equal(result.summary.alreadyPersisted, 0);
+    assert.equal(await snapshot(pool), before);
+  } finally { await pool.end(); }
+});
+
+integration('read-only runner rejects a mutation at the PostgreSQL boundary and rolls back', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'preview-runner-rollback');
+    const before = await snapshot(pool);
+    await assert.rejects(() => runReadOnlyMatchedPurchasePreview(pool, {
+      scopeKey: fixture.scopeKey,
+      from: '2026-10-06T00:00:00.000Z',
+      to: '2026-10-07T00:00:00.000Z',
+      preview: async (client) => {
+        await client.query('INSERT INTO receipts DEFAULT VALUES');
+        return null;
+      },
+    }), /read-only|25006/i);
     assert.equal(await snapshot(pool), before);
   } finally { await pool.end(); }
 });
