@@ -235,7 +235,7 @@ function ledgerProjectionMatches(projection, persisted) {
        const entry = persistedEntryById.get(Number(link.ledger_entry_id));
        return entry
          && Number(link.business_event_id) === Number(entry.source_event_id)
-         && Number(link.bank_receipt_match_id) > 0
+         && (link.bank_receipt_match_id === null || Number(link.bank_receipt_match_id) > 0)
          && Number(link.bank_transaction_id) > 0
          && link.semantic_key;
      })
