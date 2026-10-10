@@ -28,6 +28,31 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
 - Next action: search for the original preview's safe JSON in existing local session files/transcripts WITHOUT any DB operation or exposing secrets; independently establish certification change provenance by existing approved bounded READ ONLY evidence if available. If JSON is unrecoverable, rehearse a local terminal-independent JSON capture/validation mechanism on synthetic data, then obtain a NEW explicit approval before another temporary role, grants or production preview. No writer, deploy or materialization.
 
+## Temporary GitHub Actions pause and local test gate (2026-10-10)
+
+GitHub notified the Adamaste account that its 2,000 included Actions minutes
+are fully used for the current billing period, resetting 2026-11-01. The
+user explicitly requested no automatic GitHub-hosted test runs until reset,
+and authorized running all checks locally on a development machine or isolated
+test server. In `.github/workflows/ci.yml`, the `push` and `pull_request`
+triggers are temporarily removed; `workflow_dispatch` remains available for
+exceptional explicitly authorized use only. Neither routine pushes nor PRs
+should spend Actions minutes during the pause.
+
+The test suite itself is unchanged. For backend/financial code PRs use
+exact-HEAD Node 22 check/unit/integration results, with PostgreSQL 16 via the
+existing **disposable Docker test database** runner, never the production DB.
+Android changes require isolated local Android SDK/Gradle tests. Do not merge
+functional PRs when required local integration tests were skipped. Review
+real PR diffs and threads, not a fictitious green CI status. Details and
+the November restore steps are in `docs/BUHGUY-LOCAL-TESTING.md`.
+
+The active P0 step remains recovering the first preview's lost aggregate
+result from existing local artifacts without production access, and
+clarifying unexplained certification changes. Pausing GitHub CI does not
+authorize production role creation, rerunning preview, data mutation,
+deployments, or certification materialization.
+
 ## First one-shot preview result and cleanup (2026-10-10)
 
 The operator's report for the separately approved, one-time production cycle
