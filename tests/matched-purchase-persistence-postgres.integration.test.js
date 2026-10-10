@@ -353,6 +353,10 @@ integration('refresh and rebuild fail closed for future and refined protected st
       const before = await snapshotScope(pool, fixture.scopeId);
       await assert.rejects(() => refreshLedgerForReceipt(pool, { scopeKey: fixture.scopeKey, receiptId: fixture.receiptId }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
       await assert.rejects(() => rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [fixture.eventId], replace: true }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
+      await assert.rejects(
+        () => rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [fixture.eventId] }),
+        (error) => error.code === 'LEDGER_PROTECTED_OVERLAY_CONFLICT',
+      );
       assert.equal(await snapshotScope(pool, fixture.scopeId), before);
     }
   } finally { await pool.end(); }

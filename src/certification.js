@@ -173,7 +173,7 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
-    if (ownsTransaction) await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
     if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
     const sourceStateKey = await sourceState(client, scope.id);
@@ -306,17 +306,30 @@ const aggregateFacts = aggregateCertificationFacts;
 
 export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, reuseUnchanged = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
   if ((persist || replace) && providedSourceStateKey !== null) throw certificationSourceStateOverride();
-  const { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
+  let { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
   // Read-only snapshot callers already computed this key in the same transaction.
   // Reuse it so validation cannot observe a second, logically different state.
   const sourceStateKey = providedSourceStateKey ?? await sourceState(pool, scope.id);
   const facts = deriveCertificationFacts({ entries, postings, links, sourceStateKey, from, to });
   const results = aggregateFacts(facts);
-  const merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
+  let merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
   if (!persist) return { model: CERTIFICATION_MODEL_VERSION, sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    // Persistent certification must serialize with source mutations so a
+    // source change cannot commit around the final no-op decision.
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    const transactionScope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+    if (!transactionScope) throw new Error(`Accounting scope not found: ${scopeKey}`);
+    const transactionInputs = await loadInputs(client, scopeKey);
+    const transactionSourceStateKey = await sourceState(client, transactionScope.id);
+    if (transactionSourceStateKey !== sourceStateKey) throw certificationConflict('Source state changed before certification persistence');
+    ({ scope, entries, postings, links } = transactionInputs);
+    const transactionFacts = deriveCertificationFacts({ entries, postings, links, sourceStateKey: transactionSourceStateKey, from, to });
+    const transactionResults = aggregateFacts(transactionFacts);
+    merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
+    facts.splice(0, facts.length, ...transactionFacts);
+    results.splice(0, results.length, ...transactionResults);
     if (reuseUnchanged) {
       const existing = (await client.query(`SELECT id,status,finished_at FROM reconciliation_runs
         WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
