@@ -148,3 +148,66 @@ test('loader deduplicates evidence rows and exposes cross-scope purchase state',
   assert.equal(crossScope.projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.BLOCKED);
   assert.equal(crossScope.reasonCode, 'MULTIPLE_ACTIVE_PURCHASE_EVENTS');
 });
+
+test('enrichment loader selects only the columns consumed by the projection', async () => {
+  const queries = [];
+  const pool = { query: async (sql) => {
+    queries.push(String(sql));
+    if (/FROM business_events/i.test(sql)) return { rows: [event()] };
+    if (/FROM business_event_evidence/i.test(sql)) return { rows: [evidence()] };
+    if (/FROM ledger_entries/i.test(sql)) return { rows: [
+      {
+        id: 41,
+        source_event_id: 31,
+        scope_key: 'scope-a',
+        currency: 'RUB',
+        derivation_rule: 'LEDGER_STANDALONE_PURCHASE_V1',
+        derivation_status: 'READY',
+      },
+    ] };
+    if (/FROM ledger_postings/i.test(sql)) return { rows: [
+      { ledger_entry_id: 41, account_id: 1, currency: 'RUB', debit: '100.00', credit: '0.00', account_code: 'UNCLASSIFIED_ACQUISITION' },
+      { ledger_entry_id: 41, account_id: 2, currency: 'RUB', debit: '0.00', credit: '100.00', account_code: 'FISCAL_PAYMENT_CLEARING' },
+    ] };
+    if (/FROM ledger_source_links/i.test(sql)) return { rows: [] };
+    throw new Error(`unexpected query: ${sql}`);
+  } };
+
+  const result = await loadMatchedPurchaseEnrichment(pool, {
+    matchKey: 'a'.repeat(64),
+    matchingLoader: async () => ({ matches: [match()] }),
+  });
+
+  assert.equal(result.projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.PROJECTED);
+  assert.equal(result.ledgerDisposition, LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING);
+  assert.equal(queries.length, 5);
+  for (const sql of queries) {
+    assert.match(sql, /^\s*SELECT\b/i);
+    assert.doesNotMatch(sql, /\bSELECT\s+\*/i);
+    assert.doesNotMatch(sql, /\b(?:e|le|lp|l)\.\*/i);
+    assert.doesNotMatch(sql, /\b(payload|raw|merchant|counterparty|seller|account_reference|display_name|session_ref|device_ref|description)\b/i);
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
+  }
+  assert.match(queries[0], /e\.id,\s*e\.event_type,\s*e\.resolution_status,\s*e\.amount,\s*e\.currency,\s*s\.scope_key/is);
+  assert.match(queries[1], /SELECT\s+event_id,\s*receipt_id,\s*normalization_version/is);
+  assert.match(queries[2], /le\.id,\s*le\.source_event_id,\s*le\.currency,\s*le\.derivation_rule,\s*le\.derivation_status,\s*s\.scope_key/is);
+  assert.match(queries[3], /lp\.ledger_entry_id,\s*lp\.account_id,\s*lp\.currency,\s*lp\.debit,\s*lp\.credit,\s*la\.account_code/is);
+  assert.match(queries[4], /l\.ledger_entry_id[\s\S]*l\.bank_transaction_id[\s\S]*m\.match_key/is);
+});
+
+test('enrichment loader remains fail closed when a minimal ledger row is incomplete', async () => {
+  const pool = { query: async (sql) => {
+    if (/FROM business_events/i.test(sql)) return { rows: [event()] };
+    if (/FROM business_event_evidence/i.test(sql)) return { rows: [evidence()] };
+    if (/FROM ledger_entries/i.test(sql)) return { rows: [{ id: 41, source_event_id: 31, scope_key: 'scope-a', currency: 'RUB', derivation_status: 'READY' }] };
+    if (/FROM ledger_postings|FROM ledger_source_links/i.test(sql)) return { rows: [] };
+    throw new Error(`unexpected query: ${sql}`);
+  } };
+  const result = await loadMatchedPurchaseEnrichment(pool, {
+    matchKey: 'a'.repeat(64),
+    matchingLoader: async () => ({ matches: [match()] }),
+  });
+  assert.equal(result.projectionStatus, MATCHED_PURCHASE_ENRICHMENT_STATUSES.BLOCKED);
+  assert.equal(result.reasonCode, 'LEDGER_CONFLICT');
+  assert.equal(result.ledgerDisposition, LEDGER_DISPOSITIONS.LEDGER_CONFLICT);
+});

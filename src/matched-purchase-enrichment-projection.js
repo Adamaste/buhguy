@@ -285,14 +285,36 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
   const match = options.matchKey ? matches.find((item) => item.matchKey === options.matchKey) : matches.length === 1 ? matches[0] : null;
   if (!match) return blocked({ matchKey: options.matchKey ?? null }, matches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
   const receiptId = match.receipt.receiptId;
-  const eventRows = (await pool.query(`SELECT DISTINCT ON (e.id) e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id WHERE EXISTS (SELECT 1 FROM business_event_evidence ev WHERE ev.event_id=e.id AND ev.receipt_id=$1) ORDER BY e.id`, [receiptId])).rows;
+  const eventRows = (await pool.query(`SELECT DISTINCT ON (e.id)
+      e.id, e.event_type, e.resolution_status, e.amount, e.currency, s.scope_key
+    FROM business_events e
+    JOIN accounting_scopes s ON s.id=e.scope_id
+    WHERE EXISTS (SELECT 1 FROM business_event_evidence ev WHERE ev.event_id=e.id AND ev.receipt_id=$1)
+    ORDER BY e.id`, [receiptId])).rows;
   const ids = eventIdList(eventRows);
   if (!ids.length) return projectMatchedPurchaseEnrichment({ match, existingPurchaseEvents: [], existingPurchaseEvidence: [], existingLedgerEntries: [] });
-  const evidenceRows = (await pool.query('SELECT * FROM business_event_evidence WHERE event_id = ANY($1::bigint[]) ORDER BY id', [ids])).rows;
-  const ledgerRows = (await pool.query(`SELECT le.*, s.scope_key FROM ledger_entries le JOIN accounting_scopes s ON s.id=le.scope_id WHERE le.source_event_id = ANY($1::bigint[]) AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions es WHERE es.scope_id=le.scope_id AND es.superseded_ledger_entry_id=le.id) ORDER BY le.id`, [ids])).rows;
+  const evidenceRows = (await pool.query(`SELECT event_id, receipt_id, normalization_version
+    FROM business_event_evidence
+    WHERE event_id = ANY($1::bigint[])
+    ORDER BY id`, [ids])).rows;
+  const ledgerRows = (await pool.query(`SELECT le.id, le.source_event_id, le.currency,
+      le.derivation_rule, le.derivation_status, s.scope_key
+    FROM ledger_entries le
+    JOIN accounting_scopes s ON s.id=le.scope_id
+    WHERE le.source_event_id = ANY($1::bigint[])
+      AND NOT EXISTS (
+        SELECT 1 FROM ledger_entry_supersessions es
+        WHERE es.scope_id=le.scope_id AND es.superseded_ledger_entry_id=le.id
+      )
+    ORDER BY le.id`, [ids])).rows;
   const ledgerIds = ledgerRows.map((row) => Number(row.id)).filter(positiveInteger);
   const postingRows = ledgerIds.length
-    ? (await pool.query('SELECT lp.*, la.account_code FROM ledger_postings lp JOIN ledger_accounts la ON la.id=lp.account_id WHERE lp.ledger_entry_id = ANY($1::bigint[]) ORDER BY lp.id', [ledgerIds])).rows
+    ? (await pool.query(`SELECT lp.ledger_entry_id, lp.account_id, lp.currency,
+        lp.debit, lp.credit, la.account_code
+      FROM ledger_postings lp
+      JOIN ledger_accounts la ON la.id=lp.account_id
+      WHERE lp.ledger_entry_id = ANY($1::bigint[])
+      ORDER BY lp.id`, [ledgerIds])).rows
     : [];
   const postingsByEntry = new Map();
   for (const posting of postingRows) {
@@ -301,7 +323,14 @@ export async function loadMatchedPurchaseEnrichment(pool, options = {}) {
     postingsByEntry.set(Number(posting.ledger_entry_id), list);
   }
   const linkRows = ledgerIds.length
-    ? (await pool.query('SELECT l.*, m.match_key FROM ledger_source_links l LEFT JOIN bank_receipt_matches m ON m.id=l.bank_receipt_match_id WHERE l.ledger_entry_id = ANY($1::bigint[]) ORDER BY l.id', [ledgerIds])).rows
+    ? (await pool.query(`SELECT l.ledger_entry_id, l.business_event_id,
+        l.graph_evidence_id, l.graph_allocation_id, l.receipt_id,
+        l.normalization_version, l.link_role, l.bank_receipt_match_id,
+        l.bank_transaction_id, m.match_key
+      FROM ledger_source_links l
+      LEFT JOIN bank_receipt_matches m ON m.id=l.bank_receipt_match_id
+      WHERE l.ledger_entry_id = ANY($1::bigint[])
+      ORDER BY l.id`, [ledgerIds])).rows
     : [];
   const linksByEntry = new Map();
   for (const link of linkRows) linksByEntry.set(Number(link.ledger_entry_id), [...(linksByEntry.get(Number(link.ledger_entry_id)) ?? []), link]);
