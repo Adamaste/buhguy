@@ -38,34 +38,38 @@ Core rules:
 ## Current position
 
 The project already has a substantial receipt/FNS and accounting-proof foundation.
-The canonical spending read model and guarded read-only query service are
-merged, but the project is not yet an autonomously reliable accounting
-service. The active priority is P0 reliability: lossless capture/delivery,
-safe retries and recovery, evidence deduplication, no-double-count ledger
-behavior, certification freshness, and operational observability.
+The immediate goal is **simple, reliable expense counting in the existing
+application**, not a new MVP server or a smart accounting system. Reuse the
+existing Android collector, FNS sync, backend, matching and read paths:
+
+- reliably collect receipts and bank notifications that reach the sources;
+- deduplicate repeated receipt/notification delivery and retries;
+- match only sufficiently proven bank+receipt pairs, counting one purchase once;
+- show basic spending totals and purchase lists, with unmatched or uncertain
+  evidence clearly separate instead of guessed or double-counted.
+
+Only bugs that threaten capture, recovery, no-double-count correctness, or the
+trustworthiness of these basic results block this first usable version.
+Preserve existing fail-closed ledger/current-snapshot safeguards where they
+apply; do not expand the scope into advanced accounting or classification.
 
 MCP and other ChatGPT transport work is explicitly deferred. PR #152 is open
-but unmerged and is not a dependency of the P0 plan. Existing repository
-mechanisms remain the default path under the permanent SIMPLE-FIRST /
-REUSE-FIRST rule.
-
-The active development area is the bank evidence path, specifically reliable Android notification capture on a real Samsung device.
+but unmerged and is not a dependency of the simple expense counter. Reuse
+existing mechanisms under the permanent SIMPLE-FIRST / REUSE-FIRST rule.
 
 Current sequence:
 
-1. prove lossless Android capture, collector outbox delivery, backend ingestion and bounded recovery
-2. prove idempotent observation/transaction/document deduplication under retries and partial failures
-3. preserve bank-specific parser and normalization fail-closed behavior while measuring unresolved evidence
-4. preserve no-double-count cash-flow, matched-purchase and ACTIVE-ledger invariants during recovery
-5. keep certification/current-snapshot state explicit, bounded and observable after new data
-6. implement only the smallest reviewed operational reliability fixes
-7. continue bank-specific parsers and normalization where evidence justifies them
-8. use internal-transfer matching only with independently proven two-sided own-account evidence
-9. expand analytics and assistant access only after freshness, completeness and security gates pass
+1. verify Android and FNS capture/delivery, durable retries and recovery on the existing system
+2. ensure duplicate evidence and retries never add a second expense
+3. finish automatic matching of proven bank+receipt purchases; keep ambiguous and unmatched evidence separate
+4. make basic spending totals and purchase lists usable and current, without new services or invented matches
+5. fix only demonstrated reliability/correctness gaps and validate the simple end-to-end flow before controlled activation
+6. improve provider coverage and diagnostics where actual observations justify it
+7. **LAST, optional:** a separate "smart MVP"/server, AI categorization,
+   enhanced accounting, advanced analytics and assistant automation, only if
+   requested after simple expense counting works reliably.
 
-P1 work such as richer product categorization, broad analytics convenience,
-MCP transport and higher-level automation remains deferred until the P0 gates
-are measurable and stable.
+Do not make the basic expense counter wait for this last optional stage.
 
 The exact live blocker and next command-level action are maintained in `docs/BUHGUY-CURRENT-HANDOFF.md`.
 
@@ -677,19 +681,15 @@ Automation must never convert a low-confidence inference into an unquestioned ac
 
 Unless the current handoff says otherwise, the intended order is:
 
-1. finish Android real-bank callback reliability diagnostics
-2. prove supported-bank capture/delivery behavior
-3. implement bank-specific parsers and parser regression fixtures
-4. normalize direction/amount/currency/event semantics
-5. model bank accounts/card references where evidence permits
-6. project proven bank cash-flow and movement semantics
-7. build or extend business-event semantics
-8. recognize internal transfers only with proven two-sided own-account evidence
-9. connect sufficiently certified business events to ledger flows
-10. use bank-to-receipt matching as additional independent purchase evidence
-11. expand analytics and gap/quality monitoring
-12. add manual/mobile evidence capture
-13. add higher-level automation only after evidence/reconciliation quality is measurable
+1. confirm the existing Android and FNS collection paths deliver and recover reliably
+2. prove source-level deduplication, safe retries, and no double counting of bank+receipt evidence
+3. enable automatic matching only for proven bank+receipt purchases, leaving uncertain events unresolved
+4. provide correct, current basic expense totals and purchase lists using the existing read path
+5. test this simple end-to-end flow and fix only real reliability or correctness gaps before an approved rollout
+6. improve provider coverage and observability where actual evidence warrants it
+7. **LAST and optional:** any separate "smart MVP"/server, AI categorization,
+   sophisticated accounting, extra analytics, and assistant automation; these
+   are not prerequisites for the simple expense counter.
 
 ## Roadmap maintenance
 
