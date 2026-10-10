@@ -17,16 +17,44 @@ At the start of any technical work on `Adamaste/buhguy`:
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
 - Last updated: 2026-10-10
-- Current implementation baseline: `8e2268f47eb80e8b69b5b88e3a1d65517cbe622d` (exact current master after merged PR #155 and PR #156; the exact-master read-only matched-purchase preview runner and explicit SQL-column projections are present)
-- Current phase: `P0_READ_ONLY_MATCHING_PREVIEW_PREPARATION`; Person 1 account-identity readiness is complete for development, and controlled production matched-purchase and certification evidence remains documented and immutable
-- Current blocker: The exact-master preview runner is ready, but no safe production preview credential exists. `receipt_collector` is unsuitable because it has DML and is missing seven required table SELECTs; `chatgpt_reader` has no access to the 23-table matching path; the private SSH path is currently catalog/admin-only. A short-lived column-allowlisted preview role and one fixed-scope operator run remain separately approved operations. No production role has been created and no preview has run.
+- Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
+- Current phase: `P0_READ_ONLY_MATCHING_PREVIEW_RESULT_RECOVERY`; the first separately authorized one-shot production preview was executed, but its safe aggregate result was lost in terminal output, so no new match count or readiness is confirmed
+- Current blocker: The first bounded preview was executed with privilege, SSH and one-scope gates reported PASS, but the aggregate-only stdout was not recoverable after terminal-output overflow. Operator reported NOLOGIN, revocation of all 23 column grants, DROP ROLE, tunnel closed, no writer or runtime change. Postcheck showed certification-table changes of unresolved origin, compatible with but not proven to be concurrent activity. Do not treat the first preview as READY or its unknown counts as zero.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: obtain separate approval for a short-lived least-privilege preview role, independently verify its exact 23-table column grants and single-scope boundary, then run one bounded exact-master read-only preview for literal scope `default`; do not run a writer, materialization, or automatic process.
+- Next action: search for the original preview's safe JSON in existing local session files/transcripts WITHOUT any DB operation or exposing secrets; independently establish certification change provenance by existing approved bounded READ ONLY evidence if available. If JSON is unrecoverable, rehearse a local terminal-independent JSON capture/validation mechanism on synthetic data, then obtain a NEW explicit approval before another temporary role, grants or production preview. No writer, deploy or materialization.
+
+## First one-shot preview result and cleanup (2026-10-10)
+
+The operator's report for the separately approved, one-time production cycle
+used master `6ccea4e067c1432b4f76607317d49e88aea6b722`. The temporary
+role was created, verified with privilege/scope/SSH gates PASS, and the
+read-only runner was invoked once. However, terminal-output overflow
+prevented recovery of its safe aggregate JSON. `PREVIEW_READINESS`,
+`PERSIST_REQUIRED`, `ALREADY_PERSISTED`, `BLOCKED`, `AMBIGUOUS`,
+`UNMATCHED`, and `INELIGIBLE` are **UNCONFIRMED**, not zero or PASS.
+
+The operator reported the role switched to NOLOGIN, all grants revoked, role
+dropped, tunnel closed, no production financial writes initiated by this
+operation, and no runtime change. Independently verifiable historical
+artifacts of the preview result were not supplied. The persistence postcheck
+reported changes restricted to certification tables, described as
+potentially concurrent activity; that cause has **not** been independently
+established. Since automatic certification refresh was not previously
+activated, confirm provenance before declaring these changes benign.
+Do not automatically repeat, repair, backfill, materialize, or run a writer.
+
+The prior production approval covered this single execution and is consumed.
+First search only existing local bounded output/transcript artifacts for the
+original safe JSON (do not query production or expose secrets). If recovery
+fails, practice direct stdout-to-private-file capture plus strict JSON schema
+validation locally with synthetic results before seeking a fresh, explicit
+approval for a new one-shot production role/preview cycle. See the runbook's
+output-capture section.
 
 ## Read-only matching preview access preparation
 
