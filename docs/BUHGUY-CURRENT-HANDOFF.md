@@ -16,10 +16,40 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-10
+- Last updated: 2026-10-11
 - Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
 - Current phase: `P0_ACCOUNTING_CHURN_REMEDIATION`; PR #165 contains the minimal no-op guard for unchanged certification and ledger projections. No production code is deployed from this branch and no production operation was performed for this change.
-- Current blocker: local Node 22 checks pass, but disposable PostgreSQL integration is not yet verified because Docker is unavailable and `TEST_DATABASE_URL` is unset. PR #165 must remain unmerged until that gate is run in an isolated PostgreSQL environment.
+- Current blocker: PR #165 remains open for independent review; its local functional gate is complete, but it is not merged and no GitHub Actions run is required during the temporary quota pause.
+
+## PR #165 local PostgreSQL gate and pooled-client lifecycle fix (2026-10-11)
+
+PR #165 now contains the minimal fix at exact HEAD
+`18bbed0f4112cf0bf6a378505fced7e457bac088`: the certification
+materialization error listener is attached for one acquisition and removed in
+`finally` before pool release. A PostgreSQL 18 transaction-timeout disconnect
+still destroys the affected client through `release(true)` and retains the
+existing safe timeout classification, rollback, and fail-closed behavior.
+
+The user Windows development machine has Docker Desktop installed and its
+Linux engine available. Exact-HEAD local checks used Node `v22.13.1`:
+
+- `npm run check`: PASS
+- `npm run test:unit`: PASS, 457/457
+- `git diff --check`: PASS
+- PostgreSQL 16 disposable Docker gate: PASS, migration 26/26 and 61
+  integration tests, including pooled-client listener reuse and timeout
+  recovery
+- PostgreSQL 18.6 disposable Docker gate: PASS, migration 26/26 and 61
+  integration tests, including the same lifecycle and timeout coverage
+
+Both disposable containers were removed after each run. No production
+credentials, database, SSH path, service, role, grant, financial row, or
+runtime configuration was accessed or changed. GitHub Actions remains paused;
+these are local results for the exact PR HEAD, not a hosted CI claim.
+
+The historical PR #163 diagnostic-stage record and the fourth-preview
+technical-error/consumed-authorization blocker below are intentionally
+preserved and remain historical evidence, not current success claims.
 
 ## Accounting no-op review follow-up (2026-10-11)
 
