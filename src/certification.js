@@ -205,6 +205,9 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
 
 export function deriveCertificationFacts({ entries, postings, links, sourceStateKey, from = null, to = null }) {
   const facts = [];
+  const periodIdentity = from !== null || to !== null
+    ? { periodFrom: from, periodTo: to }
+    : {};
   const byEntry = new Map();
   for (const posting of postings) byEntry.set(Number(posting.ledger_entry_id), [...(byEntry.get(Number(posting.ledger_entry_id)) ?? []), posting]);
   const linkByEntry = new Map();
@@ -217,7 +220,7 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
       amount: money(amount), currency: entry.currency, eventAt: entry.event_at, reasonCode,
       ruleCode: entry.derivation_rule, ruleVersion: CERTIFICATION_RULE_VERSION, ledgerEntryId: Number(entry.id),
       businessEventId: Number(entry.source_event_id), graphEvidenceId: link?.graph_evidence_id ?? null, sourceStateKey,
-      semanticKey: fiscalContentFingerprint({ sourceStateKey, entryId: entry.id, metricCode, dimension, status, amount: money(amount) }),
+      semanticKey: fiscalContentFingerprint({ sourceStateKey, entryId: entry.id, metricCode, dimension, status, amount: money(amount), ...periodIdentity }),
     });
   };
   for (const entry of entries) {
@@ -378,7 +381,7 @@ export async function rebuildCertification(pool, { scopeKey = 'default', from = 
     }
     for (const result of results) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,amount=EXCLUDED.amount,count_items=EXCLUDED.count_items`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, resultSemanticKey(result, run.id)]);
     await client.query('COMMIT');
-    return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
+    return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) }, reused: false, refreshed: true };
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 

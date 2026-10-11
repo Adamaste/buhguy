@@ -114,6 +114,8 @@ test('same-source-state refresh is a byte-identical NOOP and corrupted snapshots
     const conflictingSnapshot = await snapshot(current.runId);
     await assert.rejects(() => refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] }), (error) => error.code === 'CERTIFICATION_CONFLICT');
     assert.deepEqual(await snapshot(current.runId), conflictingSnapshot);
+    // Keep this intentionally corrupted synthetic run from contaminating the next case.
+    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [current.runId]);
   } finally { await pool.end(); }
 });
 

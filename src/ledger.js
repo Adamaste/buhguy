@@ -213,7 +213,7 @@ async function loadPersistedLedgerState(pool, scopeKey, eventIds = null) {
   return { scopeId: Number(scope.id), entries, postings, links, supersessions };
 }
 
-function assessLedgerProjection(projection, persisted) {
+function assessLedgerProjection(projection, persisted, requestedEventIds = null) {
   const existingByEvent = new Map(persisted.entries.map((entry) => [String(entry.source_event_id), entry]));
   const persistedEntryById = new Map(persisted.entries.map((entry) => [Number(entry.id), entry]));
   const projectionByEvent = new Map(projection.entries.map((entry) => [String(entry.sourceEventId), entry]));
@@ -223,20 +223,45 @@ function assessLedgerProjection(projection, persisted) {
   const stableRows = (rows) => rows
     .map((row) => row.map((value) => value === null || value === undefined ? null : String(value)))
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  const projectedPostings = existingProjectionEntries.flatMap((entry) => entry.postings.map((posting) => [entry.sourceEventId, posting.account, entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]));
-  const persistedPostings = persisted.postings.map((posting) => [persistedEntryById.get(Number(posting.ledger_entry_id))?.source_event_id, posting.account_code, posting.currency, posting.debit, posting.credit, posting.source_allocation_id, posting.source_receipt_id]);
-  const projectedLinks = existingProjectionEntries.flatMap((entry) => {
+  const protectedLinks = persisted.links.filter((link) => link.bank_receipt_match_id !== null || link.bank_transaction_id !== null);
+  const protectedEntryIds = new Set(protectedLinks.map((link) => Number(link.ledger_entry_id)));
+  const protectedEventIds = new Set([...protectedEntryIds]
+    .map((entryId) => persistedEntryById.get(entryId)?.source_event_id)
+    .filter((eventId) => eventId !== undefined)
+    .map(String));
+  if (requestedEventIds?.some((eventId) => protectedEventIds.has(String(eventId)))) {
+    return { kind: 'conflict', reason: 'explicit rebuild targets protected ledger event' };
+  }
+  const comparableProjectionEntries = existingProjectionEntries
+    .filter((entry) => !protectedEventIds.has(String(entry.sourceEventId)));
+  const comparablePersistedEntries = persisted.entries
+    .filter((entry) => !protectedEntryIds.has(Number(entry.id)));
+  const ordinaryPersistedLinks = persisted.links
+    .filter((link) => link.bank_receipt_match_id === null && link.bank_transaction_id === null
+      && !protectedEntryIds.has(Number(link.ledger_entry_id)))
+    .map((link) => [persistedEntryById.get(Number(link.ledger_entry_id))?.source_event_id, link.business_event_id, link.graph_evidence_id, link.graph_allocation_id, link.receipt_id, link.normalization_version, link.link_role, link.semantic_key, null, null]);
+  const projectedPostings = comparableProjectionEntries.flatMap((entry) => entry.postings.map((posting) => [entry.sourceEventId, posting.account, entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]));
+  const persistedPostings = persisted.postings
+    .filter((posting) => !protectedEntryIds.has(Number(posting.ledger_entry_id)))
+    .map((posting) => [persistedEntryById.get(Number(posting.ledger_entry_id))?.source_event_id, posting.account_code, posting.currency, posting.debit, posting.credit, posting.source_allocation_id, posting.source_receipt_id]);
+  const projectedLinks = comparableProjectionEntries.flatMap((entry) => {
     const current = existingByEvent.get(String(entry.sourceEventId));
     return entry.links.map((link) => [entry.sourceEventId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role,
-      current ? fiscalContentFingerprint({ ledgerEntryId: current.id, businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role }) : null,
+      current ? fiscalContentFingerprint({ ledgerEntryId: Number(current.id), businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role }) : null,
       null, null]);
   });
-  const protectedLinks = persisted.links.filter((link) => link.bank_receipt_match_id !== null || link.bank_transaction_id !== null);
-  const ordinaryPersistedLinks = persisted.links
-    .filter((link) => link.bank_receipt_match_id === null && link.bank_transaction_id === null)
-    .map((link) => [persistedEntryById.get(Number(link.ledger_entry_id))?.source_event_id, link.business_event_id, link.graph_evidence_id, link.graph_allocation_id, link.receipt_id, link.normalization_version, link.link_role, link.semantic_key, null, null]);
-  const projectedEntries = existingProjectionEntries.map((entry) => [entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.reasonCode ?? null, entry.description ?? null]);
-  const persistedEntryRows = persisted.entries.map((entry) => [entry.source_event_id, entry.currency, entry.event_at, entry.semantic_key, entry.derivation_rule, entry.derivation_version, entry.derivation_status, entry.certification_status, entry.reason_code, entry.description]);
+  const projectedEntries = comparableProjectionEntries.map((entry) => [entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.reasonCode ?? null, entry.description ?? null]);
+  const persistedEntryRows = comparablePersistedEntries.map((entry) => [entry.source_event_id, entry.currency, entry.event_at, entry.semantic_key, entry.derivation_rule, entry.derivation_version, entry.derivation_status, entry.certification_status, entry.reason_code, entry.description]);
+  const protectedEntriesValid = [...protectedEntryIds].every((entryId) => {
+    const entry = persistedEntryById.get(entryId);
+    return entry
+      && projectionByEvent.has(String(entry.source_event_id))
+      && /^[0-9a-f]{64}$/.test(String(entry.semantic_key ?? ''))
+      && String(entry.derivation_rule ?? '').trim().length > 0
+      && String(entry.derivation_version ?? '').trim().length > 0
+      && String(entry.derivation_status ?? '').trim().length > 0
+      && String(entry.certification_status ?? '').trim().length > 0;
+  });
   const protectedValid = protectedLinks.every((link) => {
     const entry = persistedEntryById.get(Number(link.ledger_entry_id));
     const hasMatch = link.bank_receipt_match_id !== null;
@@ -282,7 +307,7 @@ function assessLedgerProjection(projection, persisted) {
       && /^[0-9a-f]{64}$/.test(String(row.semantic_key ?? ''))
       && String(row.reason_code ?? '').trim().length > 0;
   });
-  const existingIdentitiesMatch = persisted.entries.every((entry) => {
+  const existingIdentitiesMatch = comparablePersistedEntries.every((entry) => {
     const projected = projectionByEvent.get(String(entry.source_event_id));
     return projected
       && entry.semantic_key === projected.semanticKey
@@ -293,7 +318,7 @@ function assessLedgerProjection(projection, persisted) {
       && entry.reason_code === (projected.reasonCode ?? null)
       && entry.description === (projected.description ?? null);
   });
-  if (!protectedValid || !supersessionsValid || !existingIdentitiesMatch
+  if (!protectedValid || !protectedEntriesValid || !supersessionsValid || !existingIdentitiesMatch
     || JSON.stringify(stableRows(persistedEntryRows)) !== JSON.stringify(stableRows(projectedEntries))
     || JSON.stringify(stableRows(persistedPostings)) !== JSON.stringify(stableRows(projectedPostings))
     || JSON.stringify(stableRows(ordinaryPersistedLinks)) !== JSON.stringify(stableRows(projectedLinks))) {
@@ -343,7 +368,7 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
         throw error;
       }
       const persisted = await loadPersistedLedgerState(client, scopeKey, eventIds);
-      const assessment = assessLedgerProjection(projection, persisted);
+      const assessment = assessLedgerProjection(projection, persisted, eventIds);
       if (assessment.kind === 'match') {
         await client.query('COMMIT');
         return { ...summarizeLedgerProjection(projection), changed: false, created: { entries: 0, postings: 0, links: 0, blocked: 0 }, balancedViolations: 0 };
