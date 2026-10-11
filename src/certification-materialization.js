@@ -122,13 +122,24 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   }
   const deadline = Date.now() + overallTimeoutMs;
   const client = await pool.connect();
+  let destroyClient = false;
+  let supportsTransactionTimeout = false;
+  let transactionTimeoutConfigured = false;
+  // PostgreSQL 18 terminates the backend for transaction_timeout instead of
+  // returning a query error. Keep that expected disconnect from becoming an
+  // unhandled client error while the catch block maps it safely below.
+  const clientErrorHandler = () => {};
+  client.on('error', clientErrorHandler);
   try {
     const serverVersionNum = Number((await client.query('SHOW server_version_num')).rows[0]?.server_version_num ?? 0);
-    const supportsTransactionTimeout = serverVersionNum >= 170000;
+    supportsTransactionTimeout = serverVersionNum >= 170000;
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
     await client.query(`SET LOCAL statement_timeout = '${supportsTransactionTimeout ? statementTimeoutMs : Math.min(statementTimeoutMs, overallTimeoutMs)}ms'`);
-    if (supportsTransactionTimeout) await client.query(`SET LOCAL transaction_timeout = '${overallTimeoutMs}ms'`);
+    if (supportsTransactionTimeout) {
+      await client.query(`SET LOCAL transaction_timeout = '${overallTimeoutMs}ms'`);
+      transactionTimeoutConfigured = true;
+    }
     const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
     if (!scope) throw materializationError(`Accounting scope not found: ${scopeKey}`, 'CERTIFICATION_SCOPE_NOT_FOUND');
 
@@ -181,13 +192,19 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
     await client.query('COMMIT');
     return { materialized: true, reused: false, runId: Number(run.id), sourceStateKey, facts: persisted.facts.length, results: persisted.results.length, ...(await postCommitState(client, Number(scope.id), sourceStateKey, statementTimeoutMs)) };
   } catch (error) {
-    try { await client.query('ROLLBACK'); } catch {}
+    try { await client.query('ROLLBACK'); } catch { destroyClient = true; }
+    if (supportsTransactionTimeout && transactionTimeoutConfigured
+      && ['Connection terminated unexpectedly', 'terminating connection due to transaction timeout'].includes(error?.message)) {
+      destroyClient = true;
+      throw materializationError('Certification materialization transaction timeout', 'CERTIFICATION_MATERIALIZATION_TIMEOUT');
+    }
     if (error?.code === '40001' || error?.code === '40P01') {
       throw materializationError('Concurrent source or lock conflict; retry only after a fresh read-only precheck', 'CERTIFICATION_MATERIALIZATION_RETRY_REQUIRED');
     }
     throw error;
   } finally {
-    client.release();
+    client.removeListener('error', clientErrorHandler);
+    client.release(destroyClient);
   }
 }
 

@@ -168,4 +168,45 @@ integration('server-side transaction timeout aborts long SQL and rolls back all 
   );
   if (version >= 170000) assert.match(transactionTimeout, /500ms|0\.5s/);
   assert.deepEqual(await counts(), before);
+
+  const recovered = await materializeCurrentCertificationForTest(pool, {
+    scopeKey: 'default',
+    expectedSourceStateKey,
+  });
+  assert.equal(recovered.materialized, true);
+  assert.equal(recovered.postCommitCurrent, true);
+});
+
+integration('pooled materialization clients do not accumulate lifecycle error listeners', { concurrency: false }, async () => {
+  await clearCertification();
+  const expectedSourceStateKey = await currentSourceStateKey();
+  const tracked = [];
+  const trackingPool = {
+    async connect() {
+      const client = await pool.connect();
+      const stats = { baseline: client.listenerCount('error'), atRelease: null };
+      const release = client.release.bind(client);
+      client.release = (destroy) => {
+        stats.atRelease = client.listenerCount('error');
+        return release(destroy);
+      };
+      tracked.push(stats);
+      return client;
+    },
+  };
+
+  const first = await materializeCurrentCertificationForTest(trackingPool, {
+    scopeKey: 'default',
+    expectedSourceStateKey,
+  });
+  const second = await materializeCurrentCertificationForTest(trackingPool, {
+    scopeKey: 'default',
+    expectedSourceStateKey,
+  });
+  assert.equal(first.materialized, true);
+  assert.equal(second.reused, true);
+  assert.ok(tracked.length >= 2);
+  for (const stats of tracked) {
+    assert.equal(stats.atRelease, stats.baseline);
+  }
 });

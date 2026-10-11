@@ -28,12 +28,34 @@ test('Certification V1 clone is idempotent, scoped, balanced and rollback-safe',
     assert.equal(bounded.bounded, true);
     const second = await rebuildCertification(pool, { persist: true, from, to });
     assert.equal(second.facts.length, first.facts.length);
+    assert.equal(second.reused, true);
     const secondRows = await pool.query('SELECT (SELECT count(*) FROM reconciliation_runs)::int AS runs, (SELECT count(*) FROM reconciliation_results)::int AS results');
     assert.ok(secondRows.rows[0].runs >= firstRows.rows[0].runs);
     assert.ok(secondRows.rows[0].results >= firstRows.rows[0].results);
+    const writeStatsBeforeReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('reconciliation_runs','certification_facts','reconciliation_results') ORDER BY relname`)).rows;
+    const snapshotBeforeReplay = (await pool.query(`SELECT
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_runs) x) AS runs,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM certification_facts) x) AS facts,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_results) x) AS results`)).rows[0];
     const repeated = [];
     for (let index = 0; index < 3; index += 1) repeated.push(await rebuildCertification(pool, { persist: true, from, to }));
     assert.equal(repeated.length, 3);
+    assert.ok(repeated.every((result) => result.reused === true && result.refreshed === false));
+    const writeStatsAfterReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('reconciliation_runs','certification_facts','reconciliation_results') ORDER BY relname`)).rows;
+    assert.deepEqual(writeStatsAfterReplay, writeStatsBeforeReplay);
+    const snapshotAfterReplay = (await pool.query(`SELECT
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_runs) x) AS runs,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM certification_facts) x) AS facts,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM reconciliation_results) x) AS results`)).rows[0];
+    assert.deepEqual(snapshotAfterReplay, snapshotBeforeReplay);
+    const stateBeforeChange = second.sourceStateKey;
+    await pool.query("UPDATE ledger_entries SET description=COALESCE(description,'') || ' noop-gate-fixture-change' WHERE id=(SELECT id FROM ledger_entries ORDER BY id LIMIT 1)");
+    const changed = await rebuildCertification(pool, { persist: true, replace: true, reuseUnchanged: true, from, to });
+    assert.notEqual(changed.sourceStateKey, stateBeforeChange);
+    assert.equal(changed.reused, false);
+    assert.equal(Number((await pool.query('SELECT count(*) FROM reconciliation_runs')).rows[0].count), 1);
     const baseline = await counts();
     await assert.rejects(() => rebuildCertification(pool, { persist: true, replace: true, from, to, failAfter: 1 }), /injected certification failure/);
     const afterFailure = await counts();
@@ -92,6 +114,8 @@ test('same-source-state refresh is a byte-identical NOOP and corrupted snapshots
     const conflictingSnapshot = await snapshot(current.runId);
     await assert.rejects(() => refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] }), (error) => error.code === 'CERTIFICATION_CONFLICT');
     assert.deepEqual(await snapshot(current.runId), conflictingSnapshot);
+    // Keep this intentionally corrupted synthetic run from contaminating the next case.
+    await pool.query('DELETE FROM reconciliation_runs WHERE id=$1', [current.runId]);
   } finally { await pool.end(); }
 });
 
@@ -136,6 +160,28 @@ test('full READY certification can be reused by bounded refresh without mutation
   } finally { await pool.end(); }
 });
 
+test('incomplete exact READY run is rejected instead of reused', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const full = await rebuildCertification(pool, { scopeKey: 'default', persist: true });
+    const before = (await pool.query(`SELECT
+      (SELECT count(*)::int FROM reconciliation_runs) AS runs,
+      (SELECT count(*)::int FROM certification_facts) AS facts,
+      (SELECT count(*)::int FROM reconciliation_results) AS results`)).rows[0];
+    await pool.query('UPDATE reconciliation_runs SET finished_at=NULL WHERE id=$1', [full.runId]);
+    await assert.rejects(
+      () => rebuildCertification(pool, { scopeKey: 'default', persist: true, reuseUnchanged: true }),
+      (error) => error.code === 'CERTIFICATION_CONFLICT',
+    );
+    const after = (await pool.query(`SELECT
+      (SELECT count(*)::int FROM reconciliation_runs) AS runs,
+      (SELECT count(*)::int FROM certification_facts) AS facts,
+      (SELECT count(*)::int FROM reconciliation_results) AS results`)).rows[0];
+    assert.deepEqual(after, before);
+    await pool.query('UPDATE reconciliation_runs SET finished_at=NOW() WHERE id=$1', [full.runId]);
+  } finally { await pool.end(); }
+});
+
 
 
 test('existing READY result identity has golden parity and same-state reuse', { skip: !process.env.TEST_DATABASE_URL, concurrency: false }, async () => {
@@ -145,12 +191,28 @@ test('existing READY result identity has golden parity and same-state reuse', { 
     const stored = (await pool.query('SELECT * FROM reconciliation_results WHERE run_id=$1 ORDER BY id', [full.runId])).rows;
     const projected = await rebuildCertification(pool, { scopeKey: 'default', persist: false });
     assert.equal(projected.sourceStateKey, full.sourceStateKey);
+    const sqlAggregates = (await pool.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code
+      FROM certification_facts WHERE run_id=$1
+      GROUP BY metric_code,status,currency,reason_code
+      ORDER BY metric_code,status,currency,reason_code`, [full.runId])).rows;
+    const jsAggregates = [...projected.results].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    assert.deepEqual(sqlAggregates.map((row) => ({
+      metricCode: row.metric_code,
+      status: row.status,
+      amount: row.amount,
+      currency: row.currency,
+      countItems: Number(row.count_items),
+      reasonCode: row.reason_code,
+    })), jsAggregates.map(({ metricCode, status, amount, currency, countItems, reasonCode }) => ({ metricCode, status, amount, currency, countItems, reasonCode })));
     for (const result of projected.results) {
       const row = stored.find((candidate) => candidate.metric_code === result.metricCode
         && candidate.currency === result.currency
         && candidate.status === result.status
         && candidate.reason_code === result.reasonCode);
       assert.ok(row, `persisted result missing for ${result.metricCode}`);
+      assert.equal(row.amount, result.amount);
+      assert.equal(Number(row.count_items), result.countItems);
+      assert.equal(row.reason_code, result.reasonCode);
       assert.equal(row.semantic_key, certificationResultSemanticKey(result, full.runId));
     }
     const reused = await refreshCertificationForEvents(pool, { scopeKey: 'default', eventIds: [44] });

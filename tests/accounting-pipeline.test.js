@@ -14,7 +14,7 @@ test('accounting catch-up is source-agnostic and idempotent at orchestration bou
     standaloneMatcher: step('standalone', { created: 1 }),
     returnMatcher: step('returns', { created: { returns: 0 } }),
     ledgerBuilder: step('ledger', { created: { entries: 1 } }),
-    certificationBuilder: async (_pool, options) => { calls.push(['certification', options.scopeKey, options.replace]); return { facts: [{ id: 1 }] }; },
+    certificationBuilder: async (_pool, options) => { calls.push(['certification', options.scopeKey, options.replace, options.reuseUnchanged]); return { facts: [{ id: 1 }] }; },
     logger: { info() {} },
   });
   const second = await runAccountingCatchup({}, {
@@ -30,6 +30,7 @@ test('accounting catch-up is source-agnostic and idempotent at orchestration bou
   assert.equal(second.standalone.created, undefined);
   assert.deepEqual(calls.slice(0, 5).map(([name]) => name), ['prepayment', 'standalone', 'returns', 'ledger', 'certification']);
   assert.equal(calls[4][2], true);
+  assert.equal(calls[4][3], true);
   assert.deepEqual(calls.slice(5).map(([name]) => name), ['prepayment-replay', 'standalone-replay', 'returns-replay', 'ledger-replay', 'certification-replay']);
   assert.ok(calls.every(([, scope]) => scope === 'household'));
 });

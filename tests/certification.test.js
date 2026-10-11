@@ -32,6 +32,8 @@ test('blocked ledger entry becomes blocked exposure and cannot certify a metric'
 test('period filtering and scope are deterministic', () => {
   const facts = deriveCertificationFacts({ sourceStateKey: 'd'.repeat(64), from: '2026-01-01T00:00:00Z', to: '2026-02-01T00:00:00Z', entries: [base(5, 'LEDGER_FULFILLMENT_V1', 'READY', '10.00'), { ...base(6, 'LEDGER_FULFILLMENT_V1', 'READY', '20.00'), event_at: '2026-03-01T00:00:00Z' }], postings: [posting(5, 'UNCLASSIFIED_ACQUISITION', '10.00', '0'), posting(6, 'UNCLASSIFIED_ACQUISITION', '20.00', '0')], links: [link(5), link(6)] });
   assert.deepEqual([...new Set(facts.map((fact) => fact.subjectId))], [5]);
+  const unbounded = deriveCertificationFacts({ sourceStateKey: 'd'.repeat(64), entries: [base(5, 'LEDGER_FULFILLMENT_V1', 'READY', '10.00')], postings: [posting(5, 'UNCLASSIFIED_ACQUISITION', '10.00', '0')], links: [link(5)] });
+  assert.notEqual(facts[0].semanticKey, unbounded[0].semanticKey);
 });
 
 test('facts preserve scope and never claim bank certification from clearing', () => {

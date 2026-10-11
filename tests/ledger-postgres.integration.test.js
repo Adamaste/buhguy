@@ -21,8 +21,39 @@ integration('Ledger V1 clone persist, idempotency, concurrency and rollback', { 
     assert.ok(baselineEntries >= 0);
     const after = (await pool.query('SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM receipt_items) AS items,(SELECT count(*) FROM receipt_raw) AS raw,(SELECT count(*) FROM receipt_fiscal_facts) AS facts,(SELECT count(*) FROM receipt_item_fiscal_facts) AS item_facts,(SELECT count(*) FROM business_events) AS events,(SELECT count(*) FROM business_event_edges) AS edges,(SELECT count(*) FROM business_event_allocations) AS allocations')).rows[0];
     assert.deepEqual(after, before);
+    const persistedFirst = await rebuildLedger(pool, { eventIds });
+    const persistedSnapshotBeforeReplay = (await pool.query(`SELECT
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_entries) x) AS entries,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_postings) x) AS postings,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_source_links) x) AS links`)).rows[0];
+    const writeStatsBeforeReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('ledger_entries','ledger_postings','ledger_source_links') ORDER BY relname`)).rows;
+    const persistedSecond = await rebuildLedger(pool, { eventIds });
+    assert.equal(persistedSecond.changed, false);
+    assert.equal(persistedSecond.created.entries, 0);
+    assert.equal(persistedFirst.entries, persistedSecond.entries);
+    const writeStatsAfterReplay = (await pool.query(`SELECT relname,n_tup_ins,n_tup_upd,n_tup_del
+      FROM pg_stat_user_tables WHERE relname IN ('ledger_entries','ledger_postings','ledger_source_links') ORDER BY relname`)).rows;
+    assert.deepEqual(writeStatsAfterReplay, writeStatsBeforeReplay);
+    const persistedSnapshotAfterReplay = (await pool.query(`SELECT
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_entries) x) AS entries,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_postings) x) AS postings,
+      (SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM (SELECT * FROM ledger_source_links) x) AS links`)).rows[0];
+    assert.deepEqual(persistedSnapshotAfterReplay, persistedSnapshotBeforeReplay);
     const balance = await pool.query('SELECT count(*) AS violations FROM (SELECT ledger_entry_id FROM ledger_postings GROUP BY ledger_entry_id HAVING SUM(debit) <> SUM(credit)) q');
     assert.equal(Number(balance.rows[0].violations), 0);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration('ledger no-op fails closed for a missing scope', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    await assert.rejects(
+      () => rebuildLedger(pool, { scopeKey: `missing-ledger-scope-${process.pid}-${Date.now()}` }),
+      (error) => error.code === 'ACCOUNTING_SCOPE_NOT_FOUND',
+    );
   } finally {
     await pool.end();
   }

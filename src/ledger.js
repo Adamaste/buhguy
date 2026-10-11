@@ -184,6 +184,149 @@ async function ensureAccounts(tx, scopeKey) {
   return accounts;
 }
 
+async function loadPersistedLedgerState(pool, scopeKey, eventIds = null) {
+  const scope = (await pool.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
+  if (!scope) {
+    const error = new Error(`Accounting scope not found: ${scopeKey}`);
+    error.code = 'ACCOUNTING_SCOPE_NOT_FOUND';
+    throw error;
+  }
+  const filter = eventIds?.length ? ' AND e.source_event_id = ANY($2::bigint[])' : '';
+  const params = eventIds?.length ? [scope.id, eventIds] : [scope.id];
+  const supersessions = (await pool.query(`SELECT scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code
+    FROM ledger_entry_supersessions WHERE scope_id=$1${eventIds?.length ? ' AND business_event_id = ANY($2::bigint[])' : ''} ORDER BY id`, params)).rows;
+  const entries = (await pool.query(`SELECT e.id,e.source_event_id,e.currency,e.event_at,e.semantic_key,e.derivation_rule,e.derivation_version,e.derivation_status,e.certification_status,e.reason_code,e.description
+    FROM ledger_entries e
+    WHERE e.scope_id=$1 AND e.origin='SYSTEM_DERIVED'
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter}
+    ORDER BY e.id`, params)).rows;
+  const entryIds = entries.map((entry) => Number(entry.id));
+  if (!entryIds.length) return { scopeId: Number(scope.id), entries, postings: [], links: [], supersessions };
+  const postings = (await pool.query(`SELECT p.ledger_entry_id,a.account_code,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id
+    FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id
+    WHERE p.ledger_entry_id=ANY($1::bigint[]) ORDER BY p.ledger_entry_id,p.id`, [entryIds])).rows;
+  const links = (await pool.query(`SELECT l.ledger_entry_id,l.business_event_id,l.graph_evidence_id,l.graph_allocation_id,l.receipt_id,l.normalization_version,l.link_role,l.semantic_key,l.bank_receipt_match_id,l.bank_transaction_id,
+      m.scope_id AS match_scope_id,m.bank_transaction_id AS match_bank_transaction_id
+    FROM ledger_source_links l
+    LEFT JOIN bank_receipt_matches m ON m.id=l.bank_receipt_match_id
+    WHERE l.ledger_entry_id=ANY($1::bigint[]) ORDER BY l.ledger_entry_id,l.id`, [entryIds])).rows;
+  return { scopeId: Number(scope.id), entries, postings, links, supersessions };
+}
+
+function assessLedgerProjection(projection, persisted, requestedEventIds = null) {
+  const existingByEvent = new Map(persisted.entries.map((entry) => [String(entry.source_event_id), entry]));
+  const persistedEntryById = new Map(persisted.entries.map((entry) => [Number(entry.id), entry]));
+  const projectionByEvent = new Map(projection.entries.map((entry) => [String(entry.sourceEventId), entry]));
+  if (projectionByEvent.size !== projection.entries.length) return { kind: 'conflict', reason: 'duplicate projected source event' };
+  const existingProjectionEntries = projection.entries.filter((entry) => existingByEvent.has(String(entry.sourceEventId)));
+  const newEntries = projection.entries.filter((entry) => !existingByEvent.has(String(entry.sourceEventId)));
+  const stableRows = (rows) => rows
+    .map((row) => row.map((value) => value === null || value === undefined ? null : String(value)))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const protectedLinks = persisted.links.filter((link) => link.bank_receipt_match_id !== null || link.bank_transaction_id !== null);
+  const protectedEntryIds = new Set(protectedLinks.map((link) => Number(link.ledger_entry_id)));
+  const protectedEventIds = new Set([...protectedEntryIds]
+    .map((entryId) => persistedEntryById.get(entryId)?.source_event_id)
+    .filter((eventId) => eventId !== undefined)
+    .map(String));
+  if (requestedEventIds?.some((eventId) => protectedEventIds.has(String(eventId)))) {
+    return { kind: 'conflict', reason: 'explicit rebuild targets protected ledger event' };
+  }
+  const comparableProjectionEntries = existingProjectionEntries
+    .filter((entry) => !protectedEventIds.has(String(entry.sourceEventId)));
+  const comparablePersistedEntries = persisted.entries
+    .filter((entry) => !protectedEntryIds.has(Number(entry.id)));
+  const ordinaryPersistedLinks = persisted.links
+    .filter((link) => link.bank_receipt_match_id === null && link.bank_transaction_id === null
+      && !protectedEntryIds.has(Number(link.ledger_entry_id)))
+    .map((link) => [persistedEntryById.get(Number(link.ledger_entry_id))?.source_event_id, link.business_event_id, link.graph_evidence_id, link.graph_allocation_id, link.receipt_id, link.normalization_version, link.link_role, link.semantic_key, null, null]);
+  const projectedPostings = comparableProjectionEntries.flatMap((entry) => entry.postings.map((posting) => [entry.sourceEventId, posting.account, entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]));
+  const persistedPostings = persisted.postings
+    .filter((posting) => !protectedEntryIds.has(Number(posting.ledger_entry_id)))
+    .map((posting) => [persistedEntryById.get(Number(posting.ledger_entry_id))?.source_event_id, posting.account_code, posting.currency, posting.debit, posting.credit, posting.source_allocation_id, posting.source_receipt_id]);
+  const projectedLinks = comparableProjectionEntries.flatMap((entry) => {
+    const current = existingByEvent.get(String(entry.sourceEventId));
+    return entry.links.map((link) => [entry.sourceEventId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role,
+      current ? fiscalContentFingerprint({ ledgerEntryId: Number(current.id), businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role }) : null,
+      null, null]);
+  });
+  const projectedEntries = comparableProjectionEntries.map((entry) => [entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.reasonCode ?? null, entry.description ?? null]);
+  const persistedEntryRows = comparablePersistedEntries.map((entry) => [entry.source_event_id, entry.currency, entry.event_at, entry.semantic_key, entry.derivation_rule, entry.derivation_version, entry.derivation_status, entry.certification_status, entry.reason_code, entry.description]);
+  const protectedEntriesValid = [...protectedEntryIds].every((entryId) => {
+    const entry = persistedEntryById.get(entryId);
+    return entry
+      && projectionByEvent.has(String(entry.source_event_id))
+      && /^[0-9a-f]{64}$/.test(String(entry.semantic_key ?? ''))
+      && String(entry.derivation_rule ?? '').trim().length > 0
+      && String(entry.derivation_version ?? '').trim().length > 0
+      && String(entry.derivation_status ?? '').trim().length > 0
+      && String(entry.certification_status ?? '').trim().length > 0;
+  });
+  const protectedValid = protectedLinks.every((link) => {
+    const entry = persistedEntryById.get(Number(link.ledger_entry_id));
+    const hasMatch = link.bank_receipt_match_id !== null;
+    return entry
+      && Number(link.business_event_id) === Number(entry.source_event_id)
+      && Number(link.bank_transaction_id) > 0
+      && (!hasMatch || (Number(link.bank_receipt_match_id) > 0
+        && Number(link.match_scope_id) === Number(persisted.scopeId)
+        && Number(link.match_bank_transaction_id) === Number(link.bank_transaction_id)))
+      && /^[0-9a-f]{64}$/.test(String(link.semantic_key ?? ''));
+  });
+  const supersededIds = new Set(persisted.supersessions.map((row) => Number(row.superseded_ledger_entry_id)));
+  const replacementBySupersededId = new Map(persisted.supersessions.map((row) => [
+    Number(row.superseded_ledger_entry_id), Number(row.replacement_ledger_entry_id),
+  ]));
+  const activeEntryForEvent = new Set(persisted.entries.map((entry) => String(entry.source_event_id)));
+  const reachesActiveReplacement = (replacementId, businessEventId) => {
+    const visited = new Set();
+    let currentId = Number(replacementId);
+    while (supersededIds.has(currentId)) {
+      if (visited.has(currentId)) return false;
+      visited.add(currentId);
+      const nextId = replacementBySupersededId.get(currentId);
+      if (!nextId || nextId === currentId) return false;
+      currentId = nextId;
+    }
+    const activeReplacement = persistedEntryById.get(currentId);
+    return Boolean(activeReplacement)
+      && Number(activeReplacement.source_event_id) === Number(businessEventId)
+      && activeEntryForEvent.has(String(businessEventId));
+  };
+  const supersessionsValid = persisted.supersessions.every((row) => {
+    const replacementId = Number(row.replacement_ledger_entry_id);
+    const replacement = persistedEntryById.get(replacementId);
+    return Number(row.scope_id) === Number(persisted.scopeId)
+      && Number(row.superseded_ledger_entry_id) > 0
+      && replacementId > 0
+      && (replacement || supersededIds.has(replacementId))
+      && (!replacement || Number(replacement.source_event_id) === Number(row.business_event_id))
+      && projectionByEvent.has(String(row.business_event_id))
+      && reachesActiveReplacement(replacementId, row.business_event_id)
+      && /^[0-9a-f]{64}$/.test(String(row.enrichment_key ?? ''))
+      && /^[0-9a-f]{64}$/.test(String(row.semantic_key ?? ''))
+      && String(row.reason_code ?? '').trim().length > 0;
+  });
+  const existingIdentitiesMatch = comparablePersistedEntries.every((entry) => {
+    const projected = projectionByEvent.get(String(entry.source_event_id));
+    return projected
+      && entry.semantic_key === projected.semanticKey
+      && entry.derivation_rule === projected.derivationRule
+      && entry.derivation_version === projected.derivationVersion
+      && entry.derivation_status === projected.derivationStatus
+      && entry.certification_status === projected.certificationStatus
+      && entry.reason_code === (projected.reasonCode ?? null)
+      && entry.description === (projected.description ?? null);
+  });
+  if (!protectedValid || !protectedEntriesValid || !supersessionsValid || !existingIdentitiesMatch
+    || JSON.stringify(stableRows(persistedEntryRows)) !== JSON.stringify(stableRows(projectedEntries))
+    || JSON.stringify(stableRows(persistedPostings)) !== JSON.stringify(stableRows(projectedPostings))
+    || JSON.stringify(stableRows(ordinaryPersistedLinks)) !== JSON.stringify(stableRows(projectedLinks))) {
+    return { kind: 'conflict', reason: 'persisted ledger identity or overlay drift' };
+  }
+  return { kind: newEntries.length ? 'append' : 'match', newEntries };
+}
+
 async function persistEntry(tx, entry, accounts) {
   const row = (await tx.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description)
     VALUES((SELECT id FROM accounting_scopes WHERE scope_key=$1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
@@ -207,12 +350,36 @@ async function persistEntry(tx, entry, accounts) {
 }
 
 export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null, projection: providedProjection = null, client: transactionClient = null } = {}) {
-  const projection = providedProjection ?? await loadLedgerProjection(pool, scopeKey, eventIds);
-  if (dryRun) return summarizeLedgerProjection(projection);
+  let projection = providedProjection;
+  let entriesToPersist = null;
+  if (dryRun) return summarizeLedgerProjection(projection ?? await loadLedgerProjection(pool, scopeKey, eventIds));
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
-    if (ownsTransaction) await client.query('BEGIN');
+    // A no-op decision must not commit against a source snapshot that can be
+    // invalidated by a concurrent writer after the projection is loaded.
+    if (ownsTransaction) await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    if (!projection) projection = await loadLedgerProjection(client, scopeKey, eventIds);
+    if (!replace && !transactionClient) {
+      const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+      if (!scope) {
+        const error = new Error(`Accounting scope not found: ${scopeKey}`);
+        error.code = 'ACCOUNTING_SCOPE_NOT_FOUND';
+        throw error;
+      }
+      const persisted = await loadPersistedLedgerState(client, scopeKey, eventIds);
+      const assessment = assessLedgerProjection(projection, persisted, eventIds);
+      if (assessment.kind === 'match') {
+        await client.query('COMMIT');
+        return { ...summarizeLedgerProjection(projection), changed: false, created: { entries: 0, postings: 0, links: 0, blocked: 0 }, balancedViolations: 0 };
+      }
+      if (assessment.kind === 'conflict') {
+        const error = new Error(assessment.reason);
+        error.code = 'LEDGER_PROTECTED_OVERLAY_CONFLICT';
+        throw error;
+      }
+      entriesToPersist = assessment.newEntries;
+    }
     if (replace) {
       await assertNoProtectedLedgerEntries(client, scopeKey, eventIds);
       if (!eventIds?.length) {
@@ -235,7 +402,7 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
     }
     const accounts = await ensureAccounts(client, scopeKey);
     const created = { entries: 0, postings: 0, links: 0, blocked: 0 };
-    for (const entry of projection.entries) {
+    for (const entry of entriesToPersist ?? projection.entries) {
       const persisted = await persistEntry(client, entry, accounts);
       created.entries += Number(persisted.created); created.postings += persisted.postings; created.links += persisted.links;
       if (entry.derivationStatus === 'BLOCKED') created.blocked += 1;

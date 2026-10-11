@@ -125,17 +125,61 @@ async function insertFacts(client, runId, facts) {
   for (const fact of facts) await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,status=EXCLUDED.status,amount=EXCLUDED.amount`, [runId, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
 }
 
+function expectedFactRows(runId, facts) {
+  return facts.map((fact) => ({
+    run_id: runId,
+    scope_id: fact.scopeId,
+    subject_type: fact.subjectType,
+    subject_id: fact.subjectId,
+    metric_code: fact.metricCode,
+    dimension: fact.dimension,
+    status: fact.status,
+    amount: fact.amount,
+    currency: fact.currency,
+    event_at: fact.eventAt,
+    reason_code: fact.reasonCode,
+    rule_code: fact.ruleCode,
+    rule_version: fact.ruleVersion,
+    ledger_entry_id: fact.ledgerEntryId,
+    business_event_id: fact.businessEventId,
+    graph_evidence_id: fact.graphEvidenceId,
+    semantic_key: fact.semanticKey,
+    source_state_key: fact.sourceStateKey,
+  }));
+}
+
+function expectedResultRows(runId, results) {
+  return results.map((result) => ({
+    run_id: runId,
+    metric_code: result.metricCode,
+    status: result.status,
+    amount: result.amount,
+    currency: result.currency,
+    count_items: result.countItems,
+    reason_code: result.reasonCode,
+    semantic_key: resultSemanticKey(result, runId),
+  }));
+}
+
+function certificationSnapshotMatches(runId, facts, results, persistedFacts, persistedResults) {
+  return JSON.stringify(canonicalRows(persistedFacts, FACT_FIELDS))
+    === JSON.stringify(canonicalRows(expectedFactRows(runId, facts), FACT_FIELDS))
+    && JSON.stringify(canonicalRows(persistedResults, RESULT_FIELDS))
+    === JSON.stringify(canonicalRows(expectedResultRows(runId, results), RESULT_FIELDS));
+}
+
 export async function refreshCertificationForEvents(pool, { scopeKey = 'default', eventIds = [], client: transactionClient = null } = {}) {
   if (!eventIds.length) return { bounded: true, eventIds: [], facts: 0 };
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
   try {
-    if (ownsTransaction) await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
     if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
     const sourceStateKey = await sourceState(client, scope.id);
     const completeInput = await loadInputs(client, scopeKey);
     const facts = deriveCertificationFacts({ ...completeInput, sourceStateKey });
+    const results = aggregateFacts(facts);
     const existing = (await client.query(`SELECT * FROM reconciliation_runs
       WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
         AND period_from IS NULL AND period_to IS NULL
@@ -144,47 +188,16 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
       if (existing.status !== 'READY') throw certificationConflict(`Certification run ${existing.id} is not READY`);
       const persistedFacts = (await client.query(`SELECT run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE run_id=$1`, [existing.id])).rows;
       const persistedResults = (await client.query(`SELECT run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key FROM reconciliation_results WHERE run_id=$1`, [existing.id])).rows;
-      const expectedFactRows = facts.map((fact) => ({
-        run_id: existing.id,
-        scope_id: fact.scopeId,
-        subject_type: fact.subjectType,
-        subject_id: fact.subjectId,
-        metric_code: fact.metricCode,
-        dimension: fact.dimension,
-        status: fact.status,
-        amount: fact.amount,
-        currency: fact.currency,
-        event_at: fact.eventAt,
-        reason_code: fact.reasonCode,
-        rule_code: fact.ruleCode,
-        rule_version: fact.ruleVersion,
-        ledger_entry_id: fact.ledgerEntryId,
-        business_event_id: fact.businessEventId,
-        graph_evidence_id: fact.graphEvidenceId,
-        semantic_key: fact.semanticKey,
-        source_state_key: fact.sourceStateKey,
-      }));
-      const expectedResultRows = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code
-        FROM certification_facts WHERE run_id=$1
-        GROUP BY metric_code,status,currency,reason_code`, [existing.id])).rows.map((result) => ({
-        ...result,
-        run_id: existing.id,
-        semantic_key: resultSemanticKey(result, existing.id),
-      }));
-      if (existing.status !== 'READY'
-        || JSON.stringify(canonicalRows(persistedFacts, FACT_FIELDS)) !== JSON.stringify(canonicalRows(expectedFactRows, FACT_FIELDS))
-        || JSON.stringify(canonicalRows(persistedResults, RESULT_FIELDS)) !== JSON.stringify(canonicalRows(expectedResultRows, RESULT_FIELDS))) {
+      if (existing.status !== 'READY' || !existing.finished_at
+        || !certificationSnapshotMatches(existing.id, facts, results, persistedFacts, persistedResults)) {
         throw certificationConflict(`Certification snapshot ${existing.id} does not match source state ${sourceStateKey}`);
       }
       if (ownsTransaction) await client.query('COMMIT');
       return { bounded: true, eventIds, facts: facts.length, runId: Number(existing.id), sourceStateKey, reused: true, refreshed: false };
     }
     const run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at) VALUES($1,$2,$3,'READY',NOW()) RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
-    await client.query('DELETE FROM certification_facts WHERE run_id=$1', [run.id]);
     await insertFacts(client, run.id, facts);
-    await client.query('DELETE FROM reconciliation_results WHERE run_id=$1', [run.id]);
-    const aggregates = (await client.query(`SELECT metric_code,status,ROUND(SUM(amount),2) AS amount,currency,count(*)::int AS count_items,reason_code FROM certification_facts WHERE run_id=$1 GROUP BY metric_code,status,currency,reason_code`, [run.id])).rows;
-    for (const result of aggregates) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metric_code, result.status, result.amount, result.currency, result.count_items, result.reason_code, resultSemanticKey(result, run.id)]);
+    for (const result of results) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, resultSemanticKey(result, run.id)]);
     if (ownsTransaction) await client.query('COMMIT');
     return { bounded: true, eventIds, facts: facts.length, runId: Number(run.id), sourceStateKey, reused: false, refreshed: true };
   } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
@@ -192,6 +205,9 @@ export async function refreshCertificationForEvents(pool, { scopeKey = 'default'
 
 export function deriveCertificationFacts({ entries, postings, links, sourceStateKey, from = null, to = null }) {
   const facts = [];
+  const periodIdentity = from !== null || to !== null
+    ? { periodFrom: from, periodTo: to }
+    : {};
   const byEntry = new Map();
   for (const posting of postings) byEntry.set(Number(posting.ledger_entry_id), [...(byEntry.get(Number(posting.ledger_entry_id)) ?? []), posting]);
   const linkByEntry = new Map();
@@ -204,7 +220,7 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
       amount: money(amount), currency: entry.currency, eventAt: entry.event_at, reasonCode,
       ruleCode: entry.derivation_rule, ruleVersion: CERTIFICATION_RULE_VERSION, ledgerEntryId: Number(entry.id),
       businessEventId: Number(entry.source_event_id), graphEvidenceId: link?.graph_evidence_id ?? null, sourceStateKey,
-      semanticKey: fiscalContentFingerprint({ sourceStateKey, entryId: entry.id, metricCode, dimension, status, amount: money(amount) }),
+      semanticKey: fiscalContentFingerprint({ sourceStateKey, entryId: entry.id, metricCode, dimension, status, amount: money(amount), ...periodIdentity }),
     });
   };
   for (const entry of entries) {
@@ -291,28 +307,81 @@ export function summarizeCertificationTotals(results, balances = {}) {
 
 const aggregateFacts = aggregateCertificationFacts;
 
-export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
+export async function rebuildCertification(pool, { scopeKey = 'default', from = null, to = null, persist = false, replace = false, reuseUnchanged = false, failAfter = null, sourceStateKey: providedSourceStateKey = null } = {}) {
   if ((persist || replace) && providedSourceStateKey !== null) throw certificationSourceStateOverride();
-  const { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
+  let { scope, entries, postings, links } = await loadInputs(pool, scopeKey);
   // Read-only snapshot callers already computed this key in the same transaction.
   // Reuse it so validation cannot observe a second, logically different state.
   const sourceStateKey = providedSourceStateKey ?? await sourceState(pool, scope.id);
   const facts = deriveCertificationFacts({ entries, postings, links, sourceStateKey, from, to });
   const results = aggregateFacts(facts);
-  const merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
+  let merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
   if (!persist) return { model: CERTIFICATION_MODEL_VERSION, sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    // Persistent certification must serialize with source mutations so a
+    // source change cannot commit around the final no-op decision.
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    const transactionScope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+    if (!transactionScope) throw new Error(`Accounting scope not found: ${scopeKey}`);
+    const transactionInputs = await loadInputs(client, scopeKey);
+    const transactionSourceStateKey = await sourceState(client, transactionScope.id);
+    if (transactionSourceStateKey !== sourceStateKey) throw certificationConflict('Source state changed before certification persistence');
+    ({ scope, entries, postings, links } = transactionInputs);
+    const transactionFacts = deriveCertificationFacts({ entries, postings, links, sourceStateKey: transactionSourceStateKey, from, to });
+    const transactionResults = aggregateFacts(transactionFacts);
+    merchantAdvanceBalance = postings.filter((p) => p.account_code === 'MERCHANT_ADVANCE').reduce((sum, p) => sum + moneyMinorUnits(p.debit) - moneyMinorUnits(p.credit), 0n);
+    facts.splice(0, facts.length, ...transactionFacts);
+    results.splice(0, results.length, ...transactionResults);
+    if (reuseUnchanged) {
+      const existing = (await client.query(`SELECT id,status,finished_at FROM reconciliation_runs
+        WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+          AND period_from IS NOT DISTINCT FROM $4 AND period_to IS NOT DISTINCT FROM $5
+        FOR UPDATE`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey, from, to])).rows[0];
+      if (existing) {
+        if (existing.status !== 'READY' || !existing.finished_at) throw certificationConflict(`Certification run ${existing.id} is not READY`);
+        const persistedFacts = (await client.query(`SELECT run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE run_id=$1`, [existing.id])).rows;
+        const persistedResults = (await client.query(`SELECT run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key FROM reconciliation_results WHERE run_id=$1`, [existing.id])).rows;
+        if (!certificationSnapshotMatches(existing.id, facts, results, persistedFacts, persistedResults)) throw certificationConflict(`Certification snapshot ${existing.id} does not match source state ${sourceStateKey}`);
+        await client.query('COMMIT');
+        return { model: CERTIFICATION_MODEL_VERSION, runId: Number(existing.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) }, reused: true, refreshed: false };
+      }
+    }
     if (replace) await client.query('DELETE FROM reconciliation_runs WHERE scope_id=$1 AND model_version=$2', [scope.id, CERTIFICATION_MODEL_VERSION]);
-    const run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,period_from,period_to,status,finished_at) VALUES($1,$2,$3,$4,$5,'READY',NOW()) ON CONFLICT(scope_id,model_version,source_state_key,period_from,period_to) DO UPDATE SET status='READY',finished_at=NOW() RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey, from, to])).rows[0];
+    if (!replace) {
+      const existing = (await client.query(`SELECT id,status,finished_at FROM reconciliation_runs
+        WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+          AND period_from IS NOT DISTINCT FROM $4 AND period_to IS NOT DISTINCT FROM $5
+        FOR UPDATE`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey, from, to])).rows[0];
+      if (existing) {
+        if (existing.status !== 'READY' || !existing.finished_at) throw certificationConflict(`Certification run ${existing.id} is not READY`);
+        const persistedFacts = (await client.query(`SELECT run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE run_id=$1`, [existing.id])).rows;
+        const persistedResults = (await client.query(`SELECT run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key FROM reconciliation_results WHERE run_id=$1`, [existing.id])).rows;
+        if (!certificationSnapshotMatches(existing.id, facts, results, persistedFacts, persistedResults)) throw certificationConflict(`Certification snapshot ${existing.id} does not match source state ${sourceStateKey}`);
+        await client.query('COMMIT');
+        return { model: CERTIFICATION_MODEL_VERSION, runId: Number(existing.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) }, reused: true, refreshed: false };
+      }
+    }
+    let run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,period_from,period_to,status,finished_at) VALUES($1,$2,$3,$4,$5,'READY',NOW()) ON CONFLICT(scope_id,model_version,source_state_key,period_from,period_to) DO NOTHING RETURNING id`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey, from, to])).rows[0];
+    if (!run) {
+      run = (await client.query(`SELECT id,status,finished_at FROM reconciliation_runs
+        WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
+          AND period_from IS NOT DISTINCT FROM $4 AND period_to IS NOT DISTINCT FROM $5
+        FOR UPDATE`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey, from, to])).rows[0];
+      if (!run || run.status !== 'READY' || !run.finished_at) throw certificationConflict(`Certification run for source state ${sourceStateKey} is not READY`);
+      const persistedFacts = (await client.query(`SELECT run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key FROM certification_facts WHERE run_id=$1`, [run.id])).rows;
+      const persistedResults = (await client.query(`SELECT run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key FROM reconciliation_results WHERE run_id=$1`, [run.id])).rows;
+      if (!certificationSnapshotMatches(run.id, facts, results, persistedFacts, persistedResults)) throw certificationConflict(`Certification snapshot ${run.id} does not match source state ${sourceStateKey}`);
+      await client.query('COMMIT');
+      return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) }, reused: true, refreshed: false };
+    }
     for (const [index, fact] of facts.entries()) {
       await client.query(`INSERT INTO certification_facts(run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,semantic_key,source_state_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(semantic_key) DO NOTHING`, [run.id, fact.scopeId, fact.subjectType, fact.subjectId, fact.metricCode, fact.dimension, fact.status, fact.amount, fact.currency, fact.eventAt, fact.reasonCode, fact.ruleCode, fact.ruleVersion, fact.ledgerEntryId, fact.businessEventId, fact.graphEvidenceId, fact.semanticKey, fact.sourceStateKey]);
       if (failAfter !== null && index + 1 >= Number(failAfter)) throw new Error('injected certification failure');
     }
     for (const result of results) await client.query(`INSERT INTO reconciliation_results(run_id,metric_code,status,amount,currency,count_items,reason_code,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO UPDATE SET run_id=EXCLUDED.run_id,amount=EXCLUDED.amount,count_items=EXCLUDED.count_items`, [run.id, result.metricCode, result.status, result.amount, result.currency, result.countItems, result.reasonCode, resultSemanticKey(result, run.id)]);
     await client.query('COMMIT');
-    return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) } };
+    return { model: CERTIFICATION_MODEL_VERSION, runId: Number(run.id), sourceStateKey, facts, results, balances: { merchantAdvance: money(merchantAdvanceBalance) }, reused: false, refreshed: true };
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 

@@ -227,6 +227,42 @@ integration('FNS-derived RUB refines a real standalone purchase through the publ
   } finally { await pool.end(); }
 });
 
+integration('protected purchase overlay survives an independent ledger append and replay', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const fixture = await createFixture(pool, 'protected-append', { standalone: true, amount: '12.34' });
+    await persistMatchedPurchase(pool, await writerOptions(fixture));
+    const protectedState = async () => ({
+      entries: (await pool.query(`SELECT id,source_event_id,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,reason_code,description
+        FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2 ORDER BY id`, [fixture.scopeId, fixture.eventId])).rows,
+      postings: (await pool.query(`SELECT p.*,a.account_code FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id
+        WHERE p.ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2) ORDER BY p.id`, [fixture.scopeId, fixture.eventId])).rows,
+      links: (await pool.query(`SELECT * FROM ledger_source_links WHERE ledger_entry_id IN
+        (SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2) ORDER BY id`, [fixture.scopeId, fixture.eventId])).rows,
+      supersessions: (await pool.query('SELECT * FROM ledger_entry_supersessions WHERE scope_id=$1 AND business_event_id=$2 ORDER BY id', [fixture.scopeId, fixture.eventId])).rows,
+    });
+    const before = await protectedState();
+    const suffix = `${process.pid}-${Date.now()}`;
+    const receiptId = Number((await pool.query("INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type) VALUES($1,NOW(),'fixture',7.89,'RUB',1) RETURNING id", [`protected-append-receipt-${suffix}`])).rows[0].id);
+    const fnsSourceId = Number((await pool.query('SELECT id FROM fns_sources WHERE scope_id=$1 ORDER BY id LIMIT 1', [fixture.scopeId])).rows[0].id);
+    await pool.query('INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id) VALUES($1,$2,$3)', [receiptId, fnsSourceId, `protected-append-source-${suffix}`]);
+    const itemId = Number((await pool.query("INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum) VALUES($1,0,'independent','1',7.89,7.89) RETURNING id", [receiptId])).rows[0].id);
+    await pool.query("INSERT INTO receipt_item_fiscal_facts(receipt_item_id,normalization_version,payment_type_code,normalized_content_sha256) VALUES($1,'fiscal-normalizer-v1',4,$2)", [itemId, hash('p')]);
+    await pool.query("INSERT INTO receipt_fiscal_facts(receipt_id,normalization_version,source_content_sha256,normalized_content_sha256,normalization_status,fiscal_operation_type,household_cash_direction,cash_total_sum,cash_total_state,ecash_total_sum,ecash_total_state,prepaid_sum,prepaid_state,credit_sum,credit_state,provision_sum,provision_state,payment_components_status,payment_stage,correction_status) VALUES($1,'fiscal-normalizer-v1',$2,$3,'READY',1,'OUT','0.00','EXPLICIT_ZERO','7.89','PRESENT_VALUE','0.00','EXPLICIT_ZERO','0.00','EXPLICIT_ZERO','0.00','EXPLICIT_ZERO','RECONCILED','SETTLEMENT_ONLY','UNKNOWN')", [receiptId, hash('q'), hash('r')]);
+    await persistStandalonePurchases(pool, { scopeKey: fixture.scopeKey, receiptIds: [receiptId] });
+    const independentEventId = Number((await pool.query("SELECT ev.event_id FROM business_event_evidence ev JOIN business_events e ON e.id=ev.event_id WHERE ev.receipt_id=$1 AND e.scope_id=$2 AND ev.evidence_role='PURCHASE_EVIDENCE'", [receiptId, fixture.scopeId])).rows[0].event_id);
+    const appended = await rebuildLedger(pool, { scopeKey: fixture.scopeKey });
+    assert.equal(appended.changed, undefined);
+    assert.equal(appended.created.entries, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2', [fixture.scopeId, independentEventId])).rows[0].count, 1);
+    assert.deepEqual(await protectedState(), before);
+    const replay = await rebuildLedger(pool, { scopeKey: fixture.scopeKey });
+    assert.equal(replay.changed, false);
+    assert.equal(replay.created.entries, 0);
+    assert.deepEqual(await protectedState(), before);
+  } finally { await pool.end(); }
+});
+
 integration('writer fails closed when FNS currency proof disappears before locked revalidation', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
@@ -353,6 +389,10 @@ integration('refresh and rebuild fail closed for future and refined protected st
       const before = await snapshotScope(pool, fixture.scopeId);
       await assert.rejects(() => refreshLedgerForReceipt(pool, { scopeKey: fixture.scopeKey, receiptId: fixture.receiptId }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
       await assert.rejects(() => rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [fixture.eventId], replace: true }), (error) => error.code === 'LEDGER_SUPERSESSION_PROTECTED');
+      await assert.rejects(
+        () => rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [fixture.eventId] }),
+        (error) => error.code === 'LEDGER_PROTECTED_OVERLAY_CONFLICT',
+      );
       assert.equal(await snapshotScope(pool, fixture.scopeId), before);
     }
   } finally { await pool.end(); }
