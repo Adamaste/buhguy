@@ -248,13 +248,36 @@ function assessLedgerProjection(projection, persisted) {
         && Number(link.match_bank_transaction_id) === Number(link.bank_transaction_id)))
       && /^[0-9a-f]{64}$/.test(String(link.semantic_key ?? ''));
   });
+  const supersededIds = new Set(persisted.supersessions.map((row) => Number(row.superseded_ledger_entry_id)));
+  const replacementBySupersededId = new Map(persisted.supersessions.map((row) => [
+    Number(row.superseded_ledger_entry_id), Number(row.replacement_ledger_entry_id),
+  ]));
+  const activeEntryForEvent = new Set(persisted.entries.map((entry) => String(entry.source_event_id)));
+  const reachesActiveReplacement = (replacementId, businessEventId) => {
+    const visited = new Set();
+    let currentId = Number(replacementId);
+    while (supersededIds.has(currentId)) {
+      if (visited.has(currentId)) return false;
+      visited.add(currentId);
+      const nextId = replacementBySupersededId.get(currentId);
+      if (!nextId || nextId === currentId) return false;
+      currentId = nextId;
+    }
+    const activeReplacement = persistedEntryById.get(currentId);
+    return Boolean(activeReplacement)
+      && Number(activeReplacement.source_event_id) === Number(businessEventId)
+      && activeEntryForEvent.has(String(businessEventId));
+  };
   const supersessionsValid = persisted.supersessions.every((row) => {
-    const replacement = persistedEntryById.get(Number(row.replacement_ledger_entry_id));
+    const replacementId = Number(row.replacement_ledger_entry_id);
+    const replacement = persistedEntryById.get(replacementId);
     return Number(row.scope_id) === Number(persisted.scopeId)
       && Number(row.superseded_ledger_entry_id) > 0
-      && replacement
-      && Number(replacement.source_event_id) === Number(row.business_event_id)
+      && replacementId > 0
+      && (replacement || supersededIds.has(replacementId))
+      && (!replacement || Number(replacement.source_event_id) === Number(row.business_event_id))
       && projectionByEvent.has(String(row.business_event_id))
+      && reachesActiveReplacement(replacementId, row.business_event_id)
       && /^[0-9a-f]{64}$/.test(String(row.enrichment_key ?? ''))
       && /^[0-9a-f]{64}$/.test(String(row.semantic_key ?? ''))
       && String(row.reason_code ?? '').trim().length > 0;
