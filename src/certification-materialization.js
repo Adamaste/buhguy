@@ -128,7 +128,8 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   // PostgreSQL 18 terminates the backend for transaction_timeout instead of
   // returning a query error. Keep that expected disconnect from becoming an
   // unhandled client error while the catch block maps it safely below.
-  client.on('error', () => {});
+  const clientErrorHandler = () => {};
+  client.on('error', clientErrorHandler);
   try {
     const serverVersionNum = Number((await client.query('SHOW server_version_num')).rows[0]?.server_version_num ?? 0);
     supportsTransactionTimeout = serverVersionNum >= 170000;
@@ -202,6 +203,7 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
     }
     throw error;
   } finally {
+    client.removeListener('error', clientErrorHandler);
     client.release(destroyClient);
   }
 }
