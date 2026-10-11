@@ -24,13 +24,15 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 ## Accounting no-op review follow-up (2026-10-11)
 
 PR #165 remains open and unmerged at head
-`75844fdc70d0745c632e30d898ca87c631233c7b`. Its follow-up separates
+`7e7906a7ed53d9f5168b1fcb1d9ccbc369469e0a`. Its follow-up separates
 unchanged protected bank overlays, independent new ledger entries, and true
-identity/ownership drift. A protected purchase can therefore coexist with a
-safe append for an independent new purchase, while full no-op replay remains
-byte-stable and conflicts fail closed. A disposable PostgreSQL regression now
-covers protected purchase A, independent purchase B, replay, and preservation
-of A's history and links. Node 22 unit/check passed locally; PostgreSQL
+identity/ownership drift. It also validates an intact A->B->C supersession
+chain by requiring every chain to terminate at the current ACTIVE entry.
+A protected purchase can therefore coexist with a safe append for an
+independent new purchase, while full no-op replay remains byte-stable and
+conflicts fail closed. A disposable PostgreSQL regression now covers
+protected purchase A, independent purchase B, replay, and preservation of
+A's history and links. Node 22 unit/check passed locally; PostgreSQL
 integration remains **NOT RUN** because Docker and `TEST_DATABASE_URL` are
 unavailable. Skipped integration is not PASS.
 
