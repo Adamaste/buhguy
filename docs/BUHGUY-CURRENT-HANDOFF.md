@@ -21,6 +21,23 @@ Do not repeat closed stages. If this document disagrees with GitHub about code, 
 - Current phase: `P0_ACCOUNTING_CHURN_REMEDIATION`; PR #165 contains the minimal no-op guard for unchanged certification and ledger projections. No production code is deployed from this branch and no production operation was performed for this change.
 - Current blocker: local Node 22 checks pass, but disposable PostgreSQL integration is not yet verified because Docker is unavailable and `TEST_DATABASE_URL` is unset. PR #165 must remain unmerged until that gate is run in an isolated PostgreSQL environment.
 
+## Accounting no-op review follow-up (2026-10-11)
+
+PR #165 remains open and unmerged at head
+`75844fdc70d0745c632e30d898ca87c631233c7b`. Its follow-up separates
+unchanged protected bank overlays, independent new ledger entries, and true
+identity/ownership drift. A protected purchase can therefore coexist with a
+safe append for an independent new purchase, while full no-op replay remains
+byte-stable and conflicts fail closed. A disposable PostgreSQL regression now
+covers protected purchase A, independent purchase B, replay, and preservation
+of A's history and links. Node 22 unit/check passed locally; PostgreSQL
+integration remains **NOT RUN** because Docker and `TEST_DATABASE_URL` are
+unavailable. Skipped integration is not PASS.
+
+This update preserves the historical PR #163 section and the fourth-preview
+technical-error/blocker record below. No production access, writer,
+deployment, maintenance, or financial mutation was performed.
+
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
