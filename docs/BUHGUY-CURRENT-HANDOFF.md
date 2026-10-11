@@ -16,17 +16,142 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-10
-- Current implementation baseline: `6ccea4e067c1432b4f76607317d49e88aea6b722` (exact master with PR #155/#156 runner/explicit columns and PR #157 reviewed one-shot preview runbook merged)
-- Current phase: `P0_FOURTH_READ_ONLY_PREVIEW_TECHNICAL_ERROR_DIAGNOSTICS`; fourth separately approved production preview executed exactly once and returned only a validated technical-error envelope. All ten matching aggregate counts remain `UNCONFIRMED`. Authorization is consumed; no fifth run approved.
-- Current blocker: fourth-run root cause is `UNCONFIRMED`: exact-master runner suppresses exception details and returned `TECHNICAL_ERROR/READ_ONLY_PREVIEW_FAILED` without a stage. A safe stage-only diagnostic change is proposed in draft PR #163 but not yet fully tested or merged. Original matching counts/readiness remain `UNCONFIRMED`. First-preview certification-only delta still has no established writer provenance.
+- Last updated: 2026-10-11
+- Current implementation baseline: `43b513ceb2cf9d2d821158d8c5303a6fd83a2fc2` (PR #165 merged into master on 2026-10-11; **not deployed** to production).
+- Current phase: `P0_ACCOUNTING_CHURN_MERGED_AWAITING_DEPLOY_APPROVAL`; PR #165 is merged and locally tested on PostgreSQL 16/18, but the production service still runs the older release with unconditional `replace=true` certification.
+- Current blocker: production code still uses pre-fix accounting catch-up. Controlled deploy requires separate approval, verified artifact/runtime identity and post-deploy no-churn observation. Physical disk reclamation remains a separately approved operation; the distinct PR #163/fourth-preview technical-error blocker remains unresolved.
+
+## Accounting churn merge and stale-session closeout (2026-10-11)
+
+**PR #165 merged** to master as `43b513ceb2cf9d2d821158d8c5303a6fd83a2fc2` from reviewed HEAD
+`18bbed0f4112cf0bf6a378505fced7e457bac088`. Exact HEAD Node 22.13.1
+checks were reported PASS (457 unit tests), as were disposable PostgreSQL 16
+and 18.6 runs (26 migration + 61 integration tests for each engine) on the
+user's Windows/WSL2 Docker workstation. `git diff --check` passed; no
+GitHub-hosted CI ran under the authorized temporary quota pause. PR #165
+reduces unchanged certification and ledger writes, preserves protected
+matched-purchase overlays and independent append, and safely handles
+PostgreSQL 18 timeout/pool client lifecycle.
+
+A separate explicitly authorized, one-time operational cleanup terminated
+**only** PostgreSQL backends `806016` and `806250` after strict
+PID/start-time, database, socket, backend_xmin and client-script identity
+recheck. Their originating Node scripts were
+`/tmp/cert-postcheck.mjs` in detached SSH/runuser sessions. The idle
+transactions rolled back, both backends disappeared, and no surviving session
+held the original `backend_xmin=6957445`. PostgreSQL and
+`finance-bank-ingestion.service` health checks passed. No other sessions,
+financial rows, application configuration or service were altered; no manual
+VACUUM was performed. Estimated dead-tuple counters for
+`certification_facts`, `fns_source_receipt_refs`, and `ledger_entries`
+were 0 after the cleanup, which **does not imply a physical table shrink**.
+
+Last operator disk reading after session termination: 488,284,160 bytes
+(~465.5 MiB) free. The three previously measured relation sizes were
+~759.3 MiB, ~181.5 MiB, and ~160.2 MiB respectively; exact physically
+reclaimable bytes remain unconfirmed. The active production release is still
+`/opt/accountant/releases/8e18a9d65c933045820b0771afbcdd1c28546956`
+with the old unconditional certification `replace=true` path.
+**Merging PR #165 is not a deployment.**
+
+**Next action:** prepare a narrowly scoped controlled production deploy plan
+for the merged exact-master artifact, including manifest verification, backup
+and rollback readiness, health and bounded no-churn postchecks, **without
+executing any production deployment or financial write until separate explicit
+authorization**. Do not run further production matched-purchase previews:
+the fourth authorization has been consumed, and PR #163 remains a separate
+unresolved diagnostic issue. Physical table shrink needs independent
+space/backup/maintenance approval.
+
+## PR #165 local PostgreSQL gate and pooled-client lifecycle fix (2026-10-11)
+
+PR #165 now contains the minimal fix at exact HEAD
+`18bbed0f4112cf0bf6a378505fced7e457bac088`: the certification
+materialization error listener is attached for one acquisition and removed in
+`finally` before pool release. A PostgreSQL 18 transaction-timeout disconnect
+still destroys the affected client through `release(true)` and retains the
+existing safe timeout classification, rollback, and fail-closed behavior.
+
+The user Windows development machine has Docker Desktop installed and its
+Linux engine available. Exact-HEAD local checks used Node `v22.13.1`:
+
+- `npm run check`: PASS
+- `npm run test:unit`: PASS, 457/457
+- `git diff --check`: PASS
+- PostgreSQL 16 disposable Docker gate: PASS, migration 26/26 and 61
+  integration tests, including pooled-client listener reuse and timeout
+  recovery
+- PostgreSQL 18.6 disposable Docker gate: PASS, migration 26/26 and 61
+  integration tests, including the same lifecycle and timeout coverage
+
+Both disposable containers were removed after each run. No production
+credentials, database, SSH path, service, role, grant, financial row, or
+runtime configuration was accessed or changed. GitHub Actions remains paused;
+these are local results for the exact PR HEAD, not a hosted CI claim.
+
+The historical PR #163 diagnostic-stage record and the fourth-preview
+technical-error/consumed-authorization blocker below are intentionally
+preserved and remain historical evidence, not current success claims.
+
+## Accounting no-op review follow-up (historical pre-gate checkpoint, 2026-10-11)
+
+At this earlier checkpoint, PR #165 was still open and unmerged at head
+`7e7906a7ed53d9f5168b1fcb1d9ccbc369469e0a`. Its follow-up separates
+unchanged protected bank overlays, independent new ledger entries, and true
+identity/ownership drift. It also validates an intact A->B->C supersession
+chain by requiring every chain to terminate at the current ACTIVE entry.
+A protected purchase can therefore coexist with a safe append for an
+independent new purchase, while full no-op replay remains byte-stable and
+conflicts fail closed. A disposable PostgreSQL regression now covers
+protected purchase A, independent purchase B, replay, and preservation of
+A's history and links. Node 22 unit/check passed locally; PostgreSQL
+integration remains **NOT RUN** because Docker and `TEST_DATABASE_URL` are
+unavailable. Skipped integration is not PASS.
+
+This update preserves the historical PR #163 section and the fourth-preview
+technical-error/blocker record below. No production access, writer,
+deployment, maintenance, or financial mutation was performed.
 
 - Production artifact: exact master `8e18a9d65c933045820b0771afbcdd1c28546956`, 326 manifest files, archive SHA-256 `abac4c17ce93e27aa340b4e9ce629794b38d67b6b3a5df86c7b94388de7114b5`; installed manifest and hashes match, service health passed
 - Current Yandex evidence: master-signed APK is installed; observation 18 / transaction 16 has provider `com.yandex.bank`; its full source event id exactly matches a current `ru.yandex.taximeter` record on `notification_channel_1` when using the stored event-time millisecond as postTime; credential use and backend creation are corroborated
 - First-phone diagnostics: `FIRST_PHONE_STALE_DIAGNOSTICS=DEVICE_PROVEN_FIXED`. PR #66 merged as `69b9c7d069176ef23a2d36949bb2c078bc165a12`; CI run `37060443083` passed its test and Android jobs. The signed collector was installed in place with app data, source configuration, allowlist, credential state, and notification-listener access preserved; the safe shell probe refreshed live diagnostics without a bank capture or backend mutation
 - Current evidence: observations 72, 75, and 79 are RECONCILED to financial account 1 through historical replay provenance; observations and bank_transactions remain immutable and no backfill was performed
 - Current Yandex status: normalizer v1 remains deployed and unchanged; Yandex Pay outgoing v2 is merged but not deployed
-- Next action: complete draft PR #163 review fixes and exact-HEAD isolated Node 22 + disposable PostgreSQL integration testing; synchronize the private strict JSON validator with the new allowlisted technical stage envelope. No further production preview, SSH/database access, role/grants, financial writer, deploy, replay, or certification materialization without a fresh explicit authorization. Do not rerun automatically.
+- Next action: prepare an exact-master controlled deploy proposal for separate authorization; do not deploy, write financial rows, run VACUUM/REINDEX/pg_repack, DROP, pg_terminate_backend, replay or certification materialization without an independently scoped approval. Retain separate PR #163/fourth-preview blocker.
+
+## Accounting churn remediation checkpoint (2026-10-10)
+
+The preceding disk cleanup removed 17 confirmed disposable clone databases and
+reclaimed 462.4 MB; the primary production database and business data were not
+changed. Read-only metadata showed substantial dead tuples in
+`certification_facts`, `fns_source_receipt_refs`, and `ledger_entries`, while
+two long-lived `idle in transaction` sessions remained unaddressed.
+
+The reviewed code path showed that scheduled sync performed a full accounting
+catch-up and then persisted certification with `replace=true` on every run.
+The resulting delete/insert cycle was the confirmed churn mechanism for full
+certification snapshots. `fns_source_receipt_refs` lifecycle updates were not
+classified as redundant because `last_seen_at` is part of its source lifecycle
+contract.
+
+PR #165 adds exact snapshot reuse for an unchanged READY certification,
+replaces the current full snapshot only after source-state change, and skips
+unchanged active ledger projections without writes. It adds regression coverage
+for orchestration, repeated certification, source-state change, rollback, and
+ledger write counters. The feature branch was locally checked with Node 22:
+`npm run check` passed, the targeted accounting/certification/ledger/sync set
+passed 29/29, and the full suite passed 457 tests with 61 PostgreSQL-dependent
+tests skipped because no disposable PostgreSQL was available. The project
+integration command reported `NOT RUN`, not PASS.
+
+The two production `idle in transaction` sessions were not terminated. A
+future approved read-only diagnostic must identify their exact role, owner,
+`backend_xmin`, transaction age and query state before any separate decision;
+no automatic termination is permitted.
+
+After the no-op fix is verified and reviewed, physical table shrink remains a
+separate maintenance operation requiring backup, temporary space, lock/WAL
+budget, clone rehearsal, and explicit production approval.
 
 ## Fourth one-shot production read-only preview result (operator report, 2026-10-10)
 
