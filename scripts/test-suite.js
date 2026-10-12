@@ -59,6 +59,8 @@ const unitFiles = [
   'tests/canonical-spending-read-service.test.js',
   'tests/certification-materialization.test.js',
   'tests/certification-freshness.test.js',
+  'tests/sync-runtime-snapshot.test.js',
+  'tests/release-manifest-readonly-helper.test.js',
 ];
 
 const postgresFiles = [

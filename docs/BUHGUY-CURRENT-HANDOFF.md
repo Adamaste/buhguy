@@ -3320,3 +3320,29 @@ backfill, deploy, or enable an automatic refresh trigger.
 
 After new bank or receipt ingestion, certification is not automatically current: the next controlled cycle must recompute source identity, run the non-persisting projection, classify the state, and only then use the separately approved materialization procedure. No automatic refresh, writer trigger, replay, or backfill is enabled.
 
+## Local sync rollback-snapshot tooling (2026-10-12; review pending)
+
+A local-only code-only snapshot verifier/rehearsal is prepared on a separate
+branch. It fingerprints the statically resolved JavaScript dependency closure
+of an operator-confirmed sync entrypoint, records content hashes and modes,
+and fails closed on unknown paths, symlinks, missing imports, source races, or
+insufficient explicitly supplied disk/inode reserves. The fingerprint is not
+a Git SHA or historical provenance proof. No production connection, snapshot,
+service/timer change, or financial operation occurred.
+
+The Linux synthetic gates cover POSIX modes, read/execute access as an
+unprivileged service-like user, current WorkingDirectory/state preservation
+in a rollback rehearsal, symlink/traversal and missing-dependency failures,
+source races, interruption, corruption, and bounded capacity checks. The
+actual production sync entrypoint and complete runtime-loaded dependency
+closure remain unconfirmed; a static
+analysis stop must not be bypassed by copying additional files ad hoc. Any
+future snapshot requires separate authorization for quiescence and the exact
+snapshot-only write paths documented in
+`docs/sync-runtime-rollback-snapshot-v1.md`. It does not satisfy backup
+restorability or WAL/emergency capacity gates and does not authorize deploy.
+
+PR #163 and its fourth-preview technical-error blocker remain separate and
+unresolved; do not rerun the preview or change that PR under this snapshot-tool
+work.
+
