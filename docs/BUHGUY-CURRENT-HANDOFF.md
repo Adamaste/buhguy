@@ -3377,3 +3377,21 @@ automatic deployment, sync, snapshot, or rollback is authorized. PR #163 and
 its fourth-preview technical-error blocker remain separate and unresolved;
 do not rerun the preview or alter that PR as part of this work.
 
+## Read-only sync dependency inspection preparation (2026-10-12)
+
+A proposed `inspect` command reuses the snapshot tool's static closure and
+security gates, performs a second source-content/hash pass, and has no
+snapshot destination or write operation. Its safe JSON intentionally omits
+paths and file contents. `STATIC_CLOSURE=PASS` never means
+`FULL_RUNTIME_CLOSURE=PASS`: runtime-selected files/assets, plugins, native
+modules, and child processes require separate evidence. No production
+inspection or snapshot was run, and no production authorization is active.
+
+The next production step remains one separately authorized bounded read-only
+inventory of the effective sync unit, code-only dependency references,
+dynamic runtime dependencies, path metadata, and `receiptcollector` access.
+If dynamic dependencies or any unsupported/ambiguous path are found, STOP;
+do not broaden the allowlist. Snapshot creation still requires distinct
+quiescence and exact-path write authorization, followed by separate rollback
+verification authorization.
+

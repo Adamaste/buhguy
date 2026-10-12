@@ -25,6 +25,42 @@ node --test tests/sync-runtime-snapshot.test.js tests/release-manifest-readonly-
 
 The POSIX gate must run in an isolated Linux environment. Windows mode bits are reported as unconfirmed and are not a substitute.
 
+## Read-only dependency inspection
+
+`inspect` uses the same private `inspectClosure()` resolver and path/security
+gates as `create`, then calls the same second-pass source hash check. It reads
+the classified code-only closure and reached package metadata; it does not
+create a snapshot, temporary file, marker, or directory, and does not change
+permissions or state. It has no destination or quiescence option.
+
+```sh
+node scripts/sync-runtime-snapshot.mjs inspect \
+  --source-root <confirmed-code-root> \
+  --entrypoint <confirmed-relative-entrypoint>
+```
+
+The same command can be run without installing the tool file by supplying its
+source on stdin:
+
+```sh
+node --input-type=module - inspect \
+  --source-root <confirmed-code-root> \
+  --entrypoint <confirmed-relative-entrypoint>
+```
+
+The JSON report contains no source paths, file names, import specifiers, or
+file contents. Exit code `0` means only `STATIC_CLOSURE=PASS`; `2` means a
+classified fail-closed STOP; `1` means an unexpected inspection failure.
+Every successful report must retain
+`FULL_RUNTIME_CLOSURE=UNCONFIRMED`. The inspector does not discover
+filesystem-selected modules/assets, plugins, native modules, or child
+processes. A separate read-only runtime inventory must establish whether any
+such dependency exists. If it does, STOP; do not enlarge the path allowlist.
+
+No production run of this command is authorized by this document. Future use
+requires separate explicit read-only authorization and must not be combined
+with `create`.
+
 ## One-time production snapshot gate
 
 Do not run until a separate authorization explicitly permits the snapshot operation and the required sync quiescence. The tool can be sent to the remote Node process over SSH standard input; this avoids installing a helper file on production. The following PowerShell 7 form is a template, not permission to connect:

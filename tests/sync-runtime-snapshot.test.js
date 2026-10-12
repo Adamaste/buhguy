@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, chmod, readdir } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile, chmod, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { platform } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { buildRollbackPlan, createSnapshot, SnapshotError, verifySnapshot } from '../scripts/sync-runtime-snapshot.mjs';
+import { buildRollbackPlan, createSnapshot, inspectRuntimeClosure, SnapshotError, verifySnapshot } from '../scripts/sync-runtime-snapshot.mjs';
 
 const posixSkip = platform() === 'win32' ? 'POSIX filesystem gates run in isolated Linux tests' : false;
 
@@ -86,6 +86,168 @@ test('creates a verified code-only snapshot with POSIX modes and explicit non-Gi
     assert.equal(stdinCheck.status, 0, stdinCheck.stderr);
     assert.equal(JSON.parse(stdinCheck.stdout).status, 'PASS');
   }
+});
+
+test('inspect is read-only, re-reads every closure file, and reports static scope only', async t => {
+  const f = await fixture(t);
+  const fsApi = Object.create(await import('node:fs/promises'));
+  const reads = new Map();
+  const writes = [];
+  const writeMethods = ['appendFile', 'chmod', 'chown', 'copyFile', 'cp', 'link', 'mkdir', 'mkdtemp', 'open', 'rename', 'rm', 'rmdir', 'symlink', 'truncate', 'unlink', 'utimes', 'writeFile'];
+  fsApi.readFile = async (file, ...args) => {
+    const relative = path.relative(f.source, String(file)).split(path.sep).join('/');
+    reads.set(relative, (reads.get(relative) ?? 0) + 1);
+    return readFile(file, ...args);
+  };
+  for (const method of writeMethods) fsApi[method] = async (...args) => { writes.push(method); throw new Error('write operation forbidden in inspect test'); };
+
+  const result = await inspectRuntimeClosure({ sourceRoot: f.source, entrypoint: 'bin/entry.js', fsApi });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.staticClosure, 'PASS');
+  assert.equal(result.fullRuntimeClosure, 'UNCONFIRMED');
+  assert.equal(result.stableReadPasses, 2);
+  assert.ok(result.fileCount >= 6);
+  assert.ok(result.totalBytes > 0);
+  assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(result.stopCodes, []);
+  assert.ok(result.limitations.includes('CHILD_PROCESSES_NOT_DISCOVERED'));
+  assert.equal(Object.hasOwn(result, 'entrypoint'), false);
+  assert.equal(Object.hasOwn(result, 'files'), false);
+  for (const relative of ['bin/entry.js', 'src/value.js', 'src/nested.js', 'node_modules/synthetic-pkg/index.js', 'package-lock.json']) {
+    assert.ok(reads.get(relative) >= 2, `${relative} must be read in both passes`);
+  }
+  assert.deepEqual(writes, []);
+  assert.deepEqual(await readdir(f.releases), []);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(f.source), false);
+  assert.equal(serialized.includes('synthetic-pkg'), false);
+});
+
+test('inspect stops on sensitive paths before reading them and emits no path or content', async t => {
+  const f = await fixture(t, { entrySource: "import '../src/credentials.js';\n" });
+  const sensitivePath = path.join(f.source, 'src', 'credentials.js');
+  const canary = 'synthetic-sensitive-content-canary';
+  await writeFile(sensitivePath, `throw new Error('${canary}');\n`);
+  let sensitiveReads = 0;
+  const fsApi = Object.create(await import('node:fs/promises'));
+  fsApi.readFile = async (file, ...args) => {
+    if (path.resolve(String(file)) === sensitivePath) sensitiveReads += 1;
+    return readFile(file, ...args);
+  };
+  await assert.rejects(inspectRuntimeClosure({ sourceRoot: f.source, entrypoint: 'bin/entry.js', fsApi }), error => error.code === 'SENSITIVE_PATH_NOT_READ');
+  assert.equal(sensitiveReads, 0);
+
+  const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+  const cli = spawnSync(process.execPath, [tool, 'inspect', '--source-root', f.source, '--entrypoint', 'bin/entry.js'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(cli.status, 2);
+  assert.equal(cli.stdout, '');
+  const diagnostic = JSON.parse(cli.stderr);
+  assert.equal(diagnostic.status, 'STOP');
+  assert.equal(diagnostic.staticClosure, 'STOP');
+  assert.deepEqual(diagnostic.stopCodes, ['SENSITIVE_PATH_NOT_READ']);
+  assert.equal(`${cli.stdout}${cli.stderr}`.includes(sensitivePath), false);
+  assert.equal(`${cli.stdout}${cli.stderr}`.includes(canary), false);
+  assert.deepEqual(await readdir(f.releases), []);
+});
+
+test('inspect catches an unreadable closure file under an unprivileged POSIX user', { skip: posixSkip }, async t => {
+  const f = await fixture(t);
+  const protectedPath = path.join(f.source, 'src', 'value.js');
+  await chmod(protectedPath, 0);
+  const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+  const cli = spawnSync('runuser', ['-u', 'nobody', '--', process.execPath, tool, 'inspect', '--source-root', f.source, '--entrypoint', 'bin/entry.js'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(cli.status, 2, cli.stderr);
+  assert.equal(cli.stdout, '');
+  const diagnostic = JSON.parse(cli.stderr);
+  assert.equal(diagnostic.status, 'STOP');
+  assert.deepEqual(diagnostic.stopCodes, ['SOURCE_ACCESS_DENIED']);
+  assert.equal(`${cli.stdout}${cli.stderr}`.includes(protectedPath), false);
+});
+
+test('inspect CLI supports streamed stdin and returns stable safe JSON and bounded exit codes', { skip: posixSkip }, async t => {
+  const f = await fixture(t);
+  const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+  const source = await readFile(tool, 'utf8');
+  const pass = spawnSync(process.execPath, ['--input-type=module', '-', 'inspect', '--source-root', f.source, '--entrypoint', 'bin/entry.js'], { input: source, encoding: 'utf8', timeout: 5000 });
+  assert.equal(pass.status, 0, pass.stderr);
+  assert.equal(pass.stderr, '');
+  const report = JSON.parse(pass.stdout);
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.staticClosure, 'PASS');
+  assert.equal(report.fullRuntimeClosure, 'UNCONFIRMED');
+  assert.equal(pass.stdout.includes(f.source), false);
+
+  const stop = spawnSync(process.execPath, [tool, 'inspect', '--source-root', f.source], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(stop.status, 2);
+  assert.equal(stop.stdout, '');
+  assert.deepEqual(JSON.parse(stop.stderr).stopCodes, ['USAGE']);
+  assert.deepEqual(await readdir(f.releases), []);
+});
+
+test('inspect CLI classifies unexpected filesystem failures without exposing the input path', { skip: posixSkip }, async () => {
+  const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+  const oversizedPath = `/${'x'.repeat(5000)}`;
+  const cli = spawnSync(process.execPath, [tool, 'inspect', '--source-root', oversizedPath, '--entrypoint', 'bin/entry.js'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(cli.status, 1);
+  assert.equal(cli.stdout, '');
+  const diagnostic = JSON.parse(cli.stderr);
+  assert.equal(diagnostic.status, 'STOP');
+  assert.deepEqual(diagnostic.stopCodes, ['INSPECT_INTERNAL_ERROR']);
+  assert.equal(`${cli.stdout}${cli.stderr}`.includes(oversizedPath), false);
+});
+
+test('inspect reports source instability between its two read passes', async t => {
+  const f = await fixture(t);
+  const changedFile = path.join(f.source, 'src', 'value.js');
+  const fsApi = Object.create(await import('node:fs/promises'));
+  let changed = false;
+  fsApi.readFile = async (file, ...args) => {
+    const bytes = await readFile(file, ...args);
+    if (!changed && path.basename(String(file)) === 'package-lock.json') {
+      changed = true;
+      await writeFile(changedFile, 'export const concurrentlyChanged = true;\n');
+    }
+    return bytes;
+  };
+  await assert.rejects(inspectRuntimeClosure({ sourceRoot: f.source, entrypoint: 'bin/entry.js', fsApi }), error => error.code === 'SOURCE_CHANGED_BEFORE_PUBLISH');
+  assert.equal(changed, true);
+  assert.deepEqual(await readdir(f.releases), []);
+});
+
+test('inspect fails closed on symlink escape before reading its target', { skip: platform() === 'win32' ? 'real symlink permissions require POSIX' : false }, async t => {
+  const f = await fixture(t, { entrySource: "import '../src/link.js';\n" });
+  const outside = path.join(f.base, 'outside.js');
+  await writeFile(outside, 'export default 1;\n');
+  await symlink(outside, path.join(f.source, 'src', 'link.js'));
+  let outsideRead = false;
+  const fsApi = Object.create(await import('node:fs/promises'));
+  fsApi.readFile = async (file, ...args) => {
+    if (path.resolve(String(file)) === outside) outsideRead = true;
+    return readFile(file, ...args);
+  };
+  await assert.rejects(inspectRuntimeClosure({ sourceRoot: f.source, entrypoint: 'bin/entry.js', fsApi }), error => error.code === 'SYMLINK_NOT_ALLOWED');
+  assert.equal(outsideRead, false);
+});
+
+test('inspect reuses fail-closed gates for unsupported runtime references and file types', { skip: posixSkip }, async t => {
+  const cases = [
+    { source: "import './missing.js';\n", expected: 'DEPENDENCY_MISSING' },
+    { source: "import './data.json';\n", expected: 'PATH_CLASS_UNCONFIRMED' },
+    { source: "const name = './src/value.js'; import(name);\n", expected: 'DYNAMIC_IMPORT_UNSUPPORTED' },
+    { source: "const name = './src/value.js'; require(name);\n", expected: 'DYNAMIC_REQUIRE_UNSUPPORTED' },
+    { source: 'const value = `${require(\'./src/value.js\')}`;\n', expected: 'TEMPLATE_EXPRESSION_UNSUPPORTED' },
+    { source: "import { createRequire } from 'node:module';\n", expected: 'DYNAMIC_REQUIRE_UNSUPPORTED' },
+  ];
+  for (const scenario of cases) {
+    const f = await fixture(t, { entrySource: scenario.source });
+    await assert.rejects(inspectRuntimeClosure({ sourceRoot: f.source, entrypoint: 'bin/entry.js' }), error => error.code === scenario.expected, scenario.source);
+    assert.deepEqual(await readdir(f.releases), []);
+  }
+
+  const hardlinked = await fixture(t, { entrySource: "import '../src/value.js';\n" });
+  await link(path.join(hardlinked.source, 'src', 'value.js'), path.join(hardlinked.source, 'src', 'alias.js'));
+  await assert.rejects(inspectRuntimeClosure({ sourceRoot: hardlinked.source, entrypoint: 'bin/entry.js' }), error => error.code === 'HARDLINK_NOT_ALLOWED');
+  assert.deepEqual(await readdir(hardlinked.releases), []);
 });
 
 test('rollback rehearsal changes only the old entrypoint and preserves WorkingDirectory/state', { skip: posixSkip }, async t => {

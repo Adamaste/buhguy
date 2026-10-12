@@ -17,6 +17,14 @@ const SENSITIVE_DIRECTORY = new Set([
   'receipt-data', 'bank-data', '.cache', '.local-browsers', 'ms-playwright',
 ]);
 const BUILTINS = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
+const INSPECT_LIMITATIONS = Object.freeze([
+  'STATIC_IMPORTS_ONLY',
+  'RUNTIME_LOADED_FILES_NOT_DISCOVERED',
+  'PLUGINS_NOT_DISCOVERED',
+  'NATIVE_MODULES_NOT_DISCOVERED',
+  'CHILD_PROCESSES_NOT_DISCOVERED',
+  'FULL_RUNTIME_CLOSURE_REQUIRES_SEPARATE_EVIDENCE',
+]);
 
 export class SnapshotError extends Error {
   constructor(code) {
@@ -267,13 +275,15 @@ async function lstatDirectoryPath(root, relative, fsApi) {
 
 async function resolveFile(root, baseRelative, fsApi, { allowDirectory = false, readJson = null, exact = false } = {}) {
   const candidates = exact ? [baseRelative] : [baseRelative, ...['.js', '.mjs', '.cjs'].map(extension => `${baseRelative}${extension}`)];
+  const hasExplicitExtension = path.posix.extname(baseRelative) !== '';
   for (const candidate of candidates) {
     try {
       const rel = normalizeRelative(candidate);
       const { stat } = await lstatRegularPath(root, rel, fsApi);
       return rel;
     } catch (error) {
-      if (error?.code !== 'ENOENT' && !(error instanceof SnapshotError && error.code === 'PATH_CLASS_UNCONFIRMED')) throw error;
+      const extensionFallback = !hasExplicitExtension && error instanceof SnapshotError && error.code === 'PATH_CLASS_UNCONFIRMED';
+      if (error?.code !== 'ENOENT' && !extensionFallback) throw error;
     }
   }
   if (allowDirectory) {
@@ -448,7 +458,7 @@ async function recheckSources(closure, fsApi) {
     if (current.stat.size !== file.bytes.length || (current.stat.mode & 0o777) !== file.mode) fail('SOURCE_CHANGED_BEFORE_PUBLISH');
     const bytes = await fsApi.readFile(current.absolute);
     const after = await fsApi.lstat(current.absolute);
-    if (after.isSymbolicLink() || current.stat.dev !== after.dev || current.stat.ino !== after.ino || current.stat.size !== after.size || current.stat.mtimeMs !== after.mtimeMs || !crypto.timingSafeEqual(crypto.createHash('sha256').update(bytes).digest(), crypto.createHash('sha256').update(file.bytes).digest())) fail('SOURCE_CHANGED_BEFORE_PUBLISH');
+    if (after.isSymbolicLink() || current.stat.dev !== after.dev || current.stat.ino !== after.ino || current.stat.size !== after.size || current.stat.mtimeMs !== after.mtimeMs || current.stat.ctimeMs !== after.ctimeMs || current.stat.mode !== after.mode || !crypto.timingSafeEqual(crypto.createHash('sha256').update(bytes).digest(), crypto.createHash('sha256').update(file.bytes).digest())) fail('SOURCE_CHANGED_BEFORE_PUBLISH');
   }
 }
 
@@ -465,6 +475,51 @@ function snapshotFileRecords(files, entrypoint) {
 
 function fingerprintFor(files) {
   return sha256(Buffer.from(canonicalJson(files.map(({ path: rel, size, sha256: hash, sourceMode, mode, role }) => ({ path: rel, size, sha256: hash, sourceMode, mode, role })))));
+}
+
+function safeInspectStopCode(error) {
+  if (error instanceof SnapshotError) return error.code;
+  if (error?.code === 'ENOENT') return 'SOURCE_PATH_NOT_FOUND';
+  if (error?.code === 'EACCES' || error?.code === 'EPERM') return 'SOURCE_ACCESS_DENIED';
+  if (error?.code === 'ELOOP') return 'SYMLINK_NOT_ALLOWED';
+  if (error?.code === 'ENOTDIR') return 'PATH_COMPONENT_NOT_DIRECTORY';
+  if (error?.code === 'EIO') return 'SOURCE_IO_ERROR';
+  return 'INSPECT_INTERNAL_ERROR';
+}
+
+function inspectStopReport(code) {
+  return {
+    status: 'STOP',
+    staticClosure: 'STOP',
+    fullRuntimeClosure: 'UNCONFIRMED',
+    stableReadPasses: 0,
+    fileCount: null,
+    totalBytes: null,
+    fingerprint: null,
+    optionalDependencyCount: null,
+    moduleEdgeCount: null,
+    limitations: [...INSPECT_LIMITATIONS],
+    stopCodes: [code],
+  };
+}
+
+export async function inspectRuntimeClosure({ sourceRoot, entrypoint, fsApi = fs }) {
+  const closure = await inspectClosure({ sourceRoot, entrypoint, fsApi });
+  await recheckSources(closure, fsApi);
+  const records = snapshotFileRecords(closure.files, closure.entrypoint);
+  return {
+    status: 'PASS',
+    staticClosure: 'PASS',
+    fullRuntimeClosure: 'UNCONFIRMED',
+    stableReadPasses: 2,
+    fileCount: records.length,
+    totalBytes: closure.totalBytes,
+    fingerprint: fingerprintFor(records),
+    optionalDependencyCount: closure.optionalMissing.length,
+    moduleEdgeCount: closure.edges.length,
+    limitations: [...INSPECT_LIMITATIONS],
+    stopCodes: [],
+  };
 }
 
 async function ensureRealPrivateParent(parent, fsApi) {
@@ -689,6 +744,13 @@ async function cli() {
     if (!args[i].startsWith('--') || i + 1 >= args.length) fail('USAGE');
     options.set(args[i].slice(2), args[++i]);
   }
+  if (command === 'inspect') {
+    const allowed = new Set(['source-root', 'entrypoint']);
+    if ([...options.keys()].some(key => !allowed.has(key)) || options.size !== 2 || !options.has('source-root') || !options.has('entrypoint')) fail('USAGE');
+    const result = await inspectRuntimeClosure({ sourceRoot: options.get('source-root'), entrypoint: options.get('entrypoint') });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   if (command === 'create') {
     const allowed = new Set(['source-root', 'entrypoint', 'destination-parent', 'minimum-free-bytes', 'minimum-free-inodes', 'sync-quiesced']);
     if ([...options.keys()].some(key => !allowed.has(key)) || ['source-root', 'entrypoint', 'destination-parent', 'minimum-free-bytes', 'minimum-free-inodes'].some(key => !options.has(key))) fail('USAGE');
@@ -733,8 +795,14 @@ async function cli() {
 if (process.argv[1] === '-' || (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)) {
   try { await cli(); }
   catch (error) {
-    const code = error instanceof SnapshotError ? error.code : 'SNAPSHOT_INTERNAL_ERROR';
-    process.stderr.write(`${JSON.stringify({ status: 'STOP', code })}\n`);
-    process.exitCode = 1;
+    if (process.argv[2] === 'inspect') {
+      const code = safeInspectStopCode(error);
+      process.stderr.write(`${JSON.stringify(inspectStopReport(code))}\n`);
+      process.exitCode = code === 'INSPECT_INTERNAL_ERROR' ? 1 : 2;
+    } else {
+      const code = error instanceof SnapshotError ? error.code : 'SNAPSHOT_INTERNAL_ERROR';
+      process.stderr.write(`${JSON.stringify({ status: 'STOP', code })}\n`);
+      process.exitCode = 1;
+    }
   }
 }
