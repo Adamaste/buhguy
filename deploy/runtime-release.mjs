@@ -57,6 +57,10 @@ function isSafeDependencyDocumentation(value) {
     && !NEVER_RELEASE_SOURCE_BASENAMES.has(basename);
 }
 
+function isDependencyCode(value) {
+  return value.startsWith('node_modules/') && SOURCE_CODE_EXTENSIONS.has(path.extname(value).toLowerCase());
+}
+
 function normalizePath(value, { trustedSourcePaths = null } = {}) {
   if (typeof value !== 'string' || !value || /[\0\r\n\t]/.test(value) || value.includes('\\') || value.startsWith('/') || /^[a-z]:/i.test(value)) fail('PATH_INVALID');
   const parts = value.split('/');
@@ -64,9 +68,10 @@ function normalizePath(value, { trustedSourcePaths = null } = {}) {
   const lowerParts = parts.map(part => part.toLowerCase());
   if (lowerParts.some(part => part.startsWith('.env') || NEVER_RELEASE_COMPONENTS.has(part))) fail('SENSITIVE_PATH');
   const isSourcePath = sourcePathIsVerified(value, trustedSourcePaths);
+  const isDependencyCodePath = isDependencyCode(value);
   const sourceBase = path.basename(value, path.extname(value)).toLowerCase();
-  if (isSourcePath && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase)) fail('SENSITIVE_PATH');
-  if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath && !isSafeDependencyDocumentation(value)) fail('SENSITIVE_PATH');
+  if ((isSourcePath || isDependencyCodePath) && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase)) fail('SENSITIVE_PATH');
+  if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath && !isDependencyCodePath && !isSafeDependencyDocumentation(value)) fail('SENSITIVE_PATH');
   if (isSourcePath && !SOURCE_CODE_EXTENSIONS.has(path.extname(value).toLowerCase()) && trustedSourcePaths.has(value)) fail('SENSITIVE_PATH');
   const allowed = EXACT_CODE_FILES.has(value) || ALLOWED_DIRECTORIES.has(value) || CODE_ROOTS.some(prefix => value.startsWith(prefix)) || value.startsWith('node_modules/');
   if (!allowed) fail('PATH_OUTSIDE_RUNTIME_ALLOWLIST');

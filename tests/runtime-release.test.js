@@ -204,13 +204,15 @@ test('manifest traversal and manifest hash mismatch stop verification', async t 
   await assert.rejects(() => verifyRelease({ releaseDir: release.stage, sha: shaA, manifestSha256: hash, runtimeCheck: false }), error => ['PATH_TRAVERSAL', 'PATH_INVALID'].includes(error.code));
 });
 
-test('dependency documentation is distinct from secret and runtime-state paths', () => {
+test('sensitive dependency code and documentation are distinct from secret and runtime-state paths', () => {
+  assert.equal(validateReleasePath('node_modules/dotenv/lib/env-options.js'), 'node_modules/dotenv/lib/env-options.js');
   assert.equal(
     validateReleasePath('node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md'),
     'node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md',
   );
   for (const relative of [
     'node_modules/pkg/credentials.md',
+    'node_modules/pkg/credentials.js',
     'node_modules/pkg/session.json',
     'node_modules/pkg/browser-profile/session.json',
     'node_modules/pkg/.env.example.txt',
