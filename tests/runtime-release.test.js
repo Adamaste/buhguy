@@ -206,6 +206,7 @@ test('manifest traversal and manifest hash mismatch stop verification', async t 
 
 test('sensitive dependency code and documentation are distinct from secret and runtime-state paths', () => {
   assert.equal(validateReleasePath('node_modules/dotenv/lib/env-options.js'), 'node_modules/dotenv/lib/env-options.js');
+  assert.equal(validateReleasePath('node_modules/playwright-core/lib/tools/cli-client/session.js'), 'node_modules/playwright-core/lib/tools/cli-client/session.js');
   assert.equal(
     validateReleasePath('node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md'),
     'node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md',

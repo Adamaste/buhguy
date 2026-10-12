@@ -70,7 +70,8 @@ function normalizePath(value, { trustedSourcePaths = null } = {}) {
   const isSourcePath = sourcePathIsVerified(value, trustedSourcePaths);
   const isDependencyCodePath = isDependencyCode(value);
   const sourceBase = path.basename(value, path.extname(value)).toLowerCase();
-  if ((isSourcePath || isDependencyCodePath) && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase)) fail('SENSITIVE_PATH');
+  const isSessionCodeModule = isDependencyCodePath && sourceBase === 'session';
+  if ((isSourcePath || isDependencyCodePath) && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase) && !isSessionCodeModule) fail('SENSITIVE_PATH');
   if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath && !isDependencyCodePath && !isSafeDependencyDocumentation(value)) fail('SENSITIVE_PATH');
   if (isSourcePath && !SOURCE_CODE_EXTENSIONS.has(path.extname(value).toLowerCase()) && trustedSourcePaths.has(value)) fail('SENSITIVE_PATH');
   const allowed = EXACT_CODE_FILES.has(value) || ALLOWED_DIRECTORIES.has(value) || CODE_ROOTS.some(prefix => value.startsWith(prefix)) || value.startsWith('node_modules/');
