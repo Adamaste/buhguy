@@ -51,7 +51,8 @@ function isSafeDependencyDocumentation(value) {
   const parts = value.split('/');
   const extension = path.extname(value).toLowerCase();
   const basename = path.basename(value, extension).toLowerCase();
-  if (parts[0] !== 'node_modules' || extension !== '.md' || basename !== 'storage-state') return false;
+  if (parts[0] !== 'node_modules' || extension !== '.md' || !/(^|[-_.])(state|session|sessions)([-_.]|$)/i.test(basename)) return false;
+  if (/(^|[-_.])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|profile|profiles)([-_.]|$)/i.test(basename)) return false;
   const parentParts = parts.slice(1, -1).map(part => part.toLowerCase());
   return !parentParts.some(part => part.startsWith('.env') || NEVER_RELEASE_COMPONENTS.has(part) || SENSITIVE.test(part))
     && !NEVER_RELEASE_SOURCE_BASENAMES.has(basename);

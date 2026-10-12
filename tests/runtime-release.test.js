@@ -211,10 +211,15 @@ test('sensitive dependency code and documentation are distinct from secret and r
     validateReleasePath('node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md'),
     'node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md',
   );
+  assert.equal(
+    validateReleasePath('node_modules/playwright-core/lib/tools/skills/playwright-cli/references/session-management.md'),
+    'node_modules/playwright-core/lib/tools/skills/playwright-cli/references/session-management.md',
+  );
   for (const relative of [
     'node_modules/pkg/credentials.md',
     'node_modules/pkg/credentials.js',
     'node_modules/pkg/session.json',
+    'node_modules/pkg/session.md',
     'node_modules/pkg/browser-profile/session.json',
     'node_modules/pkg/.env.example.txt',
     'node_modules/pkg/private-token.txt',
