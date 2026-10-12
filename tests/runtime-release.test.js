@@ -232,6 +232,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     ['src/bank-device-auth.js', 'export const bankDeviceAuthModule = true;\n'],
     ['src/browser-session-import.js', 'export const browserSessionImportModule = true;\n'],
     ['db/migrations/001_initial.sql', 'SELECT 1;\n'],
+    ['db/migrations/011_bank_device_credentials.sql', 'CREATE TABLE device_credentials (id integer PRIMARY KEY);\n'],
     ['deploy/runtime-release.mjs', await fs.readFile(fileURLToPath(new URL('../deploy/runtime-release.mjs', import.meta.url)), 'utf8')],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0', engines: { node: '>=22' } } } }) + '\n'],
