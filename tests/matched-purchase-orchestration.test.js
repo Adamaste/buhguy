@@ -32,15 +32,27 @@ function matching({ matches = [], bankStatuses = [], receiptStatuses = [], summa
   return { matches, bankStatuses, receiptStatuses, summary };
 }
 
-test('authoritative matched pair produces a PERSIST_REQUIRED preview plan', () => {
+test('a unique graph pair remains REVIEW_REQUIRED until its exact match key is explicitly approved', () => {
   const item = match();
+  const pending = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [item] }),
+    enrichments: [enrichment(item, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
+  });
+  assert.equal(pending.readiness, 'REVIEW_REQUIRED');
+  assert.equal(pending.summary.persistRequired, 0);
+  assert.equal(pending.decisions[0].orchestrationAction, 'BLOCKED');
+  assert.equal(pending.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
+  assert.equal(pending.decisions[0].approvalBasis, 'NONE');
+
   const result = buildMatchedPurchaseOrchestrationPreview({
     matching: matching({ matches: [item] }),
     enrichments: [enrichment(item, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
+    approvedMatchKey: item.matchKey,
   });
   assert.equal(result.readiness, 'READY');
   assert.equal(result.summary.persistRequired, 1);
   assert.equal(result.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+  assert.equal(result.decisions[0].approvalBasis, 'EXPLICIT_MATCH_KEY');
   assert.equal(result.decisions[0].writePlan.bankReceiptMatch, 'CREATE_OR_REUSE');
   assert.equal(result.decisions[0].writePlan.certification, 'REFRESH_ACTIVE_STATE');
 });
@@ -51,6 +63,7 @@ test('REFINE and already persisted decisions expose distinct safe plans', () => 
   const result = buildMatchedPurchaseOrchestrationPreview({
     matching: matching({ matches: [second, first] }),
     enrichments: [enrichment(second, 'REUSE_EXISTING_BANK_FUNDING'), enrichment(first, 'REFINE_EXISTING_FISCAL_FUNDING')],
+    approvedMatchKey: first.matchKey,
   });
   assert.equal(result.summary.persistRequired, 1);
   assert.equal(result.summary.alreadyPersisted, 1);
@@ -67,6 +80,7 @@ test('orchestration identity is stable when only the action changes', () => {
   const refine = buildMatchedPurchaseOrchestrationPreview({
     matching: matching({ matches: [item] }),
     enrichments: [enrichment(item, 'REFINE_EXISTING_FISCAL_FUNDING')],
+    approvedMatchKey: item.matchKey,
   });
   const noop = buildMatchedPurchaseOrchestrationPreview({
     matching: matching({ matches: [item] }),
@@ -108,12 +122,14 @@ test('preview output is deterministic and isolated PERSIST_REQUIRED decisions su
     }),
     enrichments: [enrichment(b, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED'), enrichment(a, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
   };
-  const first = buildMatchedPurchaseOrchestrationPreview(input);
-  const second = buildMatchedPurchaseOrchestrationPreview({ ...input, matching: { ...input.matching, matches: [a, b] }, enrichments: input.enrichments.slice().reverse() });
+  const first = buildMatchedPurchaseOrchestrationPreview({ ...input, approvedMatchKey: a.matchKey });
+  const second = buildMatchedPurchaseOrchestrationPreview({ ...input, matching: { ...input.matching, matches: [a, b] }, enrichments: input.enrichments.slice().reverse(), approvedMatchKey: a.matchKey });
   assert.deepEqual(first, second);
   assert.equal(first.readiness, 'REVIEW_REQUIRED');
-  assert.equal(first.summary.persistRequired, 2);
-  assert.ok(first.decisions.every((row) => row.orchestrationAction === 'PERSIST_REQUIRED'));
+  assert.equal(first.summary.persistRequired, 1);
+  assert.equal(first.summary.blockedMatchedPairs, 1);
+  assert.equal(first.decisions.find((row) => row.matchKey === a.matchKey).orchestrationAction, 'PERSIST_REQUIRED');
+  assert.equal(first.decisions.find((row) => row.matchKey === b.matchKey).orchestrationAction, 'BLOCKED');
 });
 
 test('CLI requires explicit windows and rejects mutation requests', async () => {

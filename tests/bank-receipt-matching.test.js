@@ -217,7 +217,7 @@ test('receipt statuses preserve ids and matcher-owned reasons at every status', 
     receiptId: 20,
     receiptCandidateKey: matched.receiptStatuses[0].receiptCandidateKey,
     status: BANK_RECEIPT_MATCHING_STATUSES.MATCHED,
-    reasonCode: 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH',
+    reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL',
   });
   const unmatched = match(bankEntry(), receiptRow({ ecashTotalSum: '101.00', totalSum: '101.00' }));
   assert.equal(unmatched.receiptStatuses[0].receiptId, 20);
@@ -247,7 +247,7 @@ test('bank statuses are ledger-entry level and summary partitions are exact', ()
   );
   assert.equal(result.bankStatuses.length, result.summary.totalBankLedgerEntries);
   assert.equal(result.bankStatuses.find((row) => row.economicKind === 'OUTGOING_TRANSFER').reasonCode, 'BANK_NOT_PURCHASE');
-  assert.equal(result.bankStatuses.find((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED).reasonCode, 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH');
+  assert.equal(result.bankStatuses.find((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED).reasonCode, 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL');
   assert.equal(result.bankStatuses.find((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED).reasonCode, 'NO_COMPATIBLE_RECEIPT');
   assert.equal(result.summary.totalBankLedgerEntries, result.summary.eligibleBankPurchases + result.summary.ineligibleBankEntries);
   assert.equal(result.summary.eligibleBankPurchases, result.summary.matchedBankPurchases + result.summary.unmatchedBankPurchases + result.summary.ambiguousBankPurchases);

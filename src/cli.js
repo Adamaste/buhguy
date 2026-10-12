@@ -21,7 +21,8 @@ import { standalonePurchaseCensus, persistStandalonePurchases } from './standalo
 import { accountingCoverageReport, compareCoverageReports } from './accounting-coverage.js';
 import { runAccountingCatchup } from './accounting-pipeline.js';
 import { previewMatchedPurchaseOrchestration, validateMatchedPurchaseMatchKey } from './matched-purchase-orchestration.js';
-import { effectiveAccountingScopeKey, runAccountingCatchupsForSources, runSourceSyncCycle } from './source-sync-cycle.js';
+import { effectiveAccountingScopeKey, runSourceSyncCycle } from './source-sync-cycle.js';
+import { readMatchedPurchaseReconciliationOptIn, runAccountingCatchupsWithMatchedPurchaseCanary } from './matched-purchase-reconciliation.js';
 import { addOnboardingUser, disableOnboarding, finishOnboarding, retryOnboarding, OnboardingStore, ONBOARDING_STATES, updateOnboardingState, updateSourceConfigAtomic } from './fns-user-onboarding.js';
 import { importBrowserSession } from './browser-session-import.js';
 import { removeOnboardingProfile, requireOnboardingProfile, startOnboardingBrowser, stopOnboardingBrowser, waitForOnboardingBrowserExit, onboardingCdpPort } from './onboarding-browser.js';
@@ -763,7 +764,17 @@ export async function main(argv = process.argv.slice(2), {
           return syncResult;
         },
       });
-      await runAccountingCatchupsForSources(cycle.sources, args['scope-key'] ?? null, (scopeKey) => runAccountingCatchup(pool, { scopeKey, logger }));
+      const accountingCycle = await runAccountingCatchupsWithMatchedPurchaseCanary({
+        pool,
+        sources: cycle.sources,
+        scopeOverride: args['scope-key'] ?? null,
+        canary: readMatchedPurchaseReconciliationOptIn(),
+        logger,
+      });
+      if (accountingCycle.reconciliations.length) {
+        cycle.matchedPurchaseReconciliation = accountingCycle.reconciliations;
+        if (accountingCycle.reconciliations.some((item) => item.errors > 0 || item.status === 'BLOCKED')) cycle.exitCode = 2;
+      }
       printJson(cycle);
       return cycle.exitCode;
     } finally { await pool.end(); }

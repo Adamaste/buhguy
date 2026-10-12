@@ -278,7 +278,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
         amount: banks[0].amount,
         currency: banks[0].currency,
         timeDeltaMs,
-        reasonCode: 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH',
+        reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL',
         bank: { ledgerKey: banks[0].ledgerKey, candidateKey: banks[0].candidateKey, journalKey: banks[0].journalKey, bankTransactionId: banks[0].bankTransactionId, financialAccountId: banks[0].financialAccountId, occurredAt: banks[0].occurredAt },
         receipt: receipts[0],
         bankAccountOwnershipProvenance: banks[0].ownershipProvenance,
@@ -307,7 +307,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
       status,
       reasonCode: eligible
         ? (status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
-          ? 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH'
+          ? 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL'
           : status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
             ? 'AMBIGUOUS_COMPATIBLE_RECEIPTS'
             : 'NO_COMPATIBLE_RECEIPT')
@@ -324,7 +324,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     status: candidate.receipt ? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) ?? BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED) : candidate.status,
     reasonCode: candidate.receipt
       ? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
-        ? 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH'
+        ? 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL'
         : statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
           ? 'AMBIGUOUS_COMPATIBLE_BANK_PURCHASES'
           : 'NO_COMPATIBLE_BANK_PURCHASE')

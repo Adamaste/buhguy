@@ -115,33 +115,39 @@ function orchestrationKey(fields) {
   });
 }
 
-function matchedDecision(match, enrichment) {
+function matchedDecision(match, enrichment, approvedMatchKey) {
   const projected = enrichment?.projectionStatus === MATCHED_PURCHASE_ENRICHMENT_STATUSES.PROJECTED;
   const reusable = projected && enrichment.ledgerDisposition === LEDGER_DISPOSITIONS.REUSE_EXISTING_BANK_FUNDING;
   const actionable = projected && [
     LEDGER_DISPOSITIONS.REFINE_EXISTING_FISCAL_FUNDING,
     LEDGER_DISPOSITIONS.FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED,
   ].includes(enrichment.ledgerDisposition);
+  const explicitlyApproved = match.matchKey === approvedMatchKey;
   const action = reusable
     ? ORCHESTRATION_DECISIONS.NOOP_ALREADY_PERSISTED
-    : actionable
+    : actionable && explicitlyApproved
       ? ORCHESTRATION_DECISIONS.PERSIST_REQUIRED
       : ORCHESTRATION_DECISIONS.BLOCKED;
-  const fields = safeDecisionFields(match, enrichment, action, enrichment?.reasonCode ?? 'MATCHED_ENRICHMENT_BLOCKED');
+  const reasonCode = actionable && !explicitlyApproved
+    ? 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED'
+    : enrichment?.reasonCode ?? 'MATCHED_ENRICHMENT_BLOCKED';
+  const fields = safeDecisionFields(match, enrichment, action, reasonCode);
   return {
     ...fields,
+    approvalBasis: explicitlyApproved ? 'EXPLICIT_MATCH_KEY' : 'NONE',
     orchestrationKey: orchestrationKey(fields),
     writePlan: writePlan(enrichment, action),
   };
 }
 
-export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [], selectionFailure = null } = {}) {
+export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [], selectionFailure = null, approvedMatchKey = null } = {}) {
   if (!matching || typeof matching !== 'object') throw new Error('matching result is required');
+  validateMatchedPurchaseMatchKey(approvedMatchKey);
   const enrichmentByMatchKey = new Map(enrichments.map((item) => [item.matchKey, item]));
   const decisions = (matching.matches ?? [])
     .slice()
     .sort((left, right) => String(left.matchKey).localeCompare(String(right.matchKey)))
-    .map((match) => matchedDecision(match, enrichmentByMatchKey.get(match.matchKey)));
+    .map((match) => matchedDecision(match, enrichmentByMatchKey.get(match.matchKey), approvedMatchKey));
   const bankStatuses = (matching.bankStatuses ?? []).map((row) => ({
     ledgerKey: row.ledgerKey ?? null,
     status: row.status ?? null,
@@ -196,23 +202,26 @@ export async function previewMatchedPurchaseOrchestration(pool, options = {}) {
   validateWindow(options.internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(options.receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
   const matchKey = validateMatchedPurchaseMatchKey(options.matchKey);
+  const approvedMatchKey = validateMatchedPurchaseMatchKey(options.approvedMatchKey);
+  if (approvedMatchKey && matchKey && approvedMatchKey !== matchKey) throw new Error('approved match key must match the selected match key');
+  const selectedMatchKey = approvedMatchKey ?? matchKey;
   const loaderOptions = {
     scopeKey: options.scopeKey,
     from: options.from ?? null,
     to: options.to ?? null,
-    matchKey,
+    matchKey: selectedMatchKey,
     internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
     receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
   };
   const matching = await loadBankReceiptMatching(pool, loaderOptions);
-  const exactMatches = matchKey
-    ? (matching.matches ?? []).filter((match) => match.matchKey === matchKey)
+  const exactMatches = selectedMatchKey
+    ? (matching.matches ?? []).filter((match) => match.matchKey === selectedMatchKey)
     : (matching.matches ?? []);
-  const selectionFailure = matchKey && exactMatches.length === 0
-    ? { matchKey, status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' }
+  const selectionFailure = selectedMatchKey && exactMatches.length === 0
+    ? { matchKey: selectedMatchKey, status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' }
     : null;
   const enrichments = await Promise.all(exactMatches.map(async (match) => loadMatchedPurchaseEnrichment(pool, { ...loaderOptions, matchKey: match.matchKey })));
-  const result = buildMatchedPurchaseOrchestrationPreview({ matching: { ...matching, matches: exactMatches }, enrichments, selectionFailure });
+  const result = buildMatchedPurchaseOrchestrationPreview({ matching: { ...matching, matches: exactMatches }, enrichments, selectionFailure, approvedMatchKey });
   logMatchedPurchaseOrchestrationPreview(result, loaderOptions, options.logger);
   return result;
 }
