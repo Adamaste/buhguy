@@ -175,6 +175,26 @@ export async function ingestBankEvent(pool, input) {
   } finally { client.release(); }
 }
 
+export async function resolveBankObservationAccountingScope(pool, { bankSourceId, observationId } = {}) {
+  const sourceId = Number(bankSourceId);
+  const eventId = Number(observationId);
+  if (!Number.isSafeInteger(sourceId) || sourceId < 1 || !Number.isSafeInteger(eventId) || eventId < 1) {
+    return { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_IDENTITY_INVALID' };
+  }
+  const result = await pool.query(`SELECT DISTINCT s.scope_key
+    FROM bank_event_observations o
+    JOIN bank_sources b ON b.id=o.bank_source_id
+    JOIN bank_source_person sp ON sp.bank_source_id=b.id AND sp.relation_type='OWNER'
+    JOIN persons p ON p.id=sp.person_id
+    JOIN accounting_scopes s ON s.id=p.scope_id
+    WHERE o.id=$1 AND o.bank_source_id=$2`, [eventId, sourceId]);
+  if (result.rows.length === 0) return { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_UNRESOLVED' };
+  if (result.rows.length !== 1 || typeof result.rows[0].scope_key !== 'string' || !result.rows[0].scope_key.trim()) {
+    return { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_AMBIGUOUS' };
+  }
+  return { status: 'RESOLVED', scopeKey: result.rows[0].scope_key };
+}
+
 export function createBankIngestionHandler({ pool }) {
   return async (request) => {
     const input = request?.body ?? request;

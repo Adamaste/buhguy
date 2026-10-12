@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV,
+  MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV,
   MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV,
   MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES,
   matchedPurchaseReconciliationWindow,
@@ -13,6 +14,7 @@ import { MATCHED_PURCHASE_ORCHESTRATION_VERSION } from '../src/matched-purchase-
 
 const now = new Date('2026-10-12T12:00:00.000Z');
 const window = matchedPurchaseReconciliationWindow(now);
+const approvedMatchKey = 'a'.repeat(64);
 const decision = (action, matchKey = 'a'.repeat(64)) => ({ scopeKey: 'canary-scope', matchKey, orchestrationAction: action });
 function readOnlyPool() {
   const statements = [];
@@ -43,15 +45,16 @@ const projection = (overrides = {}) => ({
 });
 
 test('canary opt-in is exact and defaults to disabled', () => {
-  assert.deepEqual(readMatchedPurchaseReconciliationOptIn({}), { enabled: false, canaryScopeKey: null });
+  assert.deepEqual(readMatchedPurchaseReconciliationOptIn({}), { enabled: false, canaryScopeKey: null, approvedMatchKey: null });
   assert.deepEqual(readMatchedPurchaseReconciliationOptIn({
     [MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV]: 'TRUE',
     [MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV]: ' scope-a ',
-  }), { enabled: false, canaryScopeKey: 'scope-a' });
+  }), { enabled: false, canaryScopeKey: 'scope-a', approvedMatchKey: null });
   assert.deepEqual(readMatchedPurchaseReconciliationOptIn({
     [MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV]: 'true',
     [MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV]: ' scope-a ',
-  }), { enabled: true, canaryScopeKey: 'scope-a' });
+    [MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV]: ` ${approvedMatchKey.toUpperCase()} `,
+  }), { enabled: true, canaryScopeKey: 'scope-a', approvedMatchKey });
 });
 
 test('rolling reconciliation window is bounded to the existing approved maximum', () => {
@@ -72,7 +75,7 @@ test('default-off reconciliation performs no preview or writer call', async () =
 
 test('runner requires an exact canary scope and a finite period no longer than the policy', async () => {
   let calls = 0;
-  const base = { enabled: true, scopeKey: 'scope-a', canaryScopeKey: 'scope-b', ...window };
+  const base = { enabled: true, scopeKey: 'scope-a', canaryScopeKey: 'scope-b', approvedMatchKey, ...window };
   const mismatch = await runBoundedMatchedPurchaseReconciliation({}, { ...base, preview: async () => { calls += 1; } });
   assert.equal(mismatch.reasonCode, 'CANARY_SCOPE_MISMATCH');
   const tooWide = await runBoundedMatchedPurchaseReconciliation({}, {
@@ -85,25 +88,39 @@ test('runner requires an exact canary scope and a finite period no longer than t
   assert.equal(calls, 0);
 });
 
+test('enabled runner without an explicitly approved match key stops before preview or writer', async () => {
+  let calls = 0;
+  const result = await runBoundedMatchedPurchaseReconciliation({}, {
+    enabled: true, scopeKey: 'scope-a', canaryScopeKey: 'scope-a', ...window,
+    preview: async () => { calls += 1; },
+    persist: async () => { calls += 1; },
+  });
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reasonCode, 'APPROVED_MATCH_KEY_REQUIRED');
+  assert.equal(calls, 0);
+});
+
 test('only one deterministic PERSIST_REQUIRED decision is sent to the transactional writer', async () => {
   const pool = readOnlyPool();
   const persistedKeys = [];
   const result = await runBoundedMatchedPurchaseReconciliation(pool, {
-    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', ...window,
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', approvedMatchKey, ...window,
     preview: async (_pool, options) => {
       assert.equal(options.scopeKey, 'canary-scope');
+      assert.equal(options.matchKey, approvedMatchKey);
+      assert.equal(options.approvedMatchKey, approvedMatchKey);
       assert.equal(options.receiptMaxTimeDeltaMs, 300000);
       return projection({
-        decisions: [decision('PERSIST_REQUIRED', 'b'.repeat(64)), decision('PERSIST_REQUIRED', 'a'.repeat(64)), decision('BLOCKED', 'c'.repeat(64))],
-        summary: { ...projection().summary, persistRequired: 2, blockedMatchedPairs: 1 },
+        decisions: [decision('PERSIST_REQUIRED', approvedMatchKey), decision('BLOCKED', 'b'.repeat(64)), decision('BLOCKED', 'c'.repeat(64))],
+        summary: { ...projection().summary, persistRequired: 1, blockedMatchedPairs: 2 },
       });
     },
     persist: async (_pool, options) => { persistedKeys.push(options.matchKey); return { outcome: 'PERSISTED' }; },
   });
-  assert.deepEqual(persistedKeys, ['a'.repeat(64)]);
+  assert.deepEqual(persistedKeys, [approvedMatchKey]);
   assert.equal(result.persisted, 1);
-  assert.equal(result.blocked, 1);
-  assert.equal(result.deferred, 1);
+  assert.equal(result.blocked, 2);
+  assert.equal(result.deferred, 0);
   assert.equal(MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES, 1);
   assert.equal(pool.statements[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   assert.equal(pool.statements.at(-1), 'ROLLBACK');
@@ -113,7 +130,7 @@ test('reused and ambiguous decisions never reach the writer', async () => {
   const pool = readOnlyPool();
   let writes = 0;
   const result = await runBoundedMatchedPurchaseReconciliation(pool, {
-    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', ...window,
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', approvedMatchKey, ...window,
     preview: async () => projection({
       readiness: 'REVIEW_REQUIRED',
       decisions: [decision('NOOP_ALREADY_PERSISTED')],
@@ -131,6 +148,7 @@ test('reused and ambiguous decisions never reach the writer', async () => {
 test('invalid preview or inconsistent counts fail closed without a writer call', async () => {
   let writes = 0;
   const base = { enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', ...window };
+  base.approvedMatchKey = approvedMatchKey;
   const invalidModel = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
     ...base,
     preview: async () => projection({ modelVersion: 'unexpected' }),
@@ -148,7 +166,7 @@ test('invalid preview or inconsistent counts fail closed without a writer call',
 
 test('writer failure is classified without exposing free-form error text', async () => {
   const result = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
-    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', ...window,
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', approvedMatchKey, ...window,
     preview: async () => projection({
       decisions: [decision('PERSIST_REQUIRED')],
       summary: { ...projection().summary, persistRequired: 1 },
@@ -179,7 +197,7 @@ test('preview rollback failure destroys the read-only PostgreSQL client', async 
     },
   };
   const result = await runBoundedMatchedPurchaseReconciliation(pool, {
-    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', ...window,
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope', approvedMatchKey, ...window,
     preview: async () => projection(),
   });
   assert.equal(result.errors, 1);
@@ -199,7 +217,7 @@ test('accounting catch-up precedes reconciliation and the default path remains w
   assert.deepEqual(defaultResult.reconciliations, []);
   order.length = 0;
   await runAccountingCatchupsWithMatchedPurchaseCanary({
-    pool: {}, sources: [{ enabled: true, scopeKey: 'scope-a' }], canary: { enabled: true, canaryScopeKey: 'scope-a' }, now,
+    pool: {}, sources: [{ enabled: true, scopeKey: 'scope-a' }], canary: { enabled: true, canaryScopeKey: 'scope-a', approvedMatchKey }, now,
     runCatchup: async (scope) => order.push(`catchup:${scope}`),
     reconcile: async (_pool, options) => { order.push(`reconcile:${options.scopeKey}`); return { status: 'COMPLETED', persisted: 1, reused: 0, blocked: 0, ambiguous: 0, ambiguousReceipts: 0, errors: 0, deferred: 0, unmatchedBankPurchases: 0, unmatchedReceipts: 0 }; },
   });

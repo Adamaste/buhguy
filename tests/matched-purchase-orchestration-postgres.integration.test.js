@@ -113,16 +113,17 @@ async function withReadOnlyTransaction(pool, queries, callback) {
   }
 }
 
-integration('authoritative preview is PERSIST_REQUIRED and SELECT-only', { concurrency: false }, async () => {
+integration('authoritative preview requires explicit match approval and remains SELECT-only', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
     const fixture = await createFixture(pool, 'preview-authoritative');
     const before = await snapshot(pool);
     const queries = [];
     const result = await withReadOnlyTransaction(pool, queries, (readOnly) => previewMatchedPurchaseOrchestration(readOnly, { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 }));
-    assert.equal(result.readiness, 'READY');
-    assert.equal(result.summary.persistRequired, 1);
-    assert.equal(result.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+    assert.equal(result.readiness, 'REVIEW_REQUIRED');
+    assert.equal(result.summary.persistRequired, 0);
+    assert.equal(result.decisions[0].orchestrationAction, 'BLOCKED');
+    assert.equal(result.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
     assert.ok(queries.length > 0);
     assert.equal(await snapshot(pool), before);
   } finally { await pool.end(); }
@@ -134,8 +135,9 @@ integration('public preview ignores caller matchingLoader injection and rejects 
     const fixture = await createFixture(pool, 'preview-loader-isolation');
     const options = { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
     const result = await previewMatchedPurchaseOrchestration(pool, { ...options, matchingLoader: async () => ({ matches: [] }) });
-    assert.equal(result.readiness, 'READY');
-    assert.equal(result.summary.persistRequired, 1);
+    assert.equal(result.readiness, 'REVIEW_REQUIRED');
+    assert.equal(result.summary.persistRequired, 0);
+    assert.equal(result.summary.blockedMatchedPairs, 1);
     const missing = await previewMatchedPurchaseOrchestration(pool, { ...options, matchKey: digest('missing-match') });
     assert.equal(missing.readiness, 'REVIEW_REQUIRED');
     assert.deepEqual(missing.selection, { matchKey: digest('missing-match'), status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' });
@@ -148,7 +150,9 @@ integration('real writer persistence preserves orchestration identity and read-o
     const fixture = await createFixture(pool, 'preview-already-persisted');
     const options = { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
     const before = await previewMatchedPurchaseOrchestration(pool, options);
-    assert.equal(before.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+    assert.equal(before.readiness, 'REVIEW_REQUIRED');
+    assert.equal(before.decisions[0].orchestrationAction, 'BLOCKED');
+    assert.equal(before.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
     await persistMatchedPurchase(pool, options);
     const queries = [];
     const persistedSnapshot = await snapshot(pool);
@@ -180,7 +184,9 @@ integration('real standalone purchase previews REFINE without invoking the write
     const fixture = await createFixture(pool, 'preview-refine', { standalone: true });
     const options = { scopeKey: fixture.scopeKey, internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000 };
     const refine = await previewMatchedPurchaseOrchestration(pool, options);
-    assert.equal(refine.summary.persistRequired, 1);
+    assert.equal(refine.readiness, 'REVIEW_REQUIRED');
+    assert.equal(refine.summary.persistRequired, 0);
+    assert.equal(refine.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
     assert.equal(refine.decisions[0].ledgerDisposition, 'REFINE_EXISTING_FISCAL_FUNDING');
   } finally { await pool.end(); }
 });
@@ -239,8 +245,9 @@ integration('read-only runner uses one PostgreSQL snapshot and leaves persistenc
       to: '2026-10-07T00:00:00.000Z',
     });
     assert.equal(result.ok, undefined);
-    assert.equal(result.readiness, 'READY');
-    assert.equal(result.summary.persistRequired, 1);
+    assert.equal(result.readiness, 'REVIEW_REQUIRED');
+    assert.equal(result.summary.persistRequired, 0);
+    assert.equal(result.summary.blockedMatchedPairs, 1);
     assert.equal(result.summary.alreadyPersisted, 0);
     assert.equal(await snapshot(pool), before);
   } finally { await pool.end(); }

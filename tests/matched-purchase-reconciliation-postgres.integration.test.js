@@ -35,14 +35,14 @@ before(async () => { pool = new pg.Pool({ connectionString: databaseUrl, max: 12
 beforeEach(async () => resetSchema());
 after(async () => { await pool?.end(); });
 
-function receiptRaw(fixture, { amount = '12.34', dateTime = fixture.dateTime, suffix = 'receipt' } = {}) {
+function receiptRaw(fixture, { amount = '12.34', dateTime = fixture.dateTime, suffix = 'receipt', merchant = 'Synthetic merchant' } = {}) {
   const numeric = Number(amount);
   return {
     key: `${fixture.prefix}-${suffix}`,
     dateTime,
     totalSum: numeric,
     currency: 'RUB',
-    user: 'Synthetic merchant',
+    user: merchant,
     userInn: '7700000000',
     operationType: 1,
     fiscalDocumentFormatVer: '4',
@@ -58,7 +58,7 @@ function receiptRaw(fixture, { amount = '12.34', dateTime = fixture.dateTime, su
   };
 }
 
-async function createFixture(prefix, { canaryEnabled = true } = {}) {
+async function createFixture(prefix, { canaryEnabled = true, canaryScopeKey = null, approvedMatchKey = null, reconcileMatchedPurchases } = {}) {
   const suffix = `${process.pid}-${Date.now()}-${sequence += 1}`;
   const fixturePrefix = `${prefix}-${suffix}`;
   const scopeKey = `${fixturePrefix}-scope`;
@@ -85,8 +85,8 @@ async function createFixture(prefix, { canaryEnabled = true } = {}) {
     personDisplayName: 'Synthetic person',
   });
   const credential = await createBankDeviceCredential(pool, { sourceKey: bankSourceKey, displayName: 'Synthetic test device' });
-  const canary = { enabled: canaryEnabled, canaryScopeKey: canaryEnabled ? scopeKey : null };
-  const server = createBankIngestionServer({ pool, logger: quietLogger, matchedPurchaseCanary: canary });
+  const canary = { enabled: canaryEnabled, canaryScopeKey: canaryEnabled ? canaryScopeKey ?? scopeKey : null, approvedMatchKey };
+  const server = createBankIngestionServer({ pool, logger: quietLogger, matchedPurchaseCanary: canary, reconcileMatchedPurchases });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
     prefix: fixturePrefix,
@@ -107,13 +107,13 @@ async function createFixture(prefix, { canaryEnabled = true } = {}) {
   };
 }
 
-async function ingestBank(fixture, { amount = '12.34', id = 'bank-event', dateTime = fixture.dateTime } = {}) {
+async function ingestBank(fixture, { amount = '12.34', id = 'bank-event', dateTime = fixture.dateTime, merchant = 'Synthetic bank merchant' } = {}) {
   const event = {
     sourceKey: fixture.bankSourceKey,
     sourceEventId: `${fixture.prefix}-${id}`,
     observedAt: new Date().toISOString(),
     eventTime: dateTime,
-    payload: { title: 'Покупка', description: `Покупка на ${amount} RUB синтетический магазин` },
+    payload: { title: 'Покупка', description: `Покупка на ${amount} RUB синтетический магазин`, merchant },
     ingestionMetadata: { adapter: 'synthetic-test', provider: 'com.yandex.bank', deviceType: 'test', schemaVersion: '1' },
   };
   const response = await fetch(`${fixture.baseUrl}/api/v1/bank/events`, {
@@ -183,11 +183,20 @@ async function certificationFacts(fixture) {
     ORDER BY f.semantic_key`, [fixture.scopeId])).rows;
 }
 
+async function matchingForFixture(fixture) {
+  return loadBankReceiptMatching(pool, {
+    scopeKey: fixture.scopeKey,
+    ...matchedPurchaseReconciliationWindow(),
+    internalTransferMaxTimeDeltaMs: 5000,
+    receiptMaxTimeDeltaMs: 300000,
+  });
+}
+
 async function closeFixture(fixture) {
   await new Promise((resolve) => fixture.server.close(resolve));
 }
 
-integration('bank-first then FNS sync auto-persists one proven pair and source replays stay idempotent', { concurrency: false }, async () => {
+integration('bank-first pair stays review-only until exact matchKey approval, then sync persists once', { concurrency: false }, async () => {
   const fixture = await createFixture('bank-first-e2e');
   try {
     const bankCreated = await ingestBank(fixture, { amount: '12.34' });
@@ -204,7 +213,22 @@ integration('bank-first then FNS sync auto-persists one proven pair and source r
 
     const fns = await syncFns(fixture);
     assert.equal(fns.syncResult.normalization_ready_count, 1);
-    assert.equal(fns.accounting.reconciliations[0].persisted, 1);
+    assert.equal(fns.accounting.reconciliations[0].reasonCode, 'APPROVED_MATCH_KEY_REQUIRED');
+    assert.deepEqual(await matchedCounts(fixture), {
+      matches: 0, bank_evidence: 0, matched_entries: 0, active_purchase_entries: 1, active_purchase_debits: '12.34',
+    });
+    const candidate = (await matchingForFixture(fixture)).matches[0];
+    const review = await previewMatchedPurchaseOrchestration(pool, {
+      scopeKey: fixture.scopeKey,
+      ...matchedPurchaseReconciliationWindow(),
+      internalTransferMaxTimeDeltaMs: 5000,
+      receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.equal(review.readiness, 'REVIEW_REQUIRED');
+    assert.equal(review.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
+    fixture.canary.approvedMatchKey = candidate.matchKey;
+    const approvedSync = await syncFns(fixture);
+    assert.equal(approvedSync.accounting.reconciliations[0].persisted, 1);
     totals = await expenseTotals(fixture);
     assert.deepEqual(totals, { amount: '12.34', count: 1 });
     const certified = await certificationFacts(fixture);
@@ -221,6 +245,7 @@ integration('bank-first then FNS sync auto-persists one proven pair and source r
     ]);
     assert.equal(bankReplay.status, 200);
     assert.equal(bankReplay.body.status, 'duplicate');
+    assert.equal(Object.hasOwn(bankReplay.body, 'reconciliation'), false);
     assert.equal(fnsReplay.syncResult.inserted, 0);
     assert.equal((await expenseTotals(fixture)).amount, '12.34');
     assert.equal((await expenseTotals(fixture)).count, 1);
@@ -241,7 +266,14 @@ integration('FNS-first standalone expense is refined by later bank ingestion wit
     const bank = await ingestBank(fixture, { amount: '45.67' });
     assert.equal(bank.status, 201);
     assert.equal(bank.body.status, 'created');
+    assert.equal(bank.body.reconciliation.status, 'BLOCKED');
     assert.deepEqual(await expenseTotals(fixture), { amount: '45.67', count: 1 });
+    assert.equal((await matchedCounts(fixture)).matches, 0);
+    fixture.canary.approvedMatchKey = (await matchingForFixture(fixture)).matches[0].matchKey;
+    const trigger = await ingestBank(fixture, { amount: '91.11', id: 'post-review-trigger', dateTime: new Date(Date.parse(fixture.dateTime) + 120_000).toISOString() });
+    assert.equal(trigger.status, 201);
+    assert.equal(trigger.body.reconciliation.status, 'COMPLETED');
+    assert.equal(trigger.body.reconciliation.reasonCode, undefined);
     assert.deepEqual(await matchedCounts(fixture), {
       matches: 1, bank_evidence: 1, matched_entries: 1, active_purchase_entries: 1, active_purchase_debits: '45.67',
     });
@@ -252,8 +284,8 @@ integration('FNS-first standalone expense is refined by later bank ingestion wit
     assert.equal(report.metrics.CONFIRMED_ACQUISITION_VALUE.amount, '45.67');
     assert.equal(report.metrics.CONFIRMED_ACQUISITION_VALUE.count, 1);
     const [left, right] = await Promise.all([
-      runBoundedMatchedPurchaseReconciliation(pool, { ...matchedPurchaseReconciliationWindow(), enabled: true, scopeKey: fixture.scopeKey, canaryScopeKey: fixture.scopeKey }),
-      runBoundedMatchedPurchaseReconciliation(pool, { ...matchedPurchaseReconciliationWindow(), enabled: true, scopeKey: fixture.scopeKey, canaryScopeKey: fixture.scopeKey }),
+      runBoundedMatchedPurchaseReconciliation(pool, { ...matchedPurchaseReconciliationWindow(), enabled: true, scopeKey: fixture.scopeKey, canaryScopeKey: fixture.scopeKey, approvedMatchKey: fixture.canary.approvedMatchKey }),
+      runBoundedMatchedPurchaseReconciliation(pool, { ...matchedPurchaseReconciliationWindow(), enabled: true, scopeKey: fixture.scopeKey, canaryScopeKey: fixture.scopeKey, approvedMatchKey: fixture.canary.approvedMatchKey }),
     ]);
     assert.equal(left.persisted + right.persisted, 0);
     assert.equal(left.reused + right.reused, 2);
@@ -270,6 +302,7 @@ integration('concurrent canary invocations recheck the same candidate transactio
       canary: { enabled: false, canaryScopeKey: fixture.scopeKey },
     });
     await ingestBank(fixture, { amount: '17.25' });
+    fixture.canary.approvedMatchKey = (await matchingForFixture(fixture)).matches[0].matchKey;
 
     let previewCalls = 0;
     let releasePreviews;
@@ -293,6 +326,7 @@ integration('concurrent canary invocations recheck the same candidate transactio
       enabled: true,
       scopeKey: fixture.scopeKey,
       canaryScopeKey: fixture.scopeKey,
+      approvedMatchKey: fixture.canary.approvedMatchKey,
       preview: gatedPreview,
     });
     const results = await Promise.all([reconcile(), reconcile()]);
@@ -322,7 +356,13 @@ integration('default-off, ambiguous receipts and writer conflicts never create a
       ...matchedPurchaseReconciliationWindow(), enabled: true, scopeKey: fixture.scopeKey, canaryScopeKey: fixture.scopeKey,
     });
     assert.equal(ambiguous.persisted, 0);
-    assert.ok(ambiguous.ambiguous > 0);
+    assert.equal(ambiguous.reasonCode, 'APPROVED_MATCH_KEY_REQUIRED');
+    const ambiguousPreview = await previewMatchedPurchaseOrchestration(pool, {
+      scopeKey: fixture.scopeKey, ...matchedPurchaseReconciliationWindow(),
+      internalTransferMaxTimeDeltaMs: 5000, receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.equal(ambiguousPreview.readiness, 'REVIEW_REQUIRED');
+    assert.ok(ambiguousPreview.summary.ambiguousBankPurchases > 0);
     assert.equal((await matchedCounts(fixture)).matches, 0);
 
     const fixtureConflict = await createFixture('writer-conflict-e2e', { canaryEnabled: false });
@@ -338,6 +378,7 @@ integration('default-off, ambiguous receipts and writer conflicts never create a
       });
       assert.equal(matching.matches.length, 1);
       const match = matching.matches[0];
+      fixtureConflict.canary.approvedMatchKey = match.matchKey;
       await pool.query(`INSERT INTO bank_receipt_matches(
           scope_id,bank_transaction_id,receipt_id,financial_account_id,matcher_version,match_key,
           bank_ledger_key,bank_candidate_key,bank_journal_key,receipt_candidate_key,
@@ -363,7 +404,7 @@ integration('default-off, ambiguous receipts and writer conflicts never create a
         JSON.stringify(match.bankAccountOwnershipProvenance),
       ]);
       const conflict = await runBoundedMatchedPurchaseReconciliation(pool, {
-        ...window, enabled: true, scopeKey: fixtureConflict.scopeKey, canaryScopeKey: fixtureConflict.scopeKey,
+        ...window, enabled: true, scopeKey: fixtureConflict.scopeKey, canaryScopeKey: fixtureConflict.scopeKey, approvedMatchKey: match.matchKey,
       });
       assert.equal(conflict.errors, 1);
       assert.equal(conflict.reasonCode, 'MATCH_PERSISTENCE_CONFLICT');
@@ -371,6 +412,137 @@ integration('default-off, ambiguous receipts and writer conflicts never create a
       assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE scope_id=$1', [fixtureConflict.scopeId])).rows[0].count, 0);
       assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE scope_id=$1 AND derivation_rule='LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1'", [fixtureConflict.scopeId])).rows[0].count, 0);
     } finally { await closeFixture(fixtureConflict); }
+  } finally { await closeFixture(fixture); }
+});
+
+integration('same amount, time and scope with different sellers stays REVIEW_REQUIRED without an approved key', { concurrency: false }, async () => {
+  const fixture = await createFixture('different-sellers-e2e');
+  try {
+    await ingestBank(fixture, { amount: '20.00', merchant: 'Synthetic seller Alpha' });
+    await syncFns(fixture, { receipts: [{ amount: '20.00', suffix: 'seller-beta', merchant: 'Synthetic seller Beta' }] });
+    const bankSeller = (await pool.query(`SELECT o.payload->>'merchant' AS seller
+      FROM bank_event_observations o JOIN bank_sources s ON s.id=o.bank_source_id WHERE s.source_key=$1`, [fixture.bankSourceKey])).rows[0].seller;
+    const receiptSeller = (await pool.query(`SELECT r.seller FROM receipts r
+      JOIN receipt_source_observations o ON o.receipt_id=r.id WHERE o.fns_source_id=$1`, [fixture.fnsSourceId])).rows[0].seller;
+    assert.equal(bankSeller, 'Synthetic seller Alpha');
+    assert.equal(receiptSeller, 'Synthetic seller Beta');
+    assert.equal((await matchingForFixture(fixture)).matches.length, 1);
+    const review = await previewMatchedPurchaseOrchestration(pool, {
+      scopeKey: fixture.scopeKey, ...matchedPurchaseReconciliationWindow(),
+      internalTransferMaxTimeDeltaMs: 5000, receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.equal(review.readiness, 'REVIEW_REQUIRED');
+    assert.equal(review.decisions[0].reasonCode, 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED');
+    assert.equal((await matchedCounts(fixture)).matches, 0);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '20.00', count: 1 });
+  } finally { await closeFixture(fixture); }
+});
+
+integration('bank reconciliation requires one unambiguous event scope matching the canary', { concurrency: false }, async () => {
+  let reconcileCalls = 0;
+  const scopeA = await createFixture('scope-a-e2e', { canaryEnabled: false });
+  const scopeB = await createFixture('scope-b-e2e', {
+    canaryScopeKey: scopeA.scopeKey,
+    approvedMatchKey: 'a'.repeat(64),
+    reconcileMatchedPurchases: async () => { reconcileCalls += 1; return { status: 'COMPLETED' }; },
+  });
+  const scopeC = await createFixture('scope-c-e2e', { canaryEnabled: false });
+  try {
+    const otherScope = await ingestBank(scopeB, { amount: '9.00', id: 'scope-mismatch' });
+    assert.equal(otherScope.status, 201);
+    assert.deepEqual(otherScope.body.reconciliation, { status: 'BLOCKED', reasonCode: 'CANARY_SCOPE_MISMATCH' });
+    assert.equal(reconcileCalls, 0);
+
+    await linkBankSourcePerson(pool, { sourceKey: scopeB.bankSourceKey, personId: scopeC.personId });
+    const ambiguousScope = await ingestBank(scopeB, { amount: '9.01', id: 'scope-ambiguous' });
+    assert.equal(ambiguousScope.status, 201);
+    assert.deepEqual(ambiguousScope.body.reconciliation, { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_AMBIGUOUS' });
+    assert.equal(reconcileCalls, 0);
+
+    await pool.query('DELETE FROM bank_source_person WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)', [scopeB.bankSourceKey]);
+    const unresolvedScope = await ingestBank(scopeB, { amount: '9.02', id: 'scope-unresolved' });
+    assert.equal(unresolvedScope.status, 201);
+    assert.deepEqual(unresolvedScope.body.reconciliation, { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_UNRESOLVED' });
+    assert.equal(reconcileCalls, 0);
+  } finally {
+    await closeFixture(scopeA);
+    await closeFixture(scopeB);
+    await closeFixture(scopeC);
+  }
+});
+
+integration('one configured matchKey is the shared canary budget across retries, bank posts and FNS sync', { concurrency: false }, async () => {
+  let reconcileCalls = 0;
+  const fixture = await createFixture('single-key-budget-e2e', {
+    reconcileMatchedPurchases: async (targetPool, options) => {
+      reconcileCalls += 1;
+      return runBoundedMatchedPurchaseReconciliation(targetPool, options);
+    },
+  });
+  try {
+    const secondTime = new Date(Date.now() - 12 * 60_000).toISOString();
+    await syncFns(fixture, { receipts: [
+      { amount: '10.00', suffix: 'pair-a', dateTime: fixture.dateTime, merchant: 'Synthetic A' },
+      { amount: '20.00', suffix: 'pair-b', dateTime: secondTime, merchant: 'Synthetic B' },
+    ] });
+    await ingestBank(fixture, { amount: '10.00', id: 'pair-a', dateTime: fixture.dateTime });
+    await ingestBank(fixture, { amount: '20.00', id: 'pair-b', dateTime: secondTime });
+    const candidates = (await matchingForFixture(fixture)).matches;
+    assert.equal(candidates.length, 2);
+    fixture.canary.approvedMatchKey = candidates[0].matchKey;
+
+    const callsBeforeDuplicate = reconcileCalls;
+    const oldReplay = await ingestBank(fixture, { amount: '10.00', id: 'pair-a', dateTime: fixture.dateTime });
+    assert.equal(oldReplay.status, 200);
+    assert.equal(Object.hasOwn(oldReplay.body, 'reconciliation'), false);
+    assert.equal(reconcileCalls, callsBeforeDuplicate);
+    assert.equal((await matchedCounts(fixture)).matches, 0);
+
+    const trigger = await ingestBank(fixture, { amount: '77.77', id: 'approved-key-trigger' });
+    assert.equal(trigger.status, 201);
+    assert.equal(trigger.body.reconciliation.status, 'COMPLETED');
+    assert.equal((await matchedCounts(fixture)).matches, 1);
+    await syncFns(fixture);
+    assert.equal((await matchedCounts(fixture)).matches, 1);
+
+    const triggerReplay = await ingestBank(fixture, { amount: '77.77', id: 'approved-key-trigger' });
+    assert.equal(triggerReplay.status, 200);
+    assert.equal(Object.hasOwn(triggerReplay.body, 'reconciliation'), false);
+    assert.equal((await matchedCounts(fixture)).matches, 1);
+
+    const concurrent = await Promise.all([
+      ingestBank(fixture, { amount: '78.01', id: 'concurrent-trigger-a' }),
+      ingestBank(fixture, { amount: '78.02', id: 'concurrent-trigger-b' }),
+    ]);
+    assert.ok(concurrent.every((item) => item.status === 201));
+    assert.ok(concurrent.every((item) => item.body.reconciliation.status === 'COMPLETED'));
+    assert.equal((await matchedCounts(fixture)).matches, 1);
+    const remaining = (await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1 AND match_key<>$2', [fixture.scopeId, fixture.canary.approvedMatchKey])).rows[0].count;
+    assert.equal(remaining, 0);
+    assert.equal(reconcileCalls, callsBeforeDuplicate + 3);
+  } finally { await closeFixture(fixture); }
+});
+
+integration('post-commit reconciliation errors preserve the bank ingestion HTTP result and expose only a safe code', { concurrency: false }, async () => {
+  let calls = 0;
+  const fixture = await createFixture('post-commit-error-e2e', {
+    reconcileMatchedPurchases: async () => {
+      calls += 1;
+      throw Object.assign(new Error('private financial details must not escape'), { code: 'SYNTHETIC_RECONCILIATION_FAILURE' });
+    },
+  });
+  try {
+    const created = await ingestBank(fixture, { amount: '6.25' });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.status, 'created');
+    assert.deepEqual(created.body.reconciliation, { status: 'ERROR', reasonCode: 'SYNTHETIC_RECONCILIATION_FAILURE' });
+    assert.doesNotMatch(JSON.stringify(created.body.reconciliation), /private financial details|6\.25|merchant/i);
+    const duplicate = await ingestBank(fixture, { amount: '6.25' });
+    assert.equal(duplicate.status, 200);
+    assert.equal(duplicate.body.status, 'duplicate');
+    assert.equal(Object.hasOwn(duplicate.body, 'reconciliation'), false);
+    assert.equal(calls, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_event_observations')).rows[0].count, 1);
   } finally { await closeFixture(fixture); }
 });
 
@@ -386,6 +558,8 @@ integration('cash flow remains separate from certified expenses and certificatio
     assert.equal(purchases[0].amount, '8.90');
 
     await syncFns(fixture, { receipts: [{ amount: '8.90', suffix: 'receipt' }] });
+    fixture.canary.approvedMatchKey = (await matchingForFixture(fixture)).matches[0].matchKey;
+    await syncFns(fixture);
     const summary = await analyticsSummary(pool, { scopeKey: fixture.scopeKey });
     assert.deepEqual({ amount: summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount, count: summary.metrics.CONFIRMED_ACQUISITION_VALUE.count }, { amount: '8.90', count: 1 });
     assert.equal((await matchedCounts(fixture)).active_purchase_debits, '8.90');

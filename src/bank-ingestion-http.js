@@ -1,9 +1,21 @@
 import http from 'node:http';
 import { authenticateBankDevice } from './bank-device-auth.js';
-import { createBankIngestionHandler, validateBankEventInput } from './bank-ingestion.js';
+import { createBankIngestionHandler, resolveBankObservationAccountingScope, validateBankEventInput } from './bank-ingestion.js';
 import { matchedPurchaseReconciliationWindow, readMatchedPurchaseReconciliationOptIn, runBoundedMatchedPurchaseReconciliation } from './matched-purchase-reconciliation.js';
 
 const DEFAULT_BODY_LIMIT = 32 * 1024;
+const SAFE_RECONCILIATION_STATUS = new Set(['COMPLETED', 'REVIEW_REQUIRED', 'BLOCKED', 'ERROR', 'DISABLED']);
+const SAFE_CODE = /^[A-Z0-9_]{1,64}$/;
+
+function safeReconciliationResult(value) {
+  const status = SAFE_RECONCILIATION_STATUS.has(value?.status) ? value.status : 'ERROR';
+  const reasonCode = typeof value?.reasonCode === 'string' && SAFE_CODE.test(value.reasonCode) ? value.reasonCode : null;
+  return { status, ...(reasonCode ? { reasonCode } : {}) };
+}
+
+function logSafely(logger, level, event, fields) {
+  try { logger[level]?.(event, fields); } catch { /* logging cannot alter a committed ingestion result */ }
+}
 
 function writeJson(response, statusCode, body) {
   const payload = JSON.stringify(body);
@@ -64,19 +76,40 @@ export function createBankIngestionServer({
       try { validateBankEventInput(body); } catch { return writeJson(response, 400, { status: 'rejected', code: 'INVALID_EVENT' }); }
       if (body.sourceKey !== auth.sourceKey) return writeJson(response, 403, { status: 'rejected', code: 'SOURCE_MISMATCH' });
       const result = await handler({ body });
-      if (matchedPurchaseCanary?.enabled === true && ['created', 'duplicate'].includes(result.status)) {
-        const reconciliation = await reconcileMatchedPurchases(pool, {
-          ...matchedPurchaseReconciliationWindow(now()),
-          enabled: true,
-          canaryScopeKey: matchedPurchaseCanary.canaryScopeKey,
-          scopeKey: matchedPurchaseCanary.canaryScopeKey,
-        });
-        logger.info?.('matched_purchase_reconciliation_completed', reconciliation);
+      let responseResult = result;
+      if (matchedPurchaseCanary?.enabled === true && result.status === 'created') {
+        let reconciliation = { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_UNRESOLVED' };
+        try {
+          const resolved = await resolveBankObservationAccountingScope(pool, {
+            bankSourceId: auth.bankSourceId,
+            observationId: result.observationId,
+          });
+          if (resolved.status !== 'RESOLVED') reconciliation = resolved;
+          else if (resolved.scopeKey !== matchedPurchaseCanary.canaryScopeKey) reconciliation = { status: 'BLOCKED', reasonCode: 'CANARY_SCOPE_MISMATCH' };
+          else {
+            const summary = await reconcileMatchedPurchases(pool, {
+              ...matchedPurchaseReconciliationWindow(now()),
+              enabled: true,
+              canaryScopeKey: matchedPurchaseCanary.canaryScopeKey,
+              scopeKey: resolved.scopeKey,
+              approvedMatchKey: matchedPurchaseCanary.approvedMatchKey,
+            });
+            reconciliation = safeReconciliationResult(summary);
+          }
+        } catch (error) {
+          reconciliation = {
+            status: 'ERROR',
+            reasonCode: typeof error?.code === 'string' && SAFE_CODE.test(error.code) ? error.code : 'RECONCILIATION_ERROR',
+          };
+        }
+        responseResult = { ...result, reconciliation };
+        const level = reconciliation.status === 'ERROR' ? 'error' : reconciliation.status === 'BLOCKED' ? 'warn' : 'info';
+        logSafely(logger, level, 'matched_purchase_reconciliation_after_ingestion', reconciliation);
       }
-      if (result.status === 'created') return writeJson(response, 201, result);
-      if (result.status === 'duplicate') return writeJson(response, 200, result);
-      if (result.code === 'SOURCE_EVENT_CONFLICT') return writeJson(response, 409, result);
-      return writeJson(response, 400, result);
+      if (result.status === 'created') return writeJson(response, 201, responseResult);
+      if (result.status === 'duplicate') return writeJson(response, 200, responseResult);
+      if (result.code === 'SOURCE_EVENT_CONFLICT') return writeJson(response, 409, responseResult);
+      return writeJson(response, 400, responseResult);
     } catch (error) {
       logger.error?.('bank_ingestion_request_failed', { errorCode: error.code || 'INTERNAL_ERROR', status: error.status });
       if (!response.headersSent) writeJson(response, 500, { status: 'error', code: 'INTERNAL_ERROR' });
