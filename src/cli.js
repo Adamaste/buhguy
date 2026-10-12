@@ -4,6 +4,7 @@ import readline from 'node:readline/promises';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { stdin as input, stdout as output } from 'node:process';
+import { onboardingFinishInvocation } from './runtime-paths.js';
 import { FnsClient } from './fns-client.js';
 import { createLogger } from './logger.js';
 import { SessionStore } from './session-store.js';
@@ -337,8 +338,9 @@ async function waitForBrowserSessionImport({ store, user }) {
 
 async function finishOnboardingChild(nameOrSource) {
   try {
-    const child = await execFileAsync(process.execPath, [path.resolve('bin/receipt-collector.js'), 'fns-user', 'finish', nameOrSource], {
-      cwd: process.cwd(),
+    const invocation = onboardingFinishInvocation(nameOrSource);
+    const child = await execFileAsync(invocation.file, invocation.args, {
+      cwd: invocation.cwd,
       env: process.env,
       maxBuffer: 1024 * 1024,
     });
@@ -583,7 +585,8 @@ export async function main(argv = process.argv.slice(2), {
       // Once the browser session was imported, the finish path no longer needs CDP.
       // A child invocation keeps retry crash-safe without passing credentials in argv.
       if (user.sessionImported || [ONBOARDING_STATES.AUTHENTICATED, ONBOARDING_STATES.INITIAL_SYNC, ONBOARDING_STATES.SYNC_FAILED, ONBOARDING_STATES.VERIFYING, ONBOARDING_STATES.VERIFICATION_FAILED].includes(user.state)) {
-        const child = await execFileAsync(process.execPath, [path.resolve('bin/receipt-collector.js'), 'fns-user', 'finish', nameOrSource], { cwd: process.cwd(), env: process.env, maxBuffer: 1024 * 1024 });
+        const invocation = onboardingFinishInvocation(nameOrSource);
+        const child = await execFileAsync(invocation.file, invocation.args, { cwd: invocation.cwd, env: process.env, maxBuffer: 1024 * 1024 });
         const parsed = JSON.parse(child.stdout);
         printJson({ ok: true, action: 'FINISH', state: parsed.user?.state ?? ONBOARDING_STATES.ACTIVE, sync: parsed.sync });
         return 0;
