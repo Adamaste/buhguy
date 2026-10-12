@@ -24,6 +24,7 @@ const integrationFiles = [
   'tests/active-ledger-semantics-postgres.integration.test.js',
   'tests/matched-purchase-persistence-postgres.integration.test.js',
   'tests/matched-purchase-orchestration-postgres.integration.test.js',
+  'tests/matched-purchase-reconciliation-postgres.integration.test.js',
   'tests/fns-receipt-currency-postgres.integration.test.js',
   'tests/runtime-schema-postgres.integration.test.js',
   'tests/return-refund-postgres.integration.test.js',

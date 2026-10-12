@@ -103,6 +103,7 @@ test('sync performs one scope-wide accounting catch-up after all sources', async
   const runSource = syncBranch.slice(runSourceStart, runSourceEnd);
 
   assert.doesNotMatch(runSource, /runAccountingCatchup\s*\(/);
-  assert.equal((syncBranch.match(/runAccountingCatchup\s*\(/g) ?? []).length, 1);
-  assert.match(syncBranch, /runSourceSyncCycle\([\s\S]*?\);\s*await runAccountingCatchupsForSources\(/);
+  assert.equal((syncBranch.match(/runAccountingCatchupsWithMatchedPurchaseCanary\s*\(/g) ?? []).length, 1);
+  assert.match(syncBranch, /runSourceSyncCycle\([\s\S]*?\);\s*const accountingCycle = await runAccountingCatchupsWithMatchedPurchaseCanary\(/);
+  assert.match(syncBranch, /sources:\s*cycle\.sources/);
 });

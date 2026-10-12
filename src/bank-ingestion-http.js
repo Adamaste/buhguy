@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { authenticateBankDevice } from './bank-device-auth.js';
 import { createBankIngestionHandler, validateBankEventInput } from './bank-ingestion.js';
+import { matchedPurchaseReconciliationWindow, readMatchedPurchaseReconciliationOptIn, runBoundedMatchedPurchaseReconciliation } from './matched-purchase-reconciliation.js';
 
 const DEFAULT_BODY_LIMIT = 32 * 1024;
 
@@ -36,7 +37,14 @@ function bearerToken(request) {
   return value.slice(value.indexOf(' ') + 1);
 }
 
-export function createBankIngestionServer({ pool, logger = console, bodyLimit = DEFAULT_BODY_LIMIT }) {
+export function createBankIngestionServer({
+  pool,
+  logger = console,
+  bodyLimit = DEFAULT_BODY_LIMIT,
+  matchedPurchaseCanary = readMatchedPurchaseReconciliationOptIn(),
+  reconcileMatchedPurchases = runBoundedMatchedPurchaseReconciliation,
+  now = () => new Date(),
+} = {}) {
   const handler = createBankIngestionHandler({ pool });
   return http.createServer(async (request, response) => {
     try {
@@ -56,6 +64,15 @@ export function createBankIngestionServer({ pool, logger = console, bodyLimit = 
       try { validateBankEventInput(body); } catch { return writeJson(response, 400, { status: 'rejected', code: 'INVALID_EVENT' }); }
       if (body.sourceKey !== auth.sourceKey) return writeJson(response, 403, { status: 'rejected', code: 'SOURCE_MISMATCH' });
       const result = await handler({ body });
+      if (matchedPurchaseCanary?.enabled === true && ['created', 'duplicate'].includes(result.status)) {
+        const reconciliation = await reconcileMatchedPurchases(pool, {
+          ...matchedPurchaseReconciliationWindow(now()),
+          enabled: true,
+          canaryScopeKey: matchedPurchaseCanary.canaryScopeKey,
+          scopeKey: matchedPurchaseCanary.canaryScopeKey,
+        });
+        logger.info?.('matched_purchase_reconciliation_completed', reconciliation);
+      }
       if (result.status === 'created') return writeJson(response, 201, result);
       if (result.status === 'duplicate') return writeJson(response, 200, result);
       if (result.code === 'SOURCE_EVENT_CONFLICT') return writeJson(response, 409, result);

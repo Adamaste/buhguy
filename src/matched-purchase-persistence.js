@@ -281,6 +281,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     if (!currentMatch || !same(matchFields(currentMatch), fields)) fail('AUTHORITATIVE_MATCH_CHANGED');
     const enrichment = await loadMatchedPurchaseEnrichment(client, { ...options, matchKey: fields.matchKey, matchingLoader: async () => ({ matches: [currentMatch] }) });
     if (enrichment.projectionStatus !== MATCHED_PURCHASE_ENRICHMENT_STATUSES.PROJECTED) fail(enrichment.reasonCode ?? 'ENRICHMENT_BLOCKED');
+    const outcome = enrichment.ledgerDisposition === LEDGER_DISPOSITIONS.REUSE_EXISTING_BANK_FUNDING ? 'REUSED' : 'PERSISTED';
     const matchRow = await persistMatch(client, scope, fields);
     if (options.failAfter === 'match') fail('INJECTED_WRITER_FAILURE');
     const purchase = await persistPurchase(client, scope, fields, enrichment);
@@ -300,7 +301,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const active = (await client.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1 AND e.source_event_id=$2 AND e.origin=$3 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [scope.id, Number(purchase.event.id), SYSTEM_DERIVED])).rows[0].count;
     if (Number(active) !== 1) fail('LEDGER_CONFLICT');
     await client.query('COMMIT');
-    return { modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, matchId: Number(matchRow.id), eventId: Number(purchase.event.id), bankEvidenceId, ledgerEntryId: Number(ledger.entry.id), certification, enrichmentKey: enrichment.enrichmentKey };
+    return { modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, outcome, matchId: Number(matchRow.id), eventId: Number(purchase.event.id), bankEvidenceId, ledgerEntryId: Number(ledger.entry.id), certification, enrichmentKey: enrichment.enrichmentKey };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; } finally { client.release(); }
 }
 
