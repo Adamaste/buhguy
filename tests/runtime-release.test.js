@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { publishRelease, sealRelease, selectRelease, verifyRelease } from '../deploy/runtime-release.mjs';
+import { publishRelease, sealRelease, selectRelease, validateReleasePath, verifyRelease } from '../deploy/runtime-release.mjs';
 
 const shaA = 'a'.repeat(40);
 const shaB = 'b'.repeat(40);
@@ -202,6 +202,22 @@ test('manifest traversal and manifest hash mismatch stop verification', async t 
   await fs.chmod(manifestPath, 0o444);
   const hash = manifestHash(bytes);
   await assert.rejects(() => verifyRelease({ releaseDir: release.stage, sha: shaA, manifestSha256: hash, runtimeCheck: false }), error => ['PATH_TRAVERSAL', 'PATH_INVALID'].includes(error.code));
+});
+
+test('dependency documentation is distinct from secret and runtime-state paths', () => {
+  assert.equal(
+    validateReleasePath('node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md'),
+    'node_modules/playwright-core/lib/tools/skills/playwright-cli/references/storage-state.md',
+  );
+  for (const relative of [
+    'node_modules/pkg/credentials.md',
+    'node_modules/pkg/session.json',
+    'node_modules/pkg/browser-profile/session.json',
+    'node_modules/pkg/.env.example.txt',
+    'node_modules/pkg/private-token.txt',
+  ]) {
+    assert.throws(() => validateReleasePath(relative), error => error.code === 'SENSITIVE_PATH');
+  }
 });
 
 test('seal binds a synthetic release to one exact Git tree and verifies runtime dependencies', async t => {

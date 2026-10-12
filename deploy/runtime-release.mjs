@@ -47,6 +47,16 @@ function sourcePathIsVerified(value, trustedSourcePaths) {
   return [...trustedSourcePaths].some(file => file.startsWith(`${value}/`));
 }
 
+function isSafeDependencyDocumentation(value) {
+  const parts = value.split('/');
+  const extension = path.extname(value).toLowerCase();
+  const basename = path.basename(value, extension).toLowerCase();
+  if (parts[0] !== 'node_modules' || extension !== '.md' || basename !== 'storage-state') return false;
+  const parentParts = parts.slice(1, -1).map(part => part.toLowerCase());
+  return !parentParts.some(part => part.startsWith('.env') || NEVER_RELEASE_COMPONENTS.has(part) || SENSITIVE.test(part))
+    && !NEVER_RELEASE_SOURCE_BASENAMES.has(basename);
+}
+
 function normalizePath(value, { trustedSourcePaths = null } = {}) {
   if (typeof value !== 'string' || !value || /[\0\r\n\t]/.test(value) || value.includes('\\') || value.startsWith('/') || /^[a-z]:/i.test(value)) fail('PATH_INVALID');
   const parts = value.split('/');
@@ -56,12 +66,14 @@ function normalizePath(value, { trustedSourcePaths = null } = {}) {
   const isSourcePath = sourcePathIsVerified(value, trustedSourcePaths);
   const sourceBase = path.basename(value, path.extname(value)).toLowerCase();
   if (isSourcePath && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase)) fail('SENSITIVE_PATH');
-  if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath) fail('SENSITIVE_PATH');
+  if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath && !isSafeDependencyDocumentation(value)) fail('SENSITIVE_PATH');
   if (isSourcePath && !SOURCE_CODE_EXTENSIONS.has(path.extname(value).toLowerCase()) && trustedSourcePaths.has(value)) fail('SENSITIVE_PATH');
   const allowed = EXACT_CODE_FILES.has(value) || ALLOWED_DIRECTORIES.has(value) || CODE_ROOTS.some(prefix => value.startsWith(prefix)) || value.startsWith('node_modules/');
   if (!allowed) fail('PATH_OUTSIDE_RUNTIME_ALLOWLIST');
   return value;
 }
+
+export function validateReleasePath(value, options) { return normalizePath(value, options); }
 
 function inside(root, candidate) {
   const relative = path.relative(root, candidate);
