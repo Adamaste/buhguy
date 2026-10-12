@@ -212,6 +212,9 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   const sourceFiles = new Map([
     ['bin/receipt-collector.js', 'export const entry = true;\n'],
     ['src/cli.js', 'export const cli = true;\n'],
+    ['src/session-store.js', 'export const sessionStoreModule = true;\n'],
+    ['src/bank-device-auth.js', 'export const bankDeviceAuthModule = true;\n'],
+    ['src/browser-session-import.js', 'export const browserSessionImportModule = true;\n'],
     ['db/migrations/001_initial.sql', 'SELECT 1;\n'],
     ['deploy/runtime-release.mjs', await fs.readFile(fileURLToPath(new URL('../deploy/runtime-release.mjs', import.meta.url)), 'utf8')],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
@@ -255,9 +258,40 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     () => sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: modeMismatchFs }),
     error => error.code === 'GIT_MODE_MISMATCH',
   );
+  for (const relative of ['.env.production', 'src/session-state.json', 'src/credentials.json', 'src/secret-config.mjs', 'src/browser-profile/profile.json']) {
+    const target = path.join(stage, ...relative.split('/'));
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.chmod(path.dirname(target), 0o755);
+    await fs.writeFile(target, 'synthetic-secret-state-marker\n');
+    const guardedFs = posixTestFs();
+    const readFile = guardedFs.readFile;
+    const forbiddenReads = [];
+    guardedFs.readFile = async (filePath, ...args) => {
+      if (path.resolve(filePath) === path.resolve(target)) forbiddenReads.push(filePath);
+      return readFile.call(guardedFs, filePath, ...args);
+    };
+    await assert.rejects(() => sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: guardedFs }), error => error.code === 'SENSITIVE_PATH');
+    assert.deepEqual(forbiddenReads, [], `${relative} must be rejected before reading file content`);
+    await fs.unlink(target);
+    if (relative.startsWith('src/browser-profile/')) await fs.rmdir(path.dirname(target));
+  }
+
   const result = await sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: posixTestFs() });
   assert.equal(result.status, 'PASS');
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
+  const manifest = JSON.parse(await fs.readFile(path.join(stage, 'release-manifest.json'), 'utf8'));
+  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js']) {
+    assert.ok(manifest.files.some(entry => entry.path === relative && entry.gitBlob));
+  }
+
+  const missingRuntimeFile = path.join(stage, 'src', 'cli.js');
+  await fs.chmod(path.dirname(missingRuntimeFile), 0o755);
+  await fs.unlink(missingRuntimeFile);
+  await fs.chmod(path.dirname(missingRuntimeFile), 0o555);
+  await assert.rejects(
+    () => verifyRelease({ releaseDir: stage, sha, manifestSha256: result.manifestSha256, fsApi: posixTestFs(), runtimeCheck: false }),
+    error => error.code === 'INVENTORY_MISMATCH',
+  );
 });
 

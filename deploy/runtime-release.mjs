@@ -10,10 +10,21 @@ const MANIFEST = 'release-manifest.json';
 const SHA_RE = /^[a-f0-9]{40}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const CODE_ROOTS = ['bin/', 'src/', 'db/migrations/'];
+const SOURCE_CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'node_modules']);
 const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs']);
 const SENSITIVE = /(^|[._-])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|auth|session|sessions|profile|profiles|state|backup|backups|dump|dumps|log|logs|cache|browser-profile)([._-]|$)/i;
-const SENSITIVE_EXACT = new Set(['.local-browsers', 'ms-playwright']);
+const NEVER_RELEASE_COMPONENTS = new Set([
+  '.env', '.receipt-collector', '.local-browsers', 'ms-playwright',
+  'session', 'sessions', 'profile', 'profiles', 'state', 'runtime-state',
+  'secret', 'secrets', 'credential', 'credentials', 'token', 'tokens',
+  'cookie', 'cookies', 'browser-profile', 'browser-profiles',
+]);
+const NEVER_RELEASE_SOURCE_BASENAMES = new Set([
+  'secret', 'secrets', 'secret-config', 'credential', 'credentials',
+  'token', 'tokens', 'cookie', 'cookies', 'session', 'sessions',
+  'profile', 'profiles', 'state', 'runtime-state',
+]);
 
 export class ReleaseError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -29,11 +40,24 @@ function gitBlobSha(bytes) {
 function assertSha(value) { if (typeof value !== 'string' || !SHA_RE.test(value)) fail('SHA_INVALID'); }
 function assertManifestHash(value) { if (typeof value !== 'string' || !HASH_RE.test(value)) fail('MANIFEST_SHA_INVALID'); }
 
-function normalizePath(value) {
+function sourcePathIsVerified(value, trustedSourcePaths) {
+  if (!CODE_ROOTS.some(prefix => value.startsWith(prefix))) return false;
+  if (!trustedSourcePaths) return false;
+  if (trustedSourcePaths.has(value)) return true;
+  return [...trustedSourcePaths].some(file => file.startsWith(`${value}/`));
+}
+
+function normalizePath(value, { trustedSourcePaths = null } = {}) {
   if (typeof value !== 'string' || !value || /[\0\r\n\t]/.test(value) || value.includes('\\') || value.startsWith('/') || /^[a-z]:/i.test(value)) fail('PATH_INVALID');
   const parts = value.split('/');
   if (parts.some(part => !part || part === '.' || part === '..')) fail('PATH_TRAVERSAL');
-  if (parts.some(part => SENSITIVE.test(part) || part.startsWith('.env') || SENSITIVE_EXACT.has(part.toLowerCase()))) fail('SENSITIVE_PATH');
+  const lowerParts = parts.map(part => part.toLowerCase());
+  if (lowerParts.some(part => part.startsWith('.env') || NEVER_RELEASE_COMPONENTS.has(part))) fail('SENSITIVE_PATH');
+  const isSourcePath = sourcePathIsVerified(value, trustedSourcePaths);
+  const sourceBase = path.basename(value, path.extname(value)).toLowerCase();
+  if (isSourcePath && NEVER_RELEASE_SOURCE_BASENAMES.has(sourceBase)) fail('SENSITIVE_PATH');
+  if (parts.some(part => SENSITIVE.test(part)) && !isSourcePath) fail('SENSITIVE_PATH');
+  if (isSourcePath && !SOURCE_CODE_EXTENSIONS.has(path.extname(value).toLowerCase()) && trustedSourcePaths.has(value)) fail('SENSITIVE_PATH');
   const allowed = EXACT_CODE_FILES.has(value) || ALLOWED_DIRECTORIES.has(value) || CODE_ROOTS.some(prefix => value.startsWith(prefix)) || value.startsWith('node_modules/');
   if (!allowed) fail('PATH_OUTSIDE_RUNTIME_ALLOWLIST');
   return value;
@@ -65,7 +89,7 @@ function assertTrustedReleaseDirectory(stat) {
   if (process.platform === 'linux' && (stat.uid !== 0 || (stat.mode & 0o022) !== 0)) fail('RELEASE_ROOT_OWNER_OR_MODE_INVALID');
 }
 
-async function walkRelease(root, { fsApi = fs, normalizeModes = false } = {}) {
+async function walkRelease(root, { fsApi = fs, normalizeModes = false, trustedSourcePaths = null } = {}) {
   const files = [];
   const directories = [];
   const visit = async (directory, relativeDirectory = '') => {
@@ -74,7 +98,7 @@ async function walkRelease(root, { fsApi = fs, normalizeModes = false } = {}) {
     for (const child of children) {
       const relative = relativeDirectory ? `${relativeDirectory}/${child.name}` : child.name;
       if (relative === MANIFEST && !relativeDirectory) continue;
-      normalizePath(relative);
+      normalizePath(relative, { trustedSourcePaths });
       const absolute = path.join(directory, child.name);
       const stat = await fsApi.lstat(absolute);
       if (stat.isSymbolicLink()) {
@@ -135,10 +159,16 @@ async function readManifest(releaseDir, expectedSha, expectedManifestSha256, fsA
 }
 
 function validateManifestLists(manifest) {
+  const trustedSourcePaths = new Set(manifest.files
+    .filter(entry => entry && entry.type === 'file' && typeof entry.path === 'string'
+      && typeof entry.gitBlob === 'string' && /^[a-f0-9]{40}$/.test(entry.gitBlob)
+      && CODE_ROOTS.some(prefix => entry.path.startsWith(prefix))
+      && SOURCE_CODE_EXTENSIONS.has(path.extname(entry.path).toLowerCase()))
+    .map(entry => entry.path));
   const paths = new Set();
   for (const entry of manifest.files) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail('MANIFEST_ENTRY_INVALID');
-    const relative = normalizePath(entry.path);
+    const relative = normalizePath(entry.path, { trustedSourcePaths });
     if (paths.has(relative)) fail('MANIFEST_DUPLICATE_PATH');
     paths.add(relative);
     if (entry.type === 'file') {
@@ -152,7 +182,7 @@ function validateManifestLists(manifest) {
   }
   for (const entry of manifest.directories) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry) || entry.mode !== '0555') fail('MANIFEST_DIRECTORY_ENTRY_INVALID');
-    const relative = normalizePath(entry.path);
+    const relative = normalizePath(entry.path, { trustedSourcePaths });
     if (paths.has(relative)) fail('MANIFEST_DUPLICATE_PATH');
     paths.add(relative);
   }
@@ -162,6 +192,7 @@ function validateManifestLists(manifest) {
   for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs']) {
     if (!manifest.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
   }
+  return trustedSourcePaths;
 }
 
 function compareInventory(expected, actual) {
@@ -191,10 +222,10 @@ function runImportSmoke(releaseDir) {
 
 export async function verifyRelease({ releaseDir, sha, manifestSha256, fsApi = fs, runtimeCheck = true }) {
   const { manifest } = await readManifest(releaseDir, sha, manifestSha256, fsApi);
-  validateManifestLists(manifest);
+  const trustedSourcePaths = validateManifestLists(manifest);
   const rootStat = await fsApi.lstat(releaseDir);
   if ((rootStat.mode & 0o222) !== 0) fail('RELEASE_ROOT_WRITABLE');
-  const actual = await walkRelease(releaseDir, { fsApi });
+  const actual = await walkRelease(releaseDir, { fsApi, trustedSourcePaths });
   compareInventory({ files: manifest.files, directories: manifest.directories }, actual);
   if (runtimeCheck) {
     const major = Number(process.versions.node.split('.')[0]);
@@ -229,7 +260,7 @@ function gitTreeEntry(sourceRoot, sha, relative) {
   return { mode, objectSha };
 }
 
-async function walkForSeal(root, fsApi = fs) {
+async function walkForSeal(root, fsApi = fs, trustedSourcePaths = null) {
   const files = [];
   const directories = [];
   const visit = async (dir, relDir = '') => {
@@ -238,7 +269,7 @@ async function walkForSeal(root, fsApi = fs) {
     for (const child of children) {
       const relative = relDir ? `${relDir}/${child.name}` : child.name;
       if (relative === MANIFEST && !relDir) fail('MANIFEST_ALREADY_EXISTS');
-      normalizePath(relative);
+      normalizePath(relative, { trustedSourcePaths });
       const absolute = path.join(dir, child.name);
       const stat = await fsApi.lstat(absolute);
       if (stat.isSymbolicLink()) {
@@ -286,9 +317,10 @@ export async function sealRelease({ sourceRoot, releaseDir, sha, fsApi = fs }) {
   const commit = git(sourceRoot, ['rev-parse', '--verify', `${sha}^{commit}`]).toString('utf8').trim();
   if (commit !== sha) fail('GIT_SHA_MISMATCH');
   await ensureRealDirectory(releaseDir, fsApi);
-  const inventory = await walkForSeal(releaseDir, fsApi);
-  const stageCodePaths = inventory.files.filter(entry => isGitRuntimeFile(entry.path)).map(entry => entry.path).sort((a, b) => a.localeCompare(b, 'en'));
   const expectedCodePaths = gitPathList(sourceRoot, sha);
+  const trustedSourcePaths = new Set(expectedCodePaths.filter(relative => CODE_ROOTS.some(prefix => relative.startsWith(prefix)) && SOURCE_CODE_EXTENSIONS.has(path.extname(relative).toLowerCase())));
+  const inventory = await walkForSeal(releaseDir, fsApi, trustedSourcePaths);
+  const stageCodePaths = inventory.files.filter(entry => isGitRuntimeFile(entry.path)).map(entry => entry.path).sort((a, b) => a.localeCompare(b, 'en'));
   if (stageCodePaths.length !== expectedCodePaths.length || stageCodePaths.some((p, i) => p !== expectedCodePaths[i])) fail('GIT_TREE_CONTENT_MISMATCH');
   for (const entry of inventory.files.filter(item => isGitRuntimeFile(item.path))) {
     if (entry.type !== 'file') fail('GIT_BLOB_MISMATCH');
@@ -383,7 +415,9 @@ export async function publishRelease({ releaseRoot, sha, manifestSha256, minimum
     if (process.platform === 'linux' && (stageStat.uid !== 0 || (stageStat.mode & 0o222) !== 0)) fail('STAGE_OWNER_OR_MODE_INVALID');
     await verifyRelease({ releaseDir: stage, sha, manifestSha256, fsApi });
     if (process.platform === 'linux') {
-      const items = await walkRelease(stage, { fsApi });
+      const manifestResult = await readManifest(stage, sha, manifestSha256, fsApi);
+      const trustedSourcePaths = validateManifestLists(manifestResult.manifest);
+      const items = await walkRelease(stage, { fsApi, trustedSourcePaths });
       for (const item of [...items.files, ...items.directories]) {
         const relative = item.path;
         const st = await fsApi.lstat(path.join(stage, ...relative.split('/')));
