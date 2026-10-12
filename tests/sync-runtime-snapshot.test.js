@@ -23,12 +23,12 @@ async function fixture(t, { entrySource, includeDependency = true, secretImport 
   await mkdir(path.join(source, 'src'), { recursive: true });
   await writeFile(path.join(source, 'package.json'), JSON.stringify({ name: 'synthetic-sync', type: 'module', dependencies: includeDependency ? { 'synthetic-pkg': '1.0.0' } : {} }));
   await writeFile(path.join(source, 'package-lock.json'), JSON.stringify({ name: 'synthetic-sync', lockfileVersion: 3, packages: {} }));
-  const body = entrySource ?? `import { readFileSync } from 'node:fs';\nimport path from 'node:path';\nimport { getValue } from '../src/value.js';\nimport { getSessionMarker } from '../src/session-store.js';\nimport { value } from 'synthetic-pkg';\nconst state = readFileSync(path.join(process.cwd(), 'state.txt'), 'utf8');\nconsole.log(JSON.stringify({ state, sessionMarker: getSessionMarker(), result: getValue() + value, args: process.argv.slice(2) }));\n`;
+  const body = entrySource ?? `import { readFileSync } from 'node:fs';\nimport path from 'node:path';\nimport { getValue } from '../src/value.js';\nimport { getSessionMarker } from '../src/marker-module.js';\nimport { value } from 'synthetic-pkg';\nconst state = readFileSync(path.join(process.cwd(), 'state.txt'), 'utf8');\nconsole.log(JSON.stringify({ state, sessionMarker: getSessionMarker(), result: getValue() + value, args: process.argv.slice(2) }));\n`;
   await writeFile(path.join(source, 'bin', 'entry.js'), body);
   await chmod(path.join(source, 'bin', 'entry.js'), 0o755);
   await writeFile(path.join(source, 'src', 'value.js'), `import { suffix } from './nested.js';\nexport const getValue = () => 40 + suffix;\n`);
   await writeFile(path.join(source, 'src', 'nested.js'), 'export const suffix = 2;\n');
-  await writeFile(path.join(source, 'src', 'session-store.js'), 'export const getSessionMarker = () => "code-only-module";\n');
+  await writeFile(path.join(source, 'src', 'marker-module.js'), 'export const getSessionMarker = () => "code-only-module";\n');
   if (includeDependency) {
     const pkg = path.join(source, 'node_modules', 'synthetic-pkg');
     await mkdir(pkg, { recursive: true });
@@ -137,10 +137,95 @@ test('rejects secret-like paths, computed imports, and non-quiesced capture', { 
   await assert.rejects(createSnapshot({ sourceRoot: secret.source, entrypoint: 'bin/entry.js', destinationParent: secret.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true, fsApi }), error => error.code === 'SENSITIVE_PATH_NOT_READ');
   assert.equal(secretReads, 0);
 
+  for (const relative of ['src/credentials.js', 'src/tokens.js', 'src/secret-config.mjs', 'src/session-store.js']) {
+    const sensitive = await fixture(t, { entrySource: `import '../${relative}';\n` });
+    const canary = 'synthetic-sensitive-canary';
+    await writeFile(path.join(sensitive.source, ...relative.split('/')), `throw new Error('${canary}');\n`);
+    let sensitiveReads = 0;
+    const protectedFs = Object.create(await import('node:fs/promises'));
+    protectedFs.readFile = async (file, ...args) => {
+      if (String(file) === path.join(sensitive.source, ...relative.split('/'))) sensitiveReads += 1;
+      return readFile(file, ...args);
+    };
+    await assert.rejects(createSnapshot({ sourceRoot: sensitive.source, entrypoint: 'bin/entry.js', destinationParent: sensitive.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true, fsApi: protectedFs }), error => error.code === 'SENSITIVE_PATH_NOT_READ');
+    assert.equal(sensitiveReads, 0, relative);
+    assert.deepEqual(await readdir(sensitive.releases), []);
+    const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+    const cli = spawnSync(process.execPath, [tool, 'create', '--source-root', sensitive.source, '--entrypoint', 'bin/entry.js', '--destination-parent', sensitive.releases, '--minimum-free-bytes', '1024', '--minimum-free-inodes', '64', '--sync-quiesced', 'yes'], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(cli.status, 1);
+    const diagnostic = `${cli.stdout}${cli.stderr}`;
+    assert.equal(diagnostic.includes(relative), false);
+    assert.equal(diagnostic.includes(canary), false);
+    assert.deepEqual(JSON.parse(diagnostic), { status: 'STOP', code: 'SENSITIVE_PATH_NOT_READ' });
+  }
+
   const dynamic = await fixture(t, { entrySource: "const name = './value.js'; import(name);\n" });
   await assert.rejects(createSnapshot({ sourceRoot: dynamic.source, entrypoint: 'bin/entry.js', destinationParent: dynamic.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true }), error => error.code === 'DYNAMIC_IMPORT_UNSUPPORTED');
   const noQuiescence = await fixture(t);
   await assert.rejects(createSnapshot({ sourceRoot: noQuiescence.source, entrypoint: 'bin/entry.js', destinationParent: noQuiescence.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: false }), error => error.code === 'SYNC_QUIESCENCE_REQUIRED');
+});
+
+test('stops on imports hidden in flat and nested template expressions before publishing', { skip: posixSkip }, async t => {
+  for (const expression of [
+    "const value = `${await import('./runtime-dep.js')}`;",
+    "const value = `${`${require('./runtime-dep.cjs')}`}`;",
+    "const value = `${`${`${await import('./runtime-dep.js')}`}`}`;",
+  ]) {
+    const f = await fixture(t, { entrySource: `${expression}\n` });
+    await writeFile(path.join(f.source, 'src', 'runtime-dep.js'), 'export default 1;\n');
+    await writeFile(path.join(f.source, 'src', 'runtime-dep.cjs'), 'module.exports = 1;\n');
+    await assert.rejects(createSnapshot({ sourceRoot: f.source, entrypoint: 'bin/entry.js', destinationParent: f.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true }), error => error.code === 'TEMPLATE_EXPRESSION_UNSUPPORTED');
+    assert.deepEqual(await readdir(f.releases), []);
+  }
+});
+
+test('conditional exports follow Node key order for import and require', { skip: posixSkip }, async t => {
+  for (const kind of ['import', 'require']) {
+    const cases = kind === 'import'
+      ? [
+          { exports: { import: './import.js', node: './node.js', default: './default.js' }, expected: 'import.js' },
+          { exports: { node: './node.js', import: './import.js', default: './default.js' }, expected: 'node.js' },
+          { exports: { default: './default.js', import: './import.js', node: './node.js' }, expected: 'default.js' },
+          { exports: { require: './require.cjs', import: './import.js', node: './node.js', default: './default.js' }, expected: 'import.js' },
+        ]
+      : [
+          { exports: { require: './require.cjs', node: './node.cjs', default: './default.cjs' }, expected: 'require.cjs' },
+          { exports: { node: './node.cjs', require: './require.cjs', default: './default.cjs' }, expected: 'node.cjs' },
+          { exports: { default: './default.cjs', require: './require.cjs', node: './node.cjs' }, expected: 'default.cjs' },
+          { exports: { import: './import.js', require: './require.cjs', node: './node.cjs', default: './default.cjs' }, expected: 'require.cjs' },
+        ];
+    for (const scenario of cases) {
+      const f = await fixture(t, { entrySource: kind === 'import' ? "import 'synthetic-pkg';\n" : "require('synthetic-pkg');\n" });
+      const pkg = path.join(f.source, 'node_modules', 'synthetic-pkg');
+      for (const target of Object.values(scenario.exports)) await writeFile(path.join(pkg, target.slice(2)), 'export default 1;\n');
+      await writeFile(path.join(pkg, 'package.json'), JSON.stringify({ name: 'synthetic-pkg', type: 'module', exports: { '.': scenario.exports } }));
+      const probe = kind === 'import'
+        ? `console.log(import.meta.resolve('synthetic-pkg'))`
+        : `console.log(createRequire(new URL('./package.json', import.meta.url)).resolve('synthetic-pkg'))`;
+      const resolved = spawnSync(process.execPath, ['--input-type=module', '-e', kind === 'require' ? `import { createRequire } from 'node:module'; ${probe}` : probe], { cwd: f.source, encoding: 'utf8', timeout: 5000 });
+      assert.equal(resolved.status, 0, resolved.stderr);
+      const nodePath = kind === 'import' ? fileURLToPath(resolved.stdout.trim()) : resolved.stdout.trim();
+      assert.equal(path.basename(nodePath), scenario.expected);
+      const result = await createSnapshot({ sourceRoot: f.source, entrypoint: 'bin/entry.js', destinationParent: f.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true });
+      const manifest = JSON.parse(await readFile(path.join(result.path, 'sync-snapshot-manifest.json'), 'utf8'));
+      assert.equal(manifest.files.some(file => file.path.endsWith(`/synthetic-pkg/${scenario.expected}`)), true);
+      const conditionTargets = new Set(Object.values(scenario.exports).map(target => `node_modules/synthetic-pkg/${target.slice(2)}`));
+      assert.deepEqual(manifest.files.map(file => file.path).filter(file => conditionTargets.has(file)), [`node_modules/synthetic-pkg/${scenario.expected}`]);
+    }
+  }
+});
+
+test('stops on unsupported export arrays, custom conditions, and pattern targets', { skip: posixSkip }, async t => {
+  for (const exports of [
+    { '.': ['./first.js', './second.js'] },
+    { '.': { custom: './custom.js', default: './default.js' } },
+    { '.': { import: './feature/*.js', default: './default.js' } },
+  ]) {
+    const f = await fixture(t, { entrySource: "import 'synthetic-pkg';\n" });
+    await writeFile(path.join(f.source, 'node_modules', 'synthetic-pkg', 'package.json'), JSON.stringify({ name: 'synthetic-pkg', exports }));
+    await assert.rejects(createSnapshot({ sourceRoot: f.source, entrypoint: 'bin/entry.js', destinationParent: f.releases, minimumFreeBytes: 1024, minimumFreeInodes: 64, quiesced: true }), error => ['PACKAGE_EXPORT_UNSUPPORTED', 'PACKAGE_EXPORT_UNRESOLVED'].includes(error.code));
+    assert.deepEqual(await readdir(f.releases), []);
+  }
 });
 
 test('detects source races and refuses insufficient reserve', { skip: posixSkip }, async t => {

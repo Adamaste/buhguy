@@ -4,7 +4,8 @@ This procedure creates a content-verified, code-only snapshot of the current syn
 
 ## Guarantees and limits
 
-- The snapshot follows statically declared ESM imports, literal dynamic imports, and literal CommonJS `require()` calls. It includes the entrypoint, reached JavaScript modules, package metadata, and `package-lock.json` when present.
+- The snapshot follows statically declared ESM imports, literal dynamic imports, and literal CommonJS `require()` calls. Any unescaped template interpolation stops closure analysis because it may hide a runtime import. It includes the entrypoint, reached JavaScript modules, package metadata, and `package-lock.json` when present.
+- Conditional package exports use Node's ordered condition matching for `node`, the active `import` or `require` condition, and `default`. Export arrays, custom or otherwise unsupported conditions, patterns, and unsupported targets stop the snapshot instead of guessing.
 - Missing required imports, non-literal imports/requires, unsupported package exports, non-code paths, symlinks, hardlinks, permission/I/O errors, source races, and insufficient free space fail closed.
 - An absent dependency is accepted only when the owning package metadata explicitly marks it as an optional dependency/peer. The omission is recorded in the manifest and rechecked during verification.
 - The manifest records SHA-256, size, observed source mode, normalized snapshot mode, static module edges, and a content fingerprint. `gitCommit` is always `null`; a fingerprint is not a commit SHA or proof of what historically ran.

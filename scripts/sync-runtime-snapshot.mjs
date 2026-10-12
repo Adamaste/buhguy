@@ -40,12 +40,11 @@ function normalizeRelative(raw, { allowExtensionless = false } = {}) {
   const segments = value.split('/');
   if (segments.some(part => !part || part === '.' || part === '..')) fail('PATH_TRAVERSAL_OR_NONCANONICAL');
   const lower = segments.map(part => part.toLowerCase());
-  if (lower.some(part => SENSITIVE_DIRECTORY.has(part) || part.startsWith('.env'))) fail('SENSITIVE_PATH_NOT_READ');
+  if (lower.some(part => SENSITIVE_DIRECTORY.has(part) || part.startsWith('.env') || SENSITIVE_SEGMENT.test(part))) fail('SENSITIVE_PATH_NOT_READ');
   const base = lower.at(-1);
   const extension = path.posix.extname(base);
   if (base.startsWith('.env.') || base === '.env') fail('SENSITIVE_PATH_NOT_READ');
   if (!ALLOWED_EXTENSIONS.has(extension) && !PACKAGE_METADATA.has(base)) {
-    if (extension && SENSITIVE_SEGMENT.test(base)) fail('SENSITIVE_PATH_NOT_READ');
     if (!extension && allowExtensionless) return segments.join('/');
     fail('PATH_CLASS_UNCONFIRMED');
   }
@@ -112,6 +111,7 @@ function tokenize(source) {
       let closed = false;
       while (i < source.length) {
         if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === '$' && source[i + 1] === '{') fail('TEMPLATE_EXPRESSION_UNSUPPORTED');
         if (source[i] === '`') { i += 1; closed = true; break; }
         i += 1;
       }
@@ -221,21 +221,32 @@ function selectExportTarget(exportsField, subpath, kind) {
   if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
     const keys = Object.keys(exportsField);
     if (keys.some(key => key.startsWith('.'))) {
+      if (keys.some(key => !key.startsWith('.') || key.includes('*'))) fail('PACKAGE_EXPORT_UNSUPPORTED');
       if (!Object.hasOwn(exportsField, subpath)) fail('PACKAGE_EXPORT_UNRESOLVED');
       selected = exportsField[subpath];
     } else if (subpath !== '.') fail('PACKAGE_EXPORT_UNRESOLVED');
   } else if (subpath !== '.') fail('PACKAGE_EXPORT_UNRESOLVED');
-  if (typeof selected === 'string') return selected;
-  if (Array.isArray(selected)) {
-    for (const item of selected) {
-      try { return selectExportTarget(item, '.', kind); } catch {}
+  const resolveTarget = target => {
+    if (typeof target === 'string') {
+      if (!target.startsWith('./') || target.includes('\\') || target.includes('%') || target.includes('*') ||
+          target.slice(2).split('/').some(part => !part || part === '.' || part === '..' || part === 'node_modules')) fail('PACKAGE_EXPORT_UNSUPPORTED');
+      return target;
     }
-    fail('PACKAGE_EXPORT_UNRESOLVED');
-  }
-  if (!selected || typeof selected !== 'object') fail('PACKAGE_EXPORT_UNRESOLVED');
-  const preferred = kind === 'require' ? ['node', 'require', 'default'] : ['node', 'import', 'default'];
-  for (const key of preferred) if (Object.hasOwn(selected, key)) return selectExportTarget(selected[key], '.', kind);
-  fail('PACKAGE_EXPORT_UNRESOLVED');
+    if (target === null) return null;
+    if (!target || typeof target !== 'object' || Array.isArray(target)) fail('PACKAGE_EXPORT_UNSUPPORTED');
+    const keys = Object.keys(target);
+    // Do not guess custom/addon/module-sync conditions or array fallback semantics.
+    if (keys.some(key => !['node', 'import', 'require', 'default'].includes(key))) fail('PACKAGE_EXPORT_UNSUPPORTED');
+    for (const key of keys) {
+      if (key !== 'node' && key !== kind && key !== 'default') continue;
+      const resolved = resolveTarget(target[key]);
+      if (resolved !== undefined) return resolved;
+    }
+    return undefined;
+  };
+  const target = resolveTarget(selected);
+  if (typeof target !== 'string') fail('PACKAGE_EXPORT_UNRESOLVED');
+  return target;
 }
 
 async function lstatDirectoryPath(root, relative, fsApi) {
@@ -254,8 +265,8 @@ async function lstatDirectoryPath(root, relative, fsApi) {
   return { absolute, stat: await fsApi.lstat(absolute) };
 }
 
-async function resolveFile(root, baseRelative, fsApi, { allowDirectory = false, readJson = null } = {}) {
-  const candidates = [baseRelative, ...['.js', '.mjs', '.cjs'].map(extension => `${baseRelative}${extension}`)];
+async function resolveFile(root, baseRelative, fsApi, { allowDirectory = false, readJson = null, exact = false } = {}) {
+  const candidates = exact ? [baseRelative] : [baseRelative, ...['.js', '.mjs', '.cjs'].map(extension => `${baseRelative}${extension}`)];
   for (const candidate of candidates) {
     try {
       const rel = normalizeRelative(candidate);
@@ -355,7 +366,7 @@ async function resolveImport(root, importer, specifier, kind, fsApi, readJson) {
   if (target.startsWith('/')) fail('PACKAGE_EXPORT_ESCAPE');
   const rel = path.posix.normalize(path.posix.join(packageRoot, target));
   if (!isInside(path.resolve(root, packageRoot), path.resolve(root, ...rel.split('/')))) fail('PACKAGE_EXPORT_ESCAPE');
-  return resolveFile(root, rel, fsApi, { allowDirectory: kind === 'require', readJson });
+  return resolveFile(root, rel, fsApi, { allowDirectory: !usesExports && kind === 'require', readJson, exact: usesExports });
 }
 
 async function inspectClosure({ sourceRoot, entrypoint, fsApi = fs }) {
