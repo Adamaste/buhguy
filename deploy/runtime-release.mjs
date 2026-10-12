@@ -70,6 +70,10 @@ function inside(root, candidate) {
 
 function modeString(mode) { return (mode & 0o777).toString(8).padStart(4, '0'); }
 function expectedReadOnlyMode(mode) { return (mode & 0o111) ? 0o555 : 0o444; }
+function sameFileIdentity(before, after) {
+  const deviceUnavailableOnWindows = process.platform === 'win32' && (!before.dev || !after.dev);
+  return (deviceUnavailableOnWindows || before.dev === after.dev) && before.ino === after.ino;
+}
 
 async function ensureRealDirectory(dir, fsApi = fs) {
   const absolute = path.resolve(dir);
@@ -125,7 +129,7 @@ async function walkRelease(root, { fsApi = fs, normalizeModes = false, trustedSo
       const bytes = await fsApi.readFile(absolute);
       if (normalizeModes) await fsApi.chmod(absolute, expectedReadOnlyMode(stat.mode));
       const after = await fsApi.lstat(absolute);
-      if (after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || bytes.length !== before.size) fail('SOURCE_CHANGED_DURING_READ');
+      if (after.isSymbolicLink() || !sameFileIdentity(before, after) || before.size !== after.size || before.mtimeMs !== after.mtimeMs || bytes.length !== before.size) fail('SOURCE_CHANGED_DURING_READ');
       if ((after.mode & 0o222) !== 0) fail('RELEASE_WRITABLE');
       files.push({
         path: relative,
@@ -286,7 +290,7 @@ async function walkForSeal(root, fsApi = fs, trustedSourcePaths = null) {
       const bytes = await fsApi.readFile(absolute);
       const after = await fsApi.lstat(absolute);
       if (after.isSymbolicLink()) fail('SOURCE_PATH_CHANGED_DURING_READ');
-      if (stat.dev !== after.dev || stat.ino !== after.ino) fail('SOURCE_IDENTITY_CHANGED_DURING_READ');
+      if (!sameFileIdentity(stat, after)) fail('SOURCE_IDENTITY_CHANGED_DURING_READ');
       if (stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || stat.mode !== after.mode) fail('SOURCE_METADATA_CHANGED_DURING_READ');
       if (bytes.length !== stat.size) fail('SOURCE_READ_LENGTH_MISMATCH');
       files.push({ path: relative, type: 'file', bytes, sourceMode: stat.mode & 0o777 });
@@ -543,4 +547,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = 2;
   });
 }
-

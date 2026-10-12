@@ -276,7 +276,20 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     if (relative.startsWith('src/browser-profile/')) await fs.rmdir(path.dirname(target));
   }
 
-  const result = await sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: posixTestFs() });
+  const identityFs = posixTestFs();
+  if (process.platform === 'win32') {
+    const lstat = identityFs.lstat;
+    let firstEntryStat = true;
+    identityFs.lstat = async filePath => {
+      const stat = await lstat(filePath);
+      if (firstEntryStat && path.resolve(filePath) === path.resolve(entryPath)) {
+        firstEntryStat = false;
+        return new Proxy(stat, { get(target, key) { return key === 'dev' ? 0 : Reflect.get(target, key, target); } });
+      }
+      return stat;
+    };
+  }
+  const result = await sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: identityFs });
   assert.equal(result.status, 'PASS');
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
@@ -294,4 +307,3 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     error => error.code === 'INVENTORY_MISMATCH',
   );
 });
-
