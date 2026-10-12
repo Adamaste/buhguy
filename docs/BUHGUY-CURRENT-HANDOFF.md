@@ -16,10 +16,34 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-11
+- Last updated: 2026-10-12
 - Current implementation baseline: `43b513ceb2cf9d2d821158d8c5303a6fd83a2fc2` (PR #165 merged into master on 2026-10-11; **not deployed** to production).
 - Current phase: `P0_ACCOUNTING_CHURN_MERGED_AWAITING_DEPLOY_APPROVAL`; PR #165 is merged and locally tested on PostgreSQL 16/18, but the production service still runs the older release with unconditional `replace=true` certification.
 - Current blocker: production code still uses pre-fix accounting catch-up. Controlled deploy requires separate approval, verified artifact/runtime identity and post-deploy no-churn observation. Physical disk reclamation remains a separately approved operation; the distinct PR #163/fourth-preview technical-error blocker remains unresolved.
+
+## Controlled no-churn deployment plan prepared (review-only, 2026-10-12)
+
+The documentation-only plan `docs/accounting-no-churn-controlled-deploy-plan-v1.md`
+now covers the frozen master artifact gate, exact-head disposable local tests
+while hosted CI is paused, backup/restorability and constrained disk/WAL
+headroom, both FNS and bank-ingestion service path checks, separately scoped
+approval, controlled cutover, and rollback/STOP rules.
+
+Its production no-churn verdict specifically requires an **unchanged
+source-state fingerprint** and reuse of an intact READY certification run
+without replacing its persisted rows. New source data may legitimately change
+that fingerprint and make a previous run stale; such a case is **UNCONFIRMED**
+for no-churn, not proof of failure or success. The review worksheet is
+deliberately unfilled; no current production preflight has been performed.
+
+This review artifact is proposed in PR #167. No deployment, CI dispatch,
+production connection, backup operation, service/timer change, financial
+write, session termination, space-reclamation task, matched-purchase preview
+or diagnostic PR #163 merge was performed by this documentation update.
+**Next gate:** review the plan and obtain a new, explicit, bounded deployment
+authorization only after operator-backed identity, capacity, backup and
+rollback evidence. The project phase remains
+`P0_ACCOUNTING_CHURN_MERGED_AWAITING_DEPLOY_APPROVAL`.
 
 ## Accounting churn merge and stale-session closeout (2026-10-11)
 
@@ -54,11 +78,11 @@ reclaimable bytes remain unconfirmed. The active production release is still
 with the old unconditional certification `replace=true` path.
 **Merging PR #165 is not a deployment.**
 
-**Next action:** prepare a narrowly scoped controlled production deploy plan
-for the merged exact-master artifact, including manifest verification, backup
-and rollback readiness, health and bounded no-churn postchecks, **without
-executing any production deployment or financial write until separate explicit
-authorization**. Do not run further production matched-purchase previews:
+**Next action:** review the prepared narrowly scoped production deploy
+plan (`docs/accounting-no-churn-controlled-deploy-plan-v1.md`); obtain and
+record verified artifact identity, restorable backup, capacity and rollback
+evidence and **separate explicit authorization** before any production
+deployment or financial write. Do not run further production matched-purchase previews:
 the fourth authorization has been consumed, and PR #163 remains a separate
 unresolved diagnostic issue. Physical table shrink needs independent
 space/backup/maintenance approval.
