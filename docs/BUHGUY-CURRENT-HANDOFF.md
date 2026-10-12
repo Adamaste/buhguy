@@ -3320,29 +3320,60 @@ backfill, deploy, or enable an automatic refresh trigger.
 
 After new bank or receipt ingestion, certification is not automatically current: the next controlled cycle must recompute source identity, run the non-persisting projection, classify the state, and only then use the separately approved materialization procedure. No automatic refresh, writer trigger, replay, or backfill is enabled.
 
-## Local sync rollback-snapshot tooling (2026-10-12; review pending)
+## Sync rollback snapshot tooling (2026-10-12)
 
-A local-only code-only snapshot verifier/rehearsal is prepared on a separate
-branch. It fingerprints the statically resolved JavaScript dependency closure
-of an operator-confirmed sync entrypoint, records content hashes and modes,
-and fails closed on unknown paths, symlinks, missing imports, source races, or
-insufficient explicitly supplied disk/inode reserves. The fingerprint is not
-a Git SHA or historical provenance proof. No production connection, snapshot,
-service/timer change, or financial operation occurred.
+PR #169 was merged into master as merge commit
+`3ceb26267b271e7011d1f2d87ff649ff2d7c54fe` (PR head
+`9dd47dfe6c9496901809501e64d81c809973b9f3`). Its exact-head local gates
+passed: 474/474 unit tests, 116/116 PostgreSQL 16 integration tests, and
+17/17 targeted Linux snapshot/verifier tests, with no skips. No GitHub Actions
+or production operation was used.
 
-The Linux synthetic gates cover POSIX modes, read/execute access as an
-unprivileged service-like user, current WorkingDirectory/state preservation
-in a rollback rehearsal, symlink/traversal and missing-dependency failures,
-source races, interruption, corruption, and bounded capacity checks. The
-actual production sync entrypoint and complete runtime-loaded dependency
-closure remain unconfirmed; a static
-analysis stop must not be bypassed by copying additional files ad hoc. Any
-future snapshot requires separate authorization for quiescence and the exact
-snapshot-only write paths documented in
-`docs/sync-runtime-rollback-snapshot-v1.md`. It does not satisfy backup
-restorability or WAL/emergency capacity gates and does not authorize deploy.
+The code-only snapshot tool fingerprints and verifies a statically discovered
+closure and records content hashes and modes. It does not identify a Git
+commit or prove historical provenance. The actual production sync entrypoint,
+runtime dependency closure, service-user access, backup restore readiness, and
+WAL/emergency reserve remain unconfirmed. `DEPLOY_READY=NO`.
 
-PR #163 and its fourth-preview technical-error blocker remain separate and
-unresolved; do not rerun the preview or change that PR under this snapshot-tool
-work.
+### Static closure limits
+
+The analyzer follows recognized static ESM imports/exports, literal dynamic
+`import()`, and literal CommonJS `require()` edges, plus reached package entry
+metadata. It supports only `.js`, `.mjs`, and `.cjs` code files. It does not
+execute the application or discover modules/assets selected through runtime
+filesystem reads, computed paths, plugin registries, native loading, spawned
+commands, or other external executables. `eval`, `createRequire`, computed
+imports/requires, template interpolation, unsupported package export
+conditions/arrays/patterns, and unclassified paths stop the snapshot. The
+supported export conditions are limited to ordered `node`, `import`/`require`,
+and `default`. These limits must be compared with an authorized read-only
+inventory of the real service before claiming closure; do not add files to
+bypass a STOP without separately reviewing their path and purpose.
+The sensitive-name filter may also stop a legitimate code module whose path
+contains a sensitive segment (for example `session-store.js`); keep that
+fail-closed result until the specific path is reviewed, and do not broaden the
+allowlist automatically.
+
+### Next authorized stages
+
+1. Request one narrowly bounded READ ONLY production inventory of the
+   effective sync `ExecStart`, `User`, and `WorkingDirectory`; code-only
+   dependency closure and dynamic runtime dependencies; and metadata-only
+   paths, ownership, modes, symlinks, and service-user access. Do not read
+   secret values, session/profile contents, logs, or financial data. No prior
+   production authorization remains active.
+2. If that inventory proves a complete safe code-only closure, obtain separate
+   explicit authorization for sync quiescence and creation of the snapshot at
+   only the exact release-directory paths in
+   `docs/sync-runtime-rollback-snapshot-v1.md`.
+3. Obtain separately scoped authorization for any production rollback
+   rehearsal that changes service configuration. Verify the snapshot as the
+   actual service user and preserve the current WorkingDirectory/state; never
+   restore an old state or token copy.
+
+These stages do not authorize deployment. Backup restore readiness and the
+WAL/emergency disk reserve remain independent deployment blockers. No
+automatic deployment, sync, snapshot, or rollback is authorized. PR #163 and
+its fourth-preview technical-error blocker remain separate and unresolved;
+do not rerun the preview or alter that PR as part of this work.
 
