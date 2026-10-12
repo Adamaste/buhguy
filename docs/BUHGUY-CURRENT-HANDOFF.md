@@ -36,13 +36,18 @@ that fingerprint and make a previous run stale; such a case is **UNCONFIRMED**
 for no-churn, not proof of failure or success. The review worksheet is
 deliberately unfilled; no current production preflight has been performed.
 
-This review artifact is proposed in PR #167. No deployment, CI dispatch,
-production connection, backup operation, service/timer change, financial
-write, session termination, space-reclamation task, matched-purchase preview
-or diagnostic PR #163 merge was performed by this documentation update.
-**Next gate:** review the plan and obtain a new, explicit, bounded deployment
-authorization only after operator-backed identity, capacity, backup and
-rollback evidence. The project phase remains
+The review-only deployment plan was merged into `master` by PR #167 on
+2026-10-12 at `cd77a287606fe8389ed836f31bb719b2cc8195d6`. The PR
+changed documentation only; no deployment, CI dispatch, production
+connection, backup operation, service/timer change, financial write, session
+termination, space-reclamation task, matched-purchase preview, or diagnostic
+PR #163 merge was performed.
+
+**Next gate:** operator review of actual deploy readiness: independently
+verified exact artifact and installed runtime identity, available capacity,
+restorable backup, and rollback path. Only then request a **new explicit,
+bounded production deployment approval**. Neither the reviewed plan nor its
+merge grants that authorization. The project phase remains
 `P0_ACCOUNTING_CHURN_MERGED_AWAITING_DEPLOY_APPROVAL`.
 
 ## Accounting churn merge and stale-session closeout (2026-10-11)
