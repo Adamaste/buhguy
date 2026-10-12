@@ -21,6 +21,7 @@ export class ReleaseError extends Error {
 
 function fail(code) { throw new ReleaseError(code); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
+function comparePaths(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 function gitBlobSha(bytes) {
   const header = Buffer.from(`blob ${bytes.length}\0`);
   return crypto.createHash('sha1').update(header).update(bytes).digest('hex');
@@ -60,12 +61,16 @@ async function ensureRealDirectory(dir, fsApi = fs) {
   return stat;
 }
 
+function assertTrustedReleaseDirectory(stat) {
+  if (process.platform === 'linux' && (stat.uid !== 0 || (stat.mode & 0o022) !== 0)) fail('RELEASE_ROOT_OWNER_OR_MODE_INVALID');
+}
+
 async function walkRelease(root, { fsApi = fs, normalizeModes = false } = {}) {
   const files = [];
   const directories = [];
   const visit = async (directory, relativeDirectory = '') => {
     const children = await fsApi.readdir(directory, { withFileTypes: true });
-    children.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+    children.sort((a, b) => comparePaths(a.name, b.name));
     for (const child of children) {
       const relative = relativeDirectory ? `${relativeDirectory}/${child.name}` : child.name;
       if (relative === MANIFEST && !relativeDirectory) continue;
@@ -109,8 +114,8 @@ async function walkRelease(root, { fsApi = fs, normalizeModes = false } = {}) {
     }
   };
   await visit(root);
-  files.sort((a, b) => a.path.localeCompare(b.path, 'en'));
-  directories.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  files.sort((a, b) => comparePaths(a.path, b.path));
+  directories.sort((a, b) => comparePaths(a.path, b.path));
   return { files, directories };
 }
 
@@ -151,8 +156,8 @@ function validateManifestLists(manifest) {
     if (paths.has(relative)) fail('MANIFEST_DUPLICATE_PATH');
     paths.add(relative);
   }
-  const ordered = [...paths].sort((a, b) => a.localeCompare(b, 'en'));
-  const actual = [...manifest.files.map(x => x.path), ...manifest.directories.map(x => x.path)].sort((a, b) => a.localeCompare(b, 'en'));
+  const ordered = [...paths].sort(comparePaths);
+  const actual = [...manifest.files.map(x => x.path), ...manifest.directories.map(x => x.path)].sort(comparePaths);
   if (actual.some((value, index) => value !== ordered[index])) fail('MANIFEST_ORDER_OR_PATH_INVALID');
   for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs']) {
     if (!manifest.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
@@ -207,16 +212,21 @@ function git(sourceRoot, args, options = {}) {
 
 function gitPathList(sourceRoot, sha) {
   const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', 'package.json', 'package-lock.json']);
-  return output.toString('utf8').split('\0').filter(Boolean).sort((a, b) => a.localeCompare(b, 'en'));
+  return output.toString('utf8').split('\0').filter(Boolean).sort(comparePaths);
 }
 
 function isGitRuntimeFile(relative) {
   return EXACT_CODE_FILES.has(relative) || CODE_ROOTS.some(prefix => relative.startsWith(prefix));
 }
 
-function gitBlob(sourceRoot, sha, relative) {
-  const output = git(sourceRoot, ['show', `${sha}:${relative}`]);
-  return gitBlobSha(output);
+function gitTreeEntry(sourceRoot, sha, relative) {
+  const output = git(sourceRoot, ['ls-tree', '-z', sha, '--', relative]).toString('utf8').split('\0').filter(Boolean);
+  if (output.length !== 1) fail('GIT_TREE_ENTRY_INVALID');
+  const tab = output[0].indexOf('\t');
+  if (tab < 0 || output[0].slice(tab + 1) !== relative) fail('GIT_TREE_ENTRY_INVALID');
+  const [mode, type, objectSha] = output[0].slice(0, tab).split(' ');
+  if (type !== 'blob' || !['100644', '100755'].includes(mode) || !/^[a-f0-9]{40}$/.test(objectSha)) fail('GIT_TREE_ENTRY_INVALID');
+  return { mode, objectSha };
 }
 
 async function walkForSeal(root, fsApi = fs) {
@@ -224,7 +234,7 @@ async function walkForSeal(root, fsApi = fs) {
   const directories = [];
   const visit = async (dir, relDir = '') => {
     const children = await fsApi.readdir(dir, { withFileTypes: true });
-    children.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+    children.sort((a, b) => comparePaths(a.name, b.name));
     for (const child of children) {
       const relative = relDir ? `${relDir}/${child.name}` : child.name;
       if (relative === MANIFEST && !relDir) fail('MANIFEST_ALREADY_EXISTS');
@@ -244,7 +254,10 @@ async function walkForSeal(root, fsApi = fs) {
       if (!stat.isFile() || stat.nlink > 1) fail('FILE_TYPE_OR_HARDLINK_UNSUPPORTED');
       const bytes = await fsApi.readFile(absolute);
       const after = await fsApi.lstat(absolute);
-      if (after.isSymbolicLink() || stat.dev !== after.dev || stat.ino !== after.ino || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || stat.mode !== after.mode || bytes.length !== stat.size) fail('SOURCE_CHANGED_DURING_READ');
+      if (after.isSymbolicLink()) fail('SOURCE_PATH_CHANGED_DURING_READ');
+      if (stat.dev !== after.dev || stat.ino !== after.ino) fail('SOURCE_IDENTITY_CHANGED_DURING_READ');
+      if (stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || stat.mode !== after.mode) fail('SOURCE_METADATA_CHANGED_DURING_READ');
+      if (bytes.length !== stat.size) fail('SOURCE_READ_LENGTH_MISMATCH');
       files.push({ path: relative, type: 'file', bytes, sourceMode: stat.mode & 0o777 });
     }
   };
@@ -278,7 +291,11 @@ export async function sealRelease({ sourceRoot, releaseDir, sha, fsApi = fs }) {
   const expectedCodePaths = gitPathList(sourceRoot, sha);
   if (stageCodePaths.length !== expectedCodePaths.length || stageCodePaths.some((p, i) => p !== expectedCodePaths[i])) fail('GIT_TREE_CONTENT_MISMATCH');
   for (const entry of inventory.files.filter(item => isGitRuntimeFile(item.path))) {
-    if (entry.type !== 'file' || gitBlobSha(entry.bytes) !== gitBlob(sourceRoot, sha, entry.path)) fail('GIT_BLOB_MISMATCH');
+    if (entry.type !== 'file') fail('GIT_BLOB_MISMATCH');
+    const gitEntry = gitTreeEntry(sourceRoot, sha, entry.path);
+    const sourceExecutable = (entry.sourceMode & 0o111) !== 0;
+    if (sourceExecutable !== (gitEntry.mode === '100755')) fail('GIT_MODE_MISMATCH');
+    if (gitBlobSha(entry.bytes) !== gitEntry.objectSha) fail('GIT_BLOB_MISMATCH');
   }
   if (!inventory.files.some(item => item.path === 'node_modules/.package-lock.json' || item.path.startsWith('node_modules/'))) fail('RUNTIME_DEPENDENCIES_MISSING');
   validatePackageMetadata(releaseDir);
@@ -301,8 +318,8 @@ export async function sealRelease({ sourceRoot, releaseDir, sha, fsApi = fs }) {
     });
   }
   const directories = inventory.directories.map(relative => ({ path: relative, mode: '0555' }));
-  files.sort((a, b) => a.path.localeCompare(b.path, 'en'));
-  directories.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  files.sort((a, b) => comparePaths(a.path, b.path));
+  directories.sort((a, b) => comparePaths(a.path, b.path));
   const manifest = { format: FORMAT, targetSha: sha, files, directories };
   const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   const manifestPath = path.join(releaseDir, MANIFEST);
@@ -349,7 +366,7 @@ export async function publishRelease({ releaseRoot, sha, manifestSha256, minimum
   assertSha(sha);
   assertManifestHash(manifestSha256);
   const root = path.resolve(releaseRoot);
-  await ensureRealDirectory(root, fsApi);
+  assertTrustedReleaseDirectory(await ensureRealDirectory(root, fsApi));
   const stage = path.join(root, `.staging-${sha}`);
   const destination = path.join(root, sha);
   await checkFreeReserve(root, minimumFreeBytes, minimumFreeInodes, fsApi);
@@ -360,8 +377,10 @@ export async function publishRelease({ releaseRoot, sha, manifestSha256, minimum
       return { ...verified, status: 'ALREADY_PUBLISHED' };
     } catch (error) { if (error?.code !== 'ENOENT') throw error; }
     const rootStat = await fsApi.stat(root);
-    const stageStat = await fsApi.stat(stage);
-    if (rootStat.dev !== stageStat.dev) fail('STAGE_FILESYSTEM_MISMATCH');
+    const stageStat = await fsApi.lstat(stage);
+    if (!stageStat.isDirectory() || stageStat.isSymbolicLink()) fail('STAGE_NOT_REAL_DIRECTORY');
+    if (process.platform === 'linux' && rootStat.dev !== stageStat.dev) fail('STAGE_FILESYSTEM_MISMATCH');
+    if (process.platform === 'linux' && (stageStat.uid !== 0 || (stageStat.mode & 0o222) !== 0)) fail('STAGE_OWNER_OR_MODE_INVALID');
     await verifyRelease({ releaseDir: stage, sha, manifestSha256, fsApi });
     if (process.platform === 'linux') {
       const items = await walkRelease(stage, { fsApi });
@@ -371,6 +390,7 @@ export async function publishRelease({ releaseRoot, sha, manifestSha256, minimum
         if (st.uid !== 0 || (item.type !== 'symlink' && (st.mode & 0o222) !== 0)) fail('RELEASE_OWNER_OR_MODE_INVALID');
       }
     }
+    await checkFreeReserve(root, minimumFreeBytes, minimumFreeInodes, fsApi);
     await fsApi.rename(stage, destination);
     const published = await verifyRelease({ releaseDir: destination, sha, manifestSha256, fsApi });
     return { ...published, status: 'PUBLISHED' };
@@ -413,7 +433,7 @@ export async function selectRelease({ releaseRoot, sha, manifestSha256, previous
   assertSha(sha);
   assertManifestHash(manifestSha256);
   const root = path.resolve(releaseRoot);
-  await ensureRealDirectory(root, fsApi);
+  assertTrustedReleaseDirectory(await ensureRealDirectory(root, fsApi));
   const selected = selector ?? {
     read: () => readCurrent(root, fsApi),
     replace: value => atomicSetCurrent(root, value, fsApi),

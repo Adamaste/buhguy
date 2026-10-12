@@ -27,10 +27,10 @@ function posixTestFs() {
     };
     api.lstat = async file => {
       const stat = await fs.lstat(file);
-      if (!stat.isDirectory()) return stat;
       return new Proxy(stat, {
         get(target, key) {
-          if (key === 'mode') return (target.mode & ~0o777) | 0o555;
+          if (key === 'dev') return 1;
+          if (key === 'mode' && target.isDirectory()) return (target.mode & ~0o777) | 0o555;
           const value = Reflect.get(target, key, target);
           return typeof value === 'function' ? value.bind(target) : value;
         },
@@ -243,6 +243,18 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     await fs.mkdir(path.dirname(dependencyLock), { recursive: true });
     await fs.writeFile(dependencyLock, '{"lockfileVersion":3,"packages":{}}\n');
   }
+  const entryPath = path.join(stage, 'bin', 'receipt-collector.js');
+  const modeMismatchFs = posixTestFs();
+  const realLstat = modeMismatchFs.lstat;
+  modeMismatchFs.lstat = async filePath => {
+    const stat = await realLstat(filePath);
+    if (path.resolve(filePath) !== path.resolve(entryPath)) return stat;
+    return new Proxy(stat, { get(target, key) { return key === 'mode' ? target.mode | 0o111 : Reflect.get(target, key, target); } });
+  };
+  await assert.rejects(
+    () => sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: modeMismatchFs }),
+    error => error.code === 'GIT_MODE_MISMATCH',
+  );
   const result = await sealRelease({ sourceRoot: source, releaseDir: stage, sha, fsApi: posixTestFs() });
   assert.equal(result.status, 'PASS');
   assert.equal(result.sha, sha);
