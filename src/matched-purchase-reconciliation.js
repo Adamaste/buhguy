@@ -5,7 +5,7 @@ import {
   MAX_PREVIEW_PERIOD_MS,
   PREVIEW_LOCK_TIMEOUT_MS,
   PREVIEW_STATEMENT_TIMEOUT_MS,
-} from '../scripts/matched-purchase-preview-read-only.mjs';
+} from './matched-purchase-reconciliation-constants.js';
 import {
   MATCHED_PURCHASE_ORCHESTRATION_VERSION,
   ORCHESTRATION_DECISIONS,

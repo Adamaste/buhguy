@@ -142,6 +142,10 @@ Runtime text artifacts use deterministic LF line endings. The release manifest
 records the repository path, Git blob identity, installed-file SHA256, and line
 ending policy.
 
+For the exact-SHA immutable release selector, release manifest contract,
+legacy sync-unit transition, and explicit-SHA rollback procedure, see
+[`docs/versioned-runtime-releases-v1.md`](versioned-runtime-releases-v1.md).
+
 ## Bank ingestion status
 
 The bank ingestion backend is a separate systemd service and is exposed through

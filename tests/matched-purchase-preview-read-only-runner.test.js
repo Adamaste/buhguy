@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
-  runReadOnlyMatchedPurchasePreview,
-} from '../scripts/matched-purchase-preview-read-only.mjs';
+import { INVARIANT_INTERNAL_TRANSFER_WINDOW_MS } from '../src/matched-purchase-reconciliation-constants.js';
+import { runReadOnlyMatchedPurchasePreview } from '../scripts/matched-purchase-preview-read-only.mjs';
 
 function fakePool() {
   const queries = [];

@@ -5,13 +5,15 @@ import {
   MATCHED_PURCHASE_ORCHESTRATION_VERSION,
   previewMatchedPurchaseOrchestration,
 } from '../src/matched-purchase-orchestration.js';
+import {
+  APPROVED_INTERNAL_TRANSFER_WINDOW_MS,
+  APPROVED_RECEIPT_WINDOW_MS,
+  INVARIANT_INTERNAL_TRANSFER_WINDOW_MS,
+  MAX_PREVIEW_PERIOD_MS,
+  PREVIEW_LOCK_TIMEOUT_MS,
+  PREVIEW_STATEMENT_TIMEOUT_MS,
+} from '../src/matched-purchase-reconciliation-constants.js';
 
-export const PREVIEW_STATEMENT_TIMEOUT_MS = 120000;
-export const PREVIEW_LOCK_TIMEOUT_MS = 5000;
-export const APPROVED_INTERNAL_TRANSFER_WINDOW_MS = 5000;
-export const INVARIANT_INTERNAL_TRANSFER_WINDOW_MS = 3600000;
-export const APPROVED_RECEIPT_WINDOW_MS = 300000;
-export const MAX_PREVIEW_PERIOD_MS = 60 * 24 * 60 * 60 * 1000;
 
 const SUMMARY_FIELDS = Object.freeze([
   'matchedPairs',
