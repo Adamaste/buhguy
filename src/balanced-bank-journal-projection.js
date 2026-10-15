@@ -100,6 +100,9 @@ function sourceProvenance(source) {
     accountIdentityStatus: source.accountIdentityStatus,
     accountResolutionState: source.accountResolutionState,
     accountResolutionProvenance: source.accountResolutionProvenance ?? null,
+    ...(source.sourceProviderBindingVerified !== undefined
+      ? { sourceProviderBindingVerified: source.sourceProviderBindingVerified === true }
+      : {}),
   };
 }
 

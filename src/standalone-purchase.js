@@ -16,6 +16,13 @@ WITH fns_source_proof AS (
   FROM receipt_source_observations observation
   JOIN fns_sources source ON source.id = observation.fns_source_id
   GROUP BY observation.receipt_id
+), receipt_scope_proof AS (
+  SELECT observation.receipt_id,
+         array_agg(DISTINCT scope.scope_key ORDER BY scope.scope_key) AS scope_keys
+  FROM receipt_source_observations observation
+  JOIN fns_sources source ON source.id = observation.fns_source_id
+  JOIN accounting_scopes scope ON scope.id = source.scope_id
+  GROUP BY observation.receipt_id
 )
 SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.operation_type AS "operationType",
        r.total_sum AS "totalSum", r.currency, COALESCE(fns_source_proof."fnsSourceProven", FALSE) AS "fnsSourceProven", f.normalization_status AS "normalizationStatus",
@@ -29,7 +36,9 @@ SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.operation_type AS
 FROM receipts r
 JOIN receipt_fiscal_facts f ON f.receipt_id=r.id AND f.normalization_version=$1
 LEFT JOIN fns_source_proof ON fns_source_proof.receipt_id=r.id
+LEFT JOIN receipt_scope_proof ON receipt_scope_proof.receipt_id=r.id
 WHERE ($2::bigint[] IS NULL OR r.id = ANY($2::bigint[]))
+  AND ($3::text IS NULL OR receipt_scope_proof.scope_keys=ARRAY[$3::text])
 ORDER BY r.id`;
 
 function zeroComponent(value, state) { return Number(value) === 0 && ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(state); }
@@ -78,7 +87,7 @@ async function graphReceiptSets(pool, scopeKey) {
 }
 
 export async function standalonePurchaseCensus(pool, { scopeKey = 'default', from = null, to = null } = {}) {
-  const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, null]), graphReceiptSets(pool, scopeKey)]);
+  const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, null, scopeKey]), graphReceiptSets(pool, scopeKey)]);
   const buckets = new Map(CATEGORY_ORDER.map((category) => [category, { category, count: 0, amount: '0.00', receiptIds: [] }]));
   for (const row of rowsResult.rows) {
     const at = new Date(row.dateTime);
@@ -105,7 +114,7 @@ async function persistCandidate(tx, row, scopeKey) {
 
 export async function persistStandalonePurchases(pool, { scopeKey = 'default', receiptIds = null, ledgerRefresher = null } = {}) {
   const ids = receiptIds?.map((id) => Number(id)) ?? null;
-  const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, ids]), graphReceiptSets(pool, scopeKey)]);
+  const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, ids, scopeKey]), graphReceiptSets(pool, scopeKey)]);
   const requested = receiptIds ? new Set(receiptIds.map((id) => String(id))) : null;
   const eligible = rowsResult.rows.filter((row) => (!requested || requested.has(String(row.id))) && standaloneEligibility({ ...row, operationType: Number(row.operationType), fiscalOperationType: Number(row.fiscalOperationType) }, sets).category === 'ELIGIBLE_STANDALONE');
   const persisted = await new BusinessEventGraphRepository(pool).withTransaction(async (tx) => {

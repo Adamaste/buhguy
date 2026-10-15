@@ -38,6 +38,7 @@ const unitFiles = [
   'tests/bank-receipt-matching.test.js',
   'tests/matched-purchase-enrichment-projection.test.js',
   'tests/matched-purchase-orchestration.test.js',
+  'tests/matched-purchase-reconciliation.test.js',
   'tests/matched-purchase-preview-read-only-runner.test.js',
   'tests/fns-receipt-currency.test.js',
   'tests/yandex-bank-normalization.test.js',

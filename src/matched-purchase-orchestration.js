@@ -6,8 +6,10 @@ import {
   MATCHED_PURCHASE_ENRICHMENT_STATUSES,
   loadMatchedPurchaseEnrichment,
 } from './matched-purchase-enrichment-projection.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
 
 export const MATCHED_PURCHASE_ORCHESTRATION_VERSION = 'matched-purchase-writer-orchestration-v1';
+export const MATCHED_PURCHASE_AUTO_POLICY = 'AUTO_EXACT_PURCHASE_NEAREST_5M_V1';
 export const ORCHESTRATION_DECISIONS = Object.freeze({
   PERSIST_REQUIRED: 'PERSIST_REQUIRED',
   NOOP_ALREADY_PERSISTED: 'NOOP_ALREADY_PERSISTED',
@@ -63,6 +65,8 @@ function safeDecisionFields(match, enrichment, action, reasonCode) {
     ledgerDisposition: enrichment?.ledgerDisposition ?? null,
     orchestrationAction: action,
     reasonCode: reasonCode ?? enrichment?.reasonCode ?? null,
+    ...(match?.assignmentPolicy ? { assignmentPolicy: match.assignmentPolicy } : {}),
+    ...(match?.bank?.sourceProviderBindingVerified === true ? { sourceProviderBindingVerified: true } : {}),
   };
 }
 
@@ -115,7 +119,7 @@ function orchestrationKey(fields) {
   });
 }
 
-function matchedDecision(match, enrichment, approvedMatchKey) {
+function matchedDecision(match, enrichment, approvedMatchKey, automaticPolicy) {
   const projected = enrichment?.projectionStatus === MATCHED_PURCHASE_ENRICHMENT_STATUSES.PROJECTED;
   const reusable = projected && enrichment.ledgerDisposition === LEDGER_DISPOSITIONS.REUSE_EXISTING_BANK_FUNDING;
   const actionable = projected && [
@@ -123,31 +127,37 @@ function matchedDecision(match, enrichment, approvedMatchKey) {
     LEDGER_DISPOSITIONS.FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED,
   ].includes(enrichment.ledgerDisposition);
   const explicitlyApproved = match.matchKey === approvedMatchKey;
+  const policyApproved = automaticPolicy === MATCHED_PURCHASE_AUTO_POLICY
+    && match.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    && match.bank?.sourceProviderBindingVerified === true;
   const action = reusable
     ? ORCHESTRATION_DECISIONS.NOOP_ALREADY_PERSISTED
-    : actionable && explicitlyApproved
+    : actionable && (explicitlyApproved || policyApproved)
       ? ORCHESTRATION_DECISIONS.PERSIST_REQUIRED
       : ORCHESTRATION_DECISIONS.BLOCKED;
-  const reasonCode = actionable && !explicitlyApproved
+  const reasonCode = actionable && !explicitlyApproved && !policyApproved
     ? 'INDEPENDENT_MATCH_EVIDENCE_REQUIRED'
     : enrichment?.reasonCode ?? 'MATCHED_ENRICHMENT_BLOCKED';
   const fields = safeDecisionFields(match, enrichment, action, reasonCode);
   return {
     ...fields,
-    approvalBasis: explicitlyApproved ? 'EXPLICIT_MATCH_KEY' : 'NONE',
+    approvalBasis: explicitlyApproved ? 'EXPLICIT_MATCH_KEY' : policyApproved ? automaticPolicy : 'NONE',
+    ...(policyApproved ? { automaticPolicy } : {}),
     orchestrationKey: orchestrationKey(fields),
     writePlan: writePlan(enrichment, action),
   };
 }
 
-export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [], selectionFailure = null, approvedMatchKey = null } = {}) {
+export function buildMatchedPurchaseOrchestrationPreview({ matching, enrichments = [], selectionFailure = null, approvedMatchKey = null, automaticPolicy = null } = {}) {
   if (!matching || typeof matching !== 'object') throw new Error('matching result is required');
   validateMatchedPurchaseMatchKey(approvedMatchKey);
+  if (automaticPolicy !== null && automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY) throw new Error('automaticPolicy is unsupported');
+  if (automaticPolicy && approvedMatchKey) throw new Error('automatic policy and approved match key are mutually exclusive');
   const enrichmentByMatchKey = new Map(enrichments.map((item) => [item.matchKey, item]));
   const decisions = (matching.matches ?? [])
     .slice()
     .sort((left, right) => String(left.matchKey).localeCompare(String(right.matchKey)))
-    .map((match) => matchedDecision(match, enrichmentByMatchKey.get(match.matchKey), approvedMatchKey));
+    .map((match) => matchedDecision(match, enrichmentByMatchKey.get(match.matchKey), approvedMatchKey, automaticPolicy));
   const bankStatuses = (matching.bankStatuses ?? []).map((row) => ({
     ledgerKey: row.ledgerKey ?? null,
     status: row.status ?? null,
@@ -203,15 +213,23 @@ export async function previewMatchedPurchaseOrchestration(pool, options = {}) {
   validateWindow(options.receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
   const matchKey = validateMatchedPurchaseMatchKey(options.matchKey);
   const approvedMatchKey = validateMatchedPurchaseMatchKey(options.approvedMatchKey);
+  const automaticPolicy = options.automaticPolicy ?? null;
+  if (automaticPolicy !== null && automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY) throw new Error('automaticPolicy is unsupported');
+  if (automaticPolicy && approvedMatchKey) throw new Error('automatic policy and approved match key are mutually exclusive');
   if (approvedMatchKey && matchKey && approvedMatchKey !== matchKey) throw new Error('approved match key must match the selected match key');
   const selectedMatchKey = approvedMatchKey ?? matchKey;
   const loaderOptions = {
     scopeKey: options.scopeKey,
     from: options.from ?? null,
     to: options.to ?? null,
+    bankIngestedAfter: options.bankIngestedAfter ?? null,
     matchKey: selectedMatchKey,
     internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
     receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
+    ...(automaticPolicy ? {
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+      requireSourceProviderBinding: true,
+    } : {}),
   };
   const matching = await loadBankReceiptMatching(pool, loaderOptions);
   const exactMatches = selectedMatchKey
@@ -221,7 +239,9 @@ export async function previewMatchedPurchaseOrchestration(pool, options = {}) {
     ? { matchKey: selectedMatchKey, status: 'REVIEW_REQUIRED', reasonCode: 'MATCH_NOT_FOUND' }
     : null;
   const enrichments = await Promise.all(exactMatches.map(async (match) => loadMatchedPurchaseEnrichment(pool, { ...loaderOptions, matchKey: match.matchKey })));
-  const result = buildMatchedPurchaseOrchestrationPreview({ matching: { ...matching, matches: exactMatches }, enrichments, selectionFailure, approvedMatchKey });
+  const result = buildMatchedPurchaseOrchestrationPreview({
+    matching: { ...matching, matches: exactMatches }, enrichments, selectionFailure, approvedMatchKey, automaticPolicy,
+  });
   logMatchedPurchaseOrchestrationPreview(result, loaderOptions, options.logger);
   return result;
 }

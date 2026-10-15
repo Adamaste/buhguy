@@ -128,6 +128,9 @@ export function projectBankCashFlowTransaction(row, { scopeKey = null } = {}) {
     accountResolutionState: account.accountResolutionState,
     accountResolutionProvenance: account.accountResolutionProvenance,
     accountIdentityStatus: account.accountIdentityStatus,
+    ...(row.sourceProviderBindingVerified !== undefined
+      ? { sourceProviderBindingVerified: row.sourceProviderBindingVerified === true }
+      : {}),
   };
 }
 
@@ -152,7 +155,16 @@ export function projectBankCashFlowTransactions(rows, options = {}) {
   return { projections, summary };
 }
 
-export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null } = {}) {
+function normalizeBankIngestedAfter(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw Object.assign(new Error('bank ingestion cutoff is invalid'), { code: 'BANK_INGESTED_AFTER_INVALID' });
+  }
+  return new Date(Date.parse(value)).toISOString();
+}
+
+export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null, bankIngestedAfter = null } = {}) {
+  const ingestedAfter = normalizeBankIngestedAfter(bankIngestedAfter);
   const result = await pool.query(`
     WITH source_scopes AS (
       SELECT bs.id AS bank_source_id,
@@ -168,6 +180,14 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
            bt.normalization_status AS "normalizationStatus", bt.evidence_quality AS "evidenceQuality",
            r.financial_account_id AS "financialAccountId", r.resolution_state AS "accountResolutionState",
            r.provenance AS "accountResolutionProvenance", a_scope.scope_key AS "financialAccountScopeKey",
+           EXISTS (
+             SELECT 1 FROM bank_source_provider_account_bindings binding
+             WHERE binding.bank_source_id=eo.bank_source_id
+               AND binding.provider=eo.ingestion_metadata->>'provider'
+               AND binding.financial_account_id=r.financial_account_id
+               AND binding.active
+               AND binding.provenance='USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT'
+           ) AS "sourceProviderBindingVerified",
            ss.source_scope_keys AS "sourceScopeKeys"
     FROM bank_transactions bt
     JOIN bank_event_observations eo ON eo.id = bt.observation_id
@@ -178,6 +198,7 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
     WHERE ($1::text IS NULL OR $1 = ANY(ss.source_scope_keys))
       AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
-    ORDER BY bt.id`, [scopeKey, from, to]);
+      AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
+    ORDER BY bt.id`, [scopeKey, from, to, ingestedAfter]);
   return projectBankCashFlowTransactions(result.rows, { scopeKey });
 }

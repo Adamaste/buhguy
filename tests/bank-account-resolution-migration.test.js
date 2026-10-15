@@ -49,3 +49,19 @@ test('source/provider binding migration is scoped, active-unique, and runtime re
   assert.match(sql, /GRANT SELECT \(bank_source_id, provider, financial_account_id, active\)/);
   assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE) ON public\.bank_source_provider_account_bindings/i);
 });
+
+test('automatic purchase matching migration grants only required column reads', async () => {
+  const sql = await readFile(new URL('../db/migrations/020_runtime_payment_instrument_account_lookup.sql', import.meta.url), 'utf8');
+  const expected = [
+    /GRANT SELECT \(financial_account_id\) ON public\.payment_instruments TO receipt_collector/,
+    /GRANT SELECT \(amount, currency, occurred_at, event_type, direction, normalization_status, evidence_quality\) ON public\.bank_transactions TO receipt_collector/,
+    /GRANT SELECT \(bank_transaction_id, financial_account_id, resolution_state, provenance\) ON public\.bank_transaction_account_resolution TO receipt_collector/,
+    /GRANT SELECT \(provenance\) ON public\.bank_source_provider_account_bindings TO receipt_collector/,
+    /GRANT SELECT \(currency\) ON public\.financial_accounts TO receipt_collector/,
+    /GRANT SELECT \(id, scope_id, bank_transaction_id, receipt_id, match_key\) ON public\.bank_receipt_matches TO receipt_collector/,
+  ];
+  for (const pattern of expected) assert.match(sql, pattern);
+  assert.doesNotMatch(sql, /GRANT SELECT\s+ON public\./i);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
+  assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
+});

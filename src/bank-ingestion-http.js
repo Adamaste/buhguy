@@ -93,6 +93,8 @@ export function createBankIngestionServer({
               canaryScopeKey: matchedPurchaseCanary.canaryScopeKey,
               scopeKey: resolved.scopeKey,
               approvedMatchKey: matchedPurchaseCanary.approvedMatchKey,
+              automaticPolicy: matchedPurchaseCanary.automaticPolicy ?? null,
+              bankIngestedAfter: matchedPurchaseCanary.bankIngestedAfter ?? null,
             });
             reconciliation = safeReconciliationResult(summary);
           }

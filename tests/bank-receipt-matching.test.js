@@ -6,6 +6,7 @@ import { projectBankCashFlowTransaction } from '../src/bank-cash-flow-projection
 import { projectBankBusinessEventCandidate } from '../src/bank-business-event-candidate-projection.js';
 import {
   BANK_RECEIPT_MATCHING_STATUSES,
+  BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES,
   BANK_RECEIPT_MATCHING_VERSION,
   loadBankReceiptMatching,
   matchBankReceipts,
@@ -209,6 +210,41 @@ test('one-to-one matching fails closed for ambiguity and preserves independent p
   );
   assert.equal(twoBanksOneReceipt.bankStatuses.every((row) => row.status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS), true);
   assert.equal(twoBanksOneReceipt.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+});
+
+test('automatic policy deterministically selects the nearest globally one-to-one pairs', () => {
+  const banks = [
+    bankEntry({ bankTransactionId: 110, occurredAt: '2026-10-05T10:00:00.000Z', sourceProviderBindingVerified: true }),
+    bankEntry({ bankTransactionId: 111, occurredAt: '2026-10-05T10:04:00.000Z', sourceProviderBindingVerified: true }),
+  ];
+  const receipts = [
+    receiptRow({ receiptId: 220, dateTime: '2026-10-05T10:00:30.000Z' }),
+    receiptRow({ receiptId: 221, dateTime: '2026-10-05T10:04:00.000Z', normalizedContentSha256: 'b'.repeat(64) }),
+  ];
+  const result = matchBankReceipts(banks, ownership(), receipts, {
+    internalTransferMaxTimeDeltaMs: 5000,
+    receiptMaxTimeDeltaMs: 300000,
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+    requireSourceProviderBinding: true,
+  });
+  assert.equal(result.matches.length, 2);
+  assert.deepEqual(result.matches.map((row) => [row.bank.bankTransactionId, row.receipt.receiptId]).sort(), [[110, 220], [111, 221]]);
+  assert.equal(result.matches.every((row) => row.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC), true);
+  assert.equal(result.matches.every((row) => row.bank.sourceProviderBindingVerified === true), true);
+  assert.equal(new Set(result.matches.map((row) => row.bank.bankTransactionId)).size, 2);
+  assert.equal(new Set(result.matches.map((row) => row.receipt.receiptId)).size, 2);
+});
+
+test('automatic matching does not guess when source/provider binding evidence is absent', () => {
+  const result = matchBankReceipts([bankEntry({ sourceProviderBindingVerified: false })], ownership(), [receiptRow()], {
+    internalTransferMaxTimeDeltaMs: 5000,
+    receiptMaxTimeDeltaMs: 300000,
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+    requireSourceProviderBinding: true,
+  });
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.bankStatuses[0].reasonCode, 'BANK_SOURCE_PROVIDER_BINDING_UNPROVEN');
+  assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
 });
 
 test('receipt statuses preserve ids and matcher-owned reasons at every status', () => {

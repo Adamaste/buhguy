@@ -206,6 +206,7 @@ async function loadTransactionContext(client, transactionId) {
 
 async function loadIngestionContext(client, transactionId) {
   const result = await client.query(`SELECT bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
+      bt.event_type AS "eventType",bt.direction,bt.normalization_status AS "normalizationStatus",bt.evidence_quality AS "evidenceQuality",
       eo.bank_source_id AS "bankSourceId", eo.ingestion_metadata->>'provider' AS provider,
       COALESCE(array_agg(DISTINCT p.scope_id) FILTER (WHERE p.scope_id IS NOT NULL), ARRAY[]::bigint[]) AS scope_ids
     FROM bank_transactions bt
@@ -250,7 +251,7 @@ export async function resolveNewBankTransactionIdentity(client, { bankTransactio
   const scopeId = Number(context.scope_ids[0]);
   if (context.accountReferenceKind === 'MASKED_CARD') {
     const candidates = context.provider && context.accountReference
-      ? (await client.query(`SELECT DISTINCT r.payment_instrument_id
+      ? (await client.query(`SELECT DISTINCT r.payment_instrument_id, pi.financial_account_id
           FROM bank_account_references r
           JOIN payment_instruments pi ON pi.id=r.payment_instrument_id
           WHERE r.provider=$1 AND r.reference_kind='MASKED_CARD' AND r.reference_value=$2 AND pi.scope_id=$3
@@ -260,7 +261,20 @@ export async function resolveNewBankTransactionIdentity(client, { bankTransactio
     const paymentInstrument = candidates.length === 1
       ? await insertIngestionInstrumentResolution(client, { transactionId, paymentInstrumentId: Number(candidates[0].payment_instrument_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped payment instrument reference candidate' })
       : await insertIngestionInstrumentResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, card reference, and scope candidates' : 'No provider-scoped payment instrument reference candidate' });
-    const account = await insertIngestionAccountResolution(client, { transactionId, provenance: 'INGESTION_CARD_ACCOUNT_UNRESOLVED', reason: 'Card identity does not prove an underlying financial account' });
+    const bindingAccountId = await findActiveSourceProviderAccountBinding(client, { bankSourceId: context.bankSourceId, provider: context.provider, scopeId });
+    const instrumentConflicts = bindingAccountId != null && candidates.some((candidate) => candidate.financial_account_id != null
+      && Number(candidate.financial_account_id) !== bindingAccountId);
+    const account = bindingAccountId != null && !instrumentConflicts
+      ? await insertIngestionAccountResolution(client, {
+        transactionId, financialAccountId: bindingAccountId, resolutionState: 'MANUAL',
+        provenance: SOURCE_PROVIDER_BINDING_PROVENANCE,
+        reason: 'Explicit active source/provider account binding; card reference is not used as account proof',
+      })
+      : await insertIngestionAccountResolution(client, {
+        transactionId,
+        provenance: instrumentConflicts ? 'SOURCE_PROVIDER_BINDING_INSTRUMENT_CONFLICT' : 'INGESTION_CARD_ACCOUNT_UNRESOLVED',
+        reason: instrumentConflicts ? 'Payment instrument account conflicts with the source/provider binding' : 'Card identity does not prove an underlying financial account',
+      });
     return { account, paymentInstrument };
   }
 
@@ -271,17 +285,43 @@ export async function resolveNewBankTransactionIdentity(client, { bankTransactio
         WHERE r.provider=$1 AND r.reference_kind=$2 AND r.reference_value=$3 AND a.scope_id=$4
         ORDER BY r.financial_account_id`, [context.provider, context.accountReferenceKind, context.accountReference, scopeId])).rows
     : [];
+  const bindingAccountId = await findActiveSourceProviderAccountBinding(client, { bankSourceId: context.bankSourceId, provider: context.provider, scopeId });
   const ambiguous = candidates.length > 1;
-  const account = candidates.length === 1
-    ? await insertIngestionAccountResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' })
+  const referenceBindingConflict = candidates.length === 1 && bindingAccountId != null
+    && Number(candidates[0].financial_account_id) !== bindingAccountId;
+  const boundUnclassifiedReferencePurchase = context.accountReference != null
+    && context.accountReferenceKind == null
+    && context.eventType === 'PURCHASE'
+    && context.direction === 'DEBIT'
+    && context.normalizationStatus === 'READY'
+    && context.evidenceQuality === 'EXACT'
+    && bindingAccountId != null;
+  const account = referenceBindingConflict
+    ? await insertIngestionAccountResolution(client, { transactionId, provenance: 'SOURCE_PROVIDER_BINDING_REFERENCE_CONFLICT', reason: 'Observed provider reference conflicts with the active source/provider binding' })
+    : candidates.length === 1
+      ? await insertIngestionAccountResolution(client, { transactionId, financialAccountId: Number(candidates[0].financial_account_id), resolutionState: 'EXACT', provenance: 'OBSERVED_PROVIDER_REFERENCE', reason: 'One provider-scoped account reference candidate' })
+      : boundUnclassifiedReferencePurchase
+        ? await insertIngestionAccountResolution(client, {
+          transactionId, financialAccountId: bindingAccountId, resolutionState: 'MANUAL',
+          provenance: SOURCE_PROVIDER_BINDING_PROVENANCE,
+          reason: 'Explicit active source/provider account binding for an exact normalized purchase; untyped reference is not used as account proof',
+        })
     : context.accountReference == null && context.accountReferenceKind == null
-      ? await resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId })
+      ? await resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId, bindingAccountId })
+      : candidates.length === 0 && bindingAccountId != null && REFERENCE_KINDS.has(context.accountReferenceKind)
+        ? await insertIngestionAccountResolution(client, {
+          transactionId, financialAccountId: bindingAccountId, resolutionState: 'MANUAL',
+          provenance: SOURCE_PROVIDER_BINDING_PROVENANCE,
+          reason: 'Explicit active source/provider account binding; no account-reference candidate exists',
+        })
       : await insertIngestionAccountResolution(client, { transactionId, provenance: ambiguous ? 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS' : 'OBSERVED_PROVIDER_REFERENCE_UNRESOLVED', reason: ambiguous ? 'Ambiguous provider, reference kind, and scope candidates' : context.accountReferenceKind ? 'No provider, reference kind, and scope candidate' : 'Observed transaction has no proven account reference' });
   return { account, paymentInstrument: null };
 }
 
-async function resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId }) {
-  const accountId = await findActiveSourceProviderAccountBinding(client, { bankSourceId: context.bankSourceId, provider: context.provider, scopeId });
+async function resolveIngestionBindingOrUnknown(client, { transactionId, context, scopeId, bindingAccountId = undefined }) {
+  const accountId = bindingAccountId === undefined
+    ? await findActiveSourceProviderAccountBinding(client, { bankSourceId: context.bankSourceId, provider: context.provider, scopeId })
+    : bindingAccountId;
   if (accountId != null) return insertIngestionAccountResolution(client, {
     transactionId, financialAccountId: accountId, resolutionState: 'MANUAL',
     provenance: SOURCE_PROVIDER_BINDING_PROVENANCE,
