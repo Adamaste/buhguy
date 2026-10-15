@@ -337,7 +337,9 @@ integration('bank ingestion works under the restricted runtime role without extr
     });
     assert.equal(cardEvent.identityResolution.paymentInstrument.resolutionState, 'EXACT');
     assert.equal(cardEvent.identityResolution.paymentInstrument.paymentInstrumentId, Number(card.id));
-    assert.equal(cardEvent.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(cardEvent.identityResolution.account.resolutionState, 'MANUAL');
+    assert.equal(cardEvent.identityResolution.account.financialAccountId, Number(account.id));
+    assert.equal(cardEvent.identityResolution.account.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
     await assert.rejects(() => createFinancialAccount(runtime, { institution: 'Forbidden', displayName: 'Forbidden account' }), /permission denied/);
     await assert.rejects(() => createPaymentInstrument(runtime, { scopeKey: 'default', instrumentType: 'CARD', displayName: 'Forbidden card' }), /permission denied/);
     await assert.rejects(() => createBankAccountReference(runtime, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****9999' }), /permission denied/);
@@ -349,6 +351,10 @@ integration('bank ingestion works under the restricted runtime role without extr
       has_table_privilege('receipt_collector','public.bank_device_credentials','UPDATE') AS credential_table_update,
       has_column_privilege('receipt_collector','public.bank_device_credentials','last_used_at','UPDATE') AS credential_last_used_update,
       has_table_privilege('receipt_collector','public.bank_transactions','SELECT') AS transactions_table_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','event_type','SELECT') AS transactions_event_type_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','direction','SELECT') AS transactions_direction_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','normalization_status','SELECT') AS transactions_normalization_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','evidence_quality','SELECT') AS transactions_quality_select,
       has_table_privilege('receipt_collector','public.bank_event_observations','UPDATE') AS observations_update,
       has_table_privilege('receipt_collector','public.bank_event_observations','DELETE') AS observations_delete,
       has_table_privilege('receipt_collector','public.bank_transactions','DELETE') AS transactions_delete,
@@ -358,6 +364,10 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.credential_table_update, false);
     assert.equal(privilegeRows.credential_last_used_update, true);
     assert.equal(privilegeRows.transactions_table_select, false);
+    assert.equal(privilegeRows.transactions_event_type_select, true);
+    assert.equal(privilegeRows.transactions_direction_select, true);
+    assert.equal(privilegeRows.transactions_normalization_select, true);
+    assert.equal(privilegeRows.transactions_quality_select, true);
     assert.equal(privilegeRows.observations_update, false);
     assert.equal(privilegeRows.observations_delete, false);
     assert.equal(privilegeRows.transactions_delete, false);
@@ -372,6 +382,14 @@ integration('bank ingestion works under the restricted runtime role without extr
       binding_insert: false,
       binding_update: false,
       binding_delete: false
+    });
+    const instrumentPrivileges = (await admin.query("SELECT has_column_privilege('receipt_collector','public.payment_instruments','id','SELECT') AS id_select, has_column_privilege('receipt_collector','public.payment_instruments','scope_id','SELECT') AS scope_select, has_column_privilege('receipt_collector','public.payment_instruments','financial_account_id','SELECT') AS account_select, has_column_privilege('receipt_collector','public.payment_instruments','display_name','SELECT') AS display_name_select, has_table_privilege('receipt_collector','public.payment_instruments','SELECT') AS table_select")).rows[0];
+    assert.deepEqual(instrumentPrivileges, {
+      id_select: true,
+      scope_select: true,
+      account_select: true,
+      display_name_select: false,
+      table_select: false,
     });
   } finally {
     if (runtime) await runtime.end();

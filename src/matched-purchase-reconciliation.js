@@ -8,18 +8,23 @@ import {
 } from './matched-purchase-reconciliation-constants.js';
 import {
   MATCHED_PURCHASE_ORCHESTRATION_VERSION,
+  MATCHED_PURCHASE_AUTO_POLICY,
   ORCHESTRATION_DECISIONS,
   previewMatchedPurchaseOrchestration,
   validateMatchedPurchaseMatchKey,
 } from './matched-purchase-orchestration.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
 import { persistMatchedPurchase } from './matched-purchase-persistence.js';
 import { deriveAccountingCatchupScopeKeys } from './source-sync-cycle.js';
 
 export const MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV = 'MATCHED_PURCHASE_RECONCILIATION_ENABLED';
 export const MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV = 'MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE';
 export const MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV = 'MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY';
+export const MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY_ENV = 'MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY';
+export const MATCHED_PURCHASE_RECONCILIATION_START_AT_ENV = 'MATCHED_PURCHASE_RECONCILIATION_START_AT';
 // The per-call write cap is reinforced across both runtime processes by one configured approved key.
 export const MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES = 1;
+export const MATCHED_PURCHASE_RECONCILIATION_AUTO_MAX_WRITES = 25;
 
 const SAFE_ERROR_CODE = /^[A-Z0-9_]{1,64}$/;
 
@@ -35,6 +40,12 @@ export function readMatchedPurchaseReconciliationOptIn(env = process.env) {
       : null,
     approvedMatchKey: typeof env[MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV] === 'string'
       ? env[MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV].trim().toLowerCase() || null
+      : null,
+    automaticPolicy: typeof env[MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY_ENV] === 'string'
+      ? env[MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY_ENV].trim() || null
+      : null,
+    bankIngestedAfter: typeof env[MATCHED_PURCHASE_RECONCILIATION_START_AT_ENV] === 'string'
+      ? env[MATCHED_PURCHASE_RECONCILIATION_START_AT_ENV].trim() || null
       : null,
   };
 }
@@ -87,14 +98,21 @@ function validDecisionMatchKey(value) {
   try { return typeof value === 'string' && validateMatchedPurchaseMatchKey(value) === value; } catch { return false; }
 }
 
-function validateRunOptions({ enabled, scopeKey, canaryScopeKey, approvedMatchKey, from, to, internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs }) {
+function validateRunOptions({ enabled, scopeKey, canaryScopeKey, approvedMatchKey, automaticPolicy, bankIngestedAfter, from, to, internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs }) {
   if (enabled !== true) return 'OPT_IN_DISABLED';
   if (typeof scopeKey !== 'string' || !scopeKey.trim() || typeof canaryScopeKey !== 'string' || !canaryScopeKey.trim()) return 'CANARY_SCOPE_REQUIRED';
   if (scopeKey !== canaryScopeKey) return 'CANARY_SCOPE_MISMATCH';
-  if (!validDecisionMatchKey(approvedMatchKey)) return 'APPROVED_MATCH_KEY_REQUIRED';
+  if (automaticPolicy != null && automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY) return 'AUTOMATION_POLICY_UNSUPPORTED';
+  if (automaticPolicy && approvedMatchKey) return 'AUTOMATION_APPROVAL_CONFLICT';
+  if (!automaticPolicy && !validDecisionMatchKey(approvedMatchKey)) return 'APPROVED_MATCH_KEY_REQUIRED';
   if (typeof from !== 'string' || typeof to !== 'string' || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) return 'BOUNDED_PERIOD_REQUIRED';
   const duration = Date.parse(to) - Date.parse(from);
   if (!Number.isFinite(duration) || duration <= 0 || duration > MAX_PREVIEW_PERIOD_MS) return 'BOUNDED_PERIOD_INVALID';
+  if (automaticPolicy) {
+    if (typeof bankIngestedAfter !== 'string' || !Number.isFinite(Date.parse(bankIngestedAfter))
+      || new Date(Date.parse(bankIngestedAfter)).toISOString() !== bankIngestedAfter) return 'AUTOMATION_START_AT_REQUIRED';
+    if (Date.parse(bankIngestedAfter) > Date.parse(to)) return 'AUTOMATION_START_AT_AFTER_PERIOD';
+  }
   if (!Number.isSafeInteger(internalTransferMaxTimeDeltaMs) || internalTransferMaxTimeDeltaMs <= 0
     || !Number.isSafeInteger(receiptMaxTimeDeltaMs) || receiptMaxTimeDeltaMs <= 0) return 'MATCH_WINDOW_INVALID';
   return null;
@@ -149,8 +167,10 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
   try {
     const projection = await loadPreviewReadOnly(pool, preview, {
       scopeKey: runOptions.scopeKey,
-      matchKey: runOptions.approvedMatchKey,
-      approvedMatchKey: runOptions.approvedMatchKey,
+      matchKey: runOptions.automaticPolicy ? null : runOptions.approvedMatchKey,
+      approvedMatchKey: runOptions.automaticPolicy ? null : runOptions.approvedMatchKey,
+      automaticPolicy: runOptions.automaticPolicy ?? null,
+      bankIngestedAfter: runOptions.bankIngestedAfter ?? null,
       from: new Date(runOptions.from).toISOString(),
       to: new Date(runOptions.to).toISOString(),
       internalTransferMaxTimeDeltaMs: runOptions.internalTransferMaxTimeDeltaMs,
@@ -169,7 +189,12 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
     if (projection.decisions.some((decision) => !decision
       || decision.scopeKey !== runOptions.scopeKey
       || !actions.has(decision.orchestrationAction)
-      || !validDecisionMatchKey(decision.matchKey))) {
+      || !validDecisionMatchKey(decision.matchKey)
+      || (runOptions.automaticPolicy && decision.orchestrationAction === ORCHESTRATION_DECISIONS.PERSIST_REQUIRED
+        && (decision.approvalBasis !== runOptions.automaticPolicy
+          || decision.automaticPolicy !== runOptions.automaticPolicy
+          || decision.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+          || decision.sourceProviderBindingVerified !== true)))) {
       result.status = 'ERROR';
       result.errors = 1;
       result.reasonCode = 'PREVIEW_CONTRACT_INVALID';
@@ -191,7 +216,7 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
     if (safeSummary.persistRequired !== writable.length
       || safeSummary.alreadyPersisted !== reusable.length
       || safeSummary.blockedMatchedPairs !== blockedDecisions.length
-      || writable.some((decision) => decision.matchKey !== runOptions.approvedMatchKey)) {
+      || writable.some((decision) => !runOptions.automaticPolicy && decision.matchKey !== runOptions.approvedMatchKey)) {
       result.status = 'ERROR';
       result.errors = 1;
       result.reasonCode = 'PREVIEW_CONTRACT_INVALID';
@@ -205,23 +230,34 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
       unmatchedReceipts: safeSummary.unmatchedReceipts,
     });
     result.reused = reusable.length;
-    result.deferred = Math.max(0, writable.length - MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES);
-
-    const selected = writable.find((decision) => decision.matchKey === runOptions.approvedMatchKey);
-    if (selected) {
-      if (typeof selected.matchKey !== 'string' || selected.scopeKey !== options.scopeKey) {
+    const writeLimit = runOptions.automaticPolicy
+      ? MATCHED_PURCHASE_RECONCILIATION_AUTO_MAX_WRITES
+      : MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES;
+    const selected = runOptions.automaticPolicy
+      ? writable.slice(0, writeLimit)
+      : writable.filter((decision) => decision.matchKey === runOptions.approvedMatchKey).slice(0, writeLimit);
+    result.deferred = Math.max(0, writable.length - selected.length);
+    for (const decision of selected) {
+      const selectedMatchKey = decision.matchKey;
+      if (typeof selectedMatchKey !== 'string' || decision.scopeKey !== options.scopeKey) {
         result.status = 'ERROR';
-        result.errors = 1;
-        result.reasonCode = 'MATCH_SELECTION_INVALID';
-        return result;
+        result.errors += 1;
+        result.reasonCode ??= 'MATCH_SELECTION_INVALID';
+        continue;
       }
       try {
         const persisted = await persist(pool, {
           scopeKey: runOptions.scopeKey,
           from: new Date(runOptions.from).toISOString(),
           to: new Date(runOptions.to).toISOString(),
-          matchKey: selected.matchKey,
-          approvedMatchKey: runOptions.approvedMatchKey,
+          matchKey: selectedMatchKey,
+          approvedMatchKey: runOptions.automaticPolicy ? null : runOptions.approvedMatchKey,
+          automaticPolicy: runOptions.automaticPolicy ?? null,
+          bankIngestedAfter: runOptions.bankIngestedAfter ?? null,
+          ...(runOptions.automaticPolicy ? {
+            assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+            requireSourceProviderBinding: true,
+          } : {}),
           internalTransferMaxTimeDeltaMs: runOptions.internalTransferMaxTimeDeltaMs,
           receiptMaxTimeDeltaMs: runOptions.receiptMaxTimeDeltaMs,
         });
@@ -230,7 +266,7 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
         else throw Object.assign(new Error('writer result contract is invalid'), { code: 'WRITER_RESULT_INVALID' });
       } catch (error) {
         result.errors += 1;
-        result.reasonCode = safeErrorCode(error);
+        result.reasonCode ??= safeErrorCode(error);
       }
     }
     if (result.errors) result.status = 'ERROR';
@@ -265,6 +301,8 @@ export async function runAccountingCatchupsWithMatchedPurchaseCanary({
         scopeKey,
         canaryScopeKey: canary.canaryScopeKey,
         approvedMatchKey: canary.approvedMatchKey,
+        automaticPolicy: canary.automaticPolicy ?? null,
+        bankIngestedAfter: canary.bankIngestedAfter ?? null,
         internalTransferMaxTimeDeltaMs: APPROVED_INTERNAL_TRANSFER_WINDOW_MS,
         receiptMaxTimeDeltaMs: APPROVED_RECEIPT_WINDOW_MS,
       }));

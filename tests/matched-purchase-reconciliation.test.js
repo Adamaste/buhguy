@@ -5,12 +5,17 @@ import {
   MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV,
   MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV,
   MATCHED_PURCHASE_RECONCILIATION_MAX_WRITES,
+  MATCHED_PURCHASE_RECONCILIATION_AUTO_MAX_WRITES,
+  MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY_ENV,
+  MATCHED_PURCHASE_RECONCILIATION_START_AT_ENV,
   matchedPurchaseReconciliationWindow,
   readMatchedPurchaseReconciliationOptIn,
   runAccountingCatchupsWithMatchedPurchaseCanary,
   runBoundedMatchedPurchaseReconciliation,
 } from '../src/matched-purchase-reconciliation.js';
 import { MATCHED_PURCHASE_ORCHESTRATION_VERSION } from '../src/matched-purchase-orchestration.js';
+import { MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from '../src/bank-receipt-matching.js';
 
 const now = new Date('2026-10-12T12:00:00.000Z');
 const window = matchedPurchaseReconciliationWindow(now);
@@ -45,16 +50,27 @@ const projection = (overrides = {}) => ({
 });
 
 test('canary opt-in is exact and defaults to disabled', () => {
-  assert.deepEqual(readMatchedPurchaseReconciliationOptIn({}), { enabled: false, canaryScopeKey: null, approvedMatchKey: null });
+  assert.deepEqual(readMatchedPurchaseReconciliationOptIn({}), {
+    enabled: false, canaryScopeKey: null, approvedMatchKey: null, automaticPolicy: null, bankIngestedAfter: null,
+  });
   assert.deepEqual(readMatchedPurchaseReconciliationOptIn({
     [MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV]: 'TRUE',
     [MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV]: ' scope-a ',
-  }), { enabled: false, canaryScopeKey: 'scope-a', approvedMatchKey: null });
+  }), { enabled: false, canaryScopeKey: 'scope-a', approvedMatchKey: null, automaticPolicy: null, bankIngestedAfter: null });
   assert.deepEqual(readMatchedPurchaseReconciliationOptIn({
     [MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV]: 'true',
     [MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV]: ' scope-a ',
     [MATCHED_PURCHASE_RECONCILIATION_APPROVED_MATCH_KEY_ENV]: ` ${approvedMatchKey.toUpperCase()} `,
-  }), { enabled: true, canaryScopeKey: 'scope-a', approvedMatchKey });
+  }), { enabled: true, canaryScopeKey: 'scope-a', approvedMatchKey, automaticPolicy: null, bankIngestedAfter: null });
+  assert.deepEqual(readMatchedPurchaseReconciliationOptIn({
+    [MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV]: 'true',
+    [MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV]: 'scope-a',
+    [MATCHED_PURCHASE_RECONCILIATION_AUTO_POLICY_ENV]: MATCHED_PURCHASE_AUTO_POLICY,
+    [MATCHED_PURCHASE_RECONCILIATION_START_AT_ENV]: '2026-10-01T00:00:00.000Z',
+  }), {
+    enabled: true, canaryScopeKey: 'scope-a', approvedMatchKey: null,
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, bankIngestedAfter: '2026-10-01T00:00:00.000Z',
+  });
 });
 
 test('rolling reconciliation window is bounded to the existing approved maximum', () => {
@@ -98,6 +114,100 @@ test('enabled runner without an explicitly approved match key stops before previ
   assert.equal(result.status, 'BLOCKED');
   assert.equal(result.reasonCode, 'APPROVED_MATCH_KEY_REQUIRED');
   assert.equal(calls, 0);
+});
+
+test('automatic policy requires explicit activation scope and a canonical new-bank cutoff', async () => {
+  const base = {
+    enabled: true,
+    scopeKey: 'scope-a',
+    canaryScopeKey: 'scope-a',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    ...window,
+  };
+  const missingCutoff = await runBoundedMatchedPurchaseReconciliation({}, {
+    ...base,
+    preview: async () => projection(),
+  });
+  assert.equal(missingCutoff.reasonCode, 'AUTOMATION_START_AT_REQUIRED');
+  const invalidCutoff = await runBoundedMatchedPurchaseReconciliation({}, {
+    ...base,
+    bankIngestedAfter: '2026-10-01',
+    preview: async () => projection(),
+  });
+  assert.equal(invalidCutoff.reasonCode, 'AUTOMATION_START_AT_REQUIRED');
+  const noKey = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
+    ...base,
+    bankIngestedAfter: '2026-10-01T00:00:00.000Z',
+    preview: async () => projection(),
+  });
+  assert.equal(noKey.status, 'COMPLETED');
+  assert.equal(noKey.persisted, 0);
+  assert.equal(MATCHED_PURCHASE_RECONCILIATION_AUTO_MAX_WRITES, 25);
+});
+
+test('approved automatic policy writes multiple verified decisions without per-purchase keys', async () => {
+  const pool = readOnlyPool();
+  const cutoff = '2026-10-01T00:00:00.000Z';
+  const keys = ['a'.repeat(64), 'b'.repeat(64)];
+  const persisted = [];
+  const result = await runBoundedMatchedPurchaseReconciliation(pool, {
+    enabled: true,
+    scopeKey: 'canary-scope',
+    canaryScopeKey: 'canary-scope',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: cutoff,
+    ...window,
+    preview: async (_pool, options) => {
+      assert.equal(options.matchKey, null);
+      assert.equal(options.approvedMatchKey, null);
+      assert.equal(options.automaticPolicy, MATCHED_PURCHASE_AUTO_POLICY);
+      assert.equal(options.bankIngestedAfter, cutoff);
+      return projection({
+        decisions: keys.map((matchKey) => ({
+          ...decision('PERSIST_REQUIRED', matchKey),
+          approvalBasis: MATCHED_PURCHASE_AUTO_POLICY,
+          automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+          assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+          sourceProviderBindingVerified: true,
+        })),
+        summary: { ...projection().summary, persistRequired: 2 },
+      });
+    },
+    persist: async (_pool, options) => {
+      assert.equal(options.approvedMatchKey, null);
+      assert.equal(options.automaticPolicy, MATCHED_PURCHASE_AUTO_POLICY);
+      assert.equal(options.assignmentPolicy, BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC);
+      assert.equal(options.requireSourceProviderBinding, true);
+      assert.equal(options.bankIngestedAfter, cutoff);
+      persisted.push(options.matchKey);
+      return { outcome: 'PERSISTED' };
+    },
+  });
+  assert.deepEqual(persisted, keys);
+  assert.equal(result.persisted, 2);
+  assert.equal(result.errors, 0);
+  assert.equal(result.status, 'COMPLETED');
+  assert.equal(pool.statements[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal(pool.statements.at(-1), 'ROLLBACK');
+});
+
+test('automatic policy rejects a candidate missing binding proof and keeps processing other candidates', async () => {
+  const persisted = [];
+  const result = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
+    enabled: true, scopeKey: 'scope-a', canaryScopeKey: 'scope-a',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: '2026-10-01T00:00:00.000Z', ...window,
+    preview: async () => projection({
+      decisions: [
+        { ...decision('PERSIST_REQUIRED', 'c'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC, sourceProviderBindingVerified: false },
+        { ...decision('PERSIST_REQUIRED', 'd'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC, sourceProviderBindingVerified: true },
+      ],
+      summary: { ...projection().summary, persistRequired: 2 },
+    }),
+    persist: async (_pool, options) => { persisted.push(options.matchKey); return { outcome: 'PERSISTED' }; },
+  });
+  assert.equal(result.reasonCode, 'PREVIEW_CONTRACT_INVALID');
+  assert.deepEqual(persisted, []);
 });
 
 test('only one deterministic PERSIST_REQUIRED decision is sent to the transactional writer', async () => {

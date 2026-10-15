@@ -122,6 +122,9 @@ function safeProvenance(journal) {
     accountIdentityStatus: source.accountIdentityStatus ?? null,
     accountResolutionState: source.accountResolutionState ?? null,
     accountResolutionProvenance: source.accountResolutionProvenance ?? null,
+    ...(source.sourceProviderBindingVerified !== undefined
+      ? { sourceProviderBindingVerified: source.sourceProviderBindingVerified === true }
+      : {}),
   };
 }
 

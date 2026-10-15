@@ -5,6 +5,9 @@ import { refreshCertificationForEvents } from './certification.js';
 import { businessEventEvidenceSemanticKey, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
 import { STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION } from './standalone-purchase.js';
 import { FNS_RECEIPT_CURRENCY_MODEL_VERSION, FNS_RECEIPT_CURRENCY_STATUSES, resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
+import { MATCHED_PURCHASE_AUTO_POLICY } from './matched-purchase-orchestration.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
+import { SOURCE_PROVIDER_BINDING_PROVENANCE } from './bank-source-provider-binding.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -76,7 +79,45 @@ async function lockedScope(client, scopeKey) {
   return result.rows[0];
 }
 
-async function lockInputs(client, scope, fields) {
+async function assertAutomaticSourceProviderBinding(client, scope, fields, options) {
+  if (!options.automaticPolicy) return;
+  if (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.requireSourceProviderBinding !== true
+    || typeof options.bankIngestedAfter !== 'string'
+    || !Number.isFinite(Date.parse(options.bankIngestedAfter))) fail('AUTO_POLICY_INVALID');
+  const observation = (await client.query(`SELECT eo.bank_source_id,eo.created_at,eo.ingestion_metadata->>'provider' AS provider
+    FROM bank_event_observations eo
+    JOIN bank_sources bs ON bs.id=eo.bank_source_id
+    WHERE eo.id=$1
+    FOR UPDATE OF bs`, [fields.observationId])).rows[0];
+  if (!observation || !observation.provider || new Date(observation.created_at) < new Date(options.bankIngestedAfter)) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
+  const sourceScopes = (await client.query(`SELECT DISTINCT p.scope_id
+    FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
+    WHERE sp.bank_source_id=$1 AND sp.relation_type='OWNER'
+    ORDER BY p.scope_id`, [observation.bank_source_id])).rows;
+  if (sourceScopes.length !== 1 || Number(sourceScopes[0].scope_id) !== Number(scope.id)) fail('AUTO_BANK_SCOPE_CHANGED');
+  const resolution = (await client.query(`SELECT r.financial_account_id,r.resolution_state,r.provenance,
+      a.scope_id AS account_scope_id,a.currency AS account_currency
+    FROM bank_transaction_account_resolution r
+    JOIN financial_accounts a ON a.id=r.financial_account_id
+    WHERE r.bank_transaction_id=$1
+    FOR UPDATE OF r,a`, [fields.bankTransactionId])).rows[0];
+  if (!resolution || Number(resolution.financial_account_id) !== fields.financialAccountId
+    || Number(resolution.account_scope_id) !== Number(scope.id) || resolution.account_currency !== fields.currency
+    || !(resolution.resolution_state === 'EXACT' && resolution.provenance === 'OBSERVED_PROVIDER_REFERENCE')
+      && !(resolution.resolution_state === 'MANUAL' && resolution.provenance === SOURCE_PROVIDER_BINDING_PROVENANCE)) {
+    fail('AUTO_ACCOUNT_RESOLUTION_CHANGED');
+  }
+  const bindings = (await client.query(`SELECT financial_account_id,provenance
+    FROM bank_source_provider_account_bindings
+    WHERE bank_source_id=$1 AND provider=$2 AND active
+    FOR UPDATE`, [observation.bank_source_id, observation.provider])).rows;
+  if (bindings.length !== 1 || Number(bindings[0].financial_account_id) !== fields.financialAccountId
+    || bindings[0].provenance !== SOURCE_PROVIDER_BINDING_PROVENANCE) fail('AUTO_SOURCE_PROVIDER_BINDING_CHANGED');
+}
+
+async function lockInputs(client, scope, fields, options = {}) {
   const tx = await client.query('SELECT id,observation_id,occurred_at,amount,currency FROM bank_transactions WHERE id=$1 FOR UPDATE', [fields.bankTransactionId]);
   const receipt = await client.query('SELECT id,date_time,total_sum,currency FROM receipts WHERE id=$1 FOR UPDATE', [fields.receiptId]);
   if (!tx.rowCount || !receipt.rowCount) fail('AUTHORITATIVE_INPUT_MISSING');
@@ -93,7 +134,9 @@ async function lockInputs(client, scope, fields) {
     fnsSourceProven: fnsSource.rows[0].proven === true,
   });
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${scope.id}:bank-receipt-match:${fields.matchKey}`]);
-  return { transaction: tx.rows[0], receipt: receipt.rows[0], account: account.rows[0], receiptCurrencyResolution: currencyProvenance };
+  const lockedTransaction = { ...tx.rows[0], observationId: Number(tx.rows[0].observation_id) };
+  await assertAutomaticSourceProviderBinding(client, scope, { ...fields, observationId: lockedTransaction.observationId }, options);
+  return { transaction: lockedTransaction, receipt: receipt.rows[0], account: account.rows[0], receiptCurrencyResolution: currencyProvenance };
 }
 
 function assertAuthoritative(fields, locked) {
@@ -265,6 +308,11 @@ async function validateExistingSupersessions(client, scope, eventId, enrichmentK
 }
 
 async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader = loadBankReceiptMatching) {
+  if (options.automaticPolicy && (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.requireSourceProviderBinding !== true
+    || !options.bankIngestedAfter
+    || options.approvedMatchKey)) fail('AUTO_POLICY_INVALID');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -272,9 +320,11 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const initialMatches = initial?.matches ?? [];
     const selected = options.matchKey ? initialMatches.find((item) => item.matchKey === options.matchKey) : initialMatches.length === 1 ? initialMatches[0] : null;
     if (!selected) fail(initialMatches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
+    if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+      || selected.bank?.sourceProviderBindingVerified !== true)) fail('AUTO_MATCH_POLICY_PROOF_MISSING');
     const fields = matchFields(selected);
     const scope = await lockedScope(client, selected.scopeKey);
-    const locked = await lockInputs(client, scope, fields);
+    const locked = await lockInputs(client, scope, fields, options);
     assertAuthoritative(fields, locked);
     const current = await matchingLoader(client, options);
     const currentMatch = (current?.matches ?? []).find((item) => item.matchKey === fields.matchKey);

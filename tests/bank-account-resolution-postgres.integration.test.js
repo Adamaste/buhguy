@@ -180,9 +180,10 @@ integration('source/provider binding is explicit, reference-first, scoped, and f
     assert.equal(otherSource.identityResolution.account.resolutionState, 'UNKNOWN');
     assert.equal(otherSource.identityResolution.account.financialAccountId, null);
 
-    const exact = await ingestBankEvent(pool, event('binding-reference-wins', 'binding.provider', { amount: '13.00', currency: 'RUB', direction: 'UNKNOWN', accountReference: 'REF-2222', accountReferenceKind: 'MASKED_ACCOUNT' }));
-    assert.equal(exact.identityResolution.account.resolutionState, 'EXACT');
-    assert.equal(exact.identityResolution.account.financialAccountId, Number(referenceAccount.id));
+    const conflictingReference = await ingestBankEvent(pool, event('binding-reference-conflicts', 'binding.provider', { amount: '13.00', currency: 'RUB', direction: 'UNKNOWN', accountReference: 'REF-2222', accountReferenceKind: 'MASKED_ACCOUNT' }));
+    assert.equal(conflictingReference.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(conflictingReference.identityResolution.account.financialAccountId, null);
+    assert.equal(conflictingReference.identityResolution.account.provenance, 'SOURCE_PROVIDER_BINDING_REFERENCE_CONFLICT');
     const unknownKind = await ingestBankEvent(pool, event('binding-unknown-kind', 'binding.provider', { amount: '14.00', currency: 'RUB', direction: 'UNKNOWN', accountReference: 'MASKED-UNKNOWN' }));
     assert.equal(unknownKind.identityResolution.account.resolutionState, 'UNKNOWN');
 
@@ -190,7 +191,9 @@ integration('source/provider binding is explicit, reference-first, scoped, and f
     cardId = Number(card.id);
     await createBankAccountReference(pool, { paymentInstrumentId: cardId, provider: 'binding.provider', referenceKind: 'MASKED_CARD', referenceValue: 'CARD-1111' });
     const cardEvent = await ingestBankEvent(pool, event('binding-card-no-account-fallback', 'binding.provider', { amount: '15.00', currency: 'RUB', direction: 'UNKNOWN', accountReference: 'CARD-1111', accountReferenceKind: 'MASKED_CARD' }));
-    assert.equal(cardEvent.identityResolution.account.resolutionState, 'UNKNOWN');
+    assert.equal(cardEvent.identityResolution.account.resolutionState, 'MANUAL');
+    assert.equal(cardEvent.identityResolution.account.financialAccountId, Number(boundAccount.id));
+    assert.equal(cardEvent.identityResolution.account.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
     assert.equal(cardEvent.identityResolution.paymentInstrument.resolutionState, 'EXACT');
 
     await disableBankSourceProviderAccountBinding(pool, { sourceKey, provider: 'binding.provider' });

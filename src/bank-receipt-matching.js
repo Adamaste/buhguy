@@ -15,6 +15,10 @@ export const BANK_RECEIPT_MATCHING_STATUSES = Object.freeze({
   AMBIGUOUS: 'AMBIGUOUS',
   INELIGIBLE: 'INELIGIBLE',
 });
+export const BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES = Object.freeze({
+  STRICT_UNIQUE: 'STRICT_UNIQUE',
+  NEAREST_DETERMINISTIC: 'NEAREST_DETERMINISTIC',
+});
 
 const NORMALIZED_FACT_VERSION = 'fiscal-normalizer-v1';
 const MONEY = /^(?:0|[1-9]\d*)\.\d{2}$/;
@@ -76,7 +80,7 @@ function ownerGate(snapshot, financialAccountId, scopeKey) {
 
 function bankPosting(entry, side) { return entry.postings.find((posting) => posting.side === side) ?? null; }
 
-function projectBankReceiptEligibility(entry, ownershipSnapshot) {
+function projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding = false } = {}) {
   if (!entry || entry.projectionStatus !== BANK_LEDGER_PROJECTION_STATUSES.PROJECTED) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_LEDGER_UNRESOLVED' };
   if (entry.economicKind !== 'PURCHASE') return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_NOT_PURCHASE' };
   if (!canonicalMoney(entry.amount) || !canonicalCurrency(entry.currency) || !canonicalTime(entry.occurredAt) || typeof entry.scopeKey !== 'string' || !entry.scopeKey.trim()) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_MONETARY_EVIDENCE_INVALID' };
@@ -90,6 +94,9 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot) {
   if (!SHA256.test(source?.candidateKey ?? '') || !SHA256.test(source?.journalKey ?? '') || !positiveInteger(source?.bankTransactionId)) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_PROVENANCE_INCOMPLETE' };
   const owners = ownerGate(ownershipSnapshot, credit.account.financialAccountId, entry.scopeKey);
   if (!owners) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_ACCOUNT_OWNER_UNPROVEN' };
+  if (requireSourceProviderBinding && entry.sourceProvenance?.sourceProvenance?.sourceProviderBindingVerified !== true) {
+    return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_SOURCE_PROVIDER_BINDING_UNPROVEN' };
+  }
   return {
     status: BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED,
     bank: {
@@ -98,6 +105,7 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot) {
       journalKey: source.journalKey,
       bankTransactionId: source.bankTransactionId,
       financialAccountId: credit.account.financialAccountId,
+      ...(requireSourceProviderBinding ? { sourceProviderBindingVerified: true } : {}),
       scopeKey: entry.scopeKey,
       amount: entry.amount,
       currency: entry.currency,
@@ -222,13 +230,22 @@ function matchKey(bank, receipt, timeDeltaMs) {
   });
 }
 
-export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, { internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs } = {}) {
+export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
+  internalTransferMaxTimeDeltaMs,
+  receiptMaxTimeDeltaMs,
+  assignmentPolicy = BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.STRICT_UNIQUE,
+  requireSourceProviderBinding = false,
+  persistedMatches = [],
+} = {}) {
   validateWindow(internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
+  if (!Object.values(BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES).includes(assignmentPolicy)) throw new Error('assignmentPolicy is unsupported');
+  if (typeof requireSourceProviderBinding !== 'boolean') throw new Error('requireSourceProviderBinding must be a boolean');
+  if (!Array.isArray(persistedMatches)) throw new Error('persistedMatches must be an array');
   if (!Array.isArray(bankEntries)) throw new Error('bankEntries must be an array');
   validateReceiptInputs(receiptRows);
   const ledger = projectBankLedger(bankEntries, ownershipSnapshot, { maxTimeDeltaMs: internalTransferMaxTimeDeltaMs });
-  const bankCandidates = ledger.entries.map((entry) => ({ entry, eligibility: projectBankReceiptEligibility(entry, ownershipSnapshot) }));
+  const bankCandidates = ledger.entries.map((entry) => ({ entry, eligibility: projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding }) }));
   const eligibleBanks = bankCandidates.filter((row) => row.eligibility.bank).map((row) => row.eligibility.bank);
   const receiptCandidates = receiptRows.map((row) => projectBankReceiptCandidate(row));
   const eligibleReceipts = receiptCandidates.filter((row) => row.receipt).map((row) => row.receipt);
@@ -247,8 +264,39 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   const matches = [];
   const visitedBanks = new Set();
   const visitedReceipts = new Set();
+  const statusReasons = new Map();
   for (const bank of eligibleBanks) statuses.set(`bank:${bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
   for (const receipt of eligibleReceipts) statuses.set(`receipt:${receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  const addMatchedPair = (bank, receipt, selectedPolicy = null) => {
+    const timeDeltaMs = Math.abs(Date.parse(bank.occurredAt) - Date.parse(receipt.dateTime));
+    matches.push({
+      modelVersion: BANK_RECEIPT_MATCHING_VERSION,
+      matchStatus: BANK_RECEIPT_MATCHING_STATUSES.MATCHED,
+      matchKey: matchKey(bank, receipt, timeDeltaMs),
+      relationshipType: 'RECEIPT_EVIDENCE_FOR_BANK_PURCHASE',
+      scopeKey: bank.scopeKey,
+      amount: bank.amount,
+      currency: bank.currency,
+      timeDeltaMs,
+      reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL',
+      ...(selectedPolicy ? { assignmentPolicy: selectedPolicy } : {}),
+      bank: {
+        ledgerKey: bank.ledgerKey, candidateKey: bank.candidateKey, journalKey: bank.journalKey,
+        bankTransactionId: bank.bankTransactionId, financialAccountId: bank.financialAccountId,
+        occurredAt: bank.occurredAt,
+        ...(bank.sourceProviderBindingVerified ? { sourceProviderBindingVerified: true } : {}),
+      },
+      receipt,
+      bankAccountOwnershipProvenance: bank.ownershipProvenance,
+      receiptCurrencyResolution: receipt.currencyResolution,
+    });
+    statuses.set(`bank:${bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
+    statuses.set(`receipt:${receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
+  };
+  const setIneligible = (type, key, reasonCode) => {
+    statuses.set(`${type}:${key}`, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+    statusReasons.set(`${type}:${key}`, reasonCode);
+  };
   const visit = (type, key, component) => {
     const marker = `${type}:${key}`;
     if ((type === 'bank' ? visitedBanks : visitedReceipts).has(key)) return;
@@ -257,37 +305,70 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     const adjacent = type === 'bank' ? graph.bank.get(key) : graph.receipt.get(key);
     for (const next of adjacent) visit(type === 'bank' ? 'receipt' : 'bank', next, component);
   };
-  for (const bank of eligibleBanks) {
-    if (visitedBanks.has(bank.candidateKey)) continue;
-    if (graph.bank.get(bank.candidateKey).length === 0) {
-      visitedBanks.add(bank.candidateKey);
-      continue;
+  if (assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC) {
+    const reservedBanks = new Set();
+    const reservedReceipts = new Set();
+    const bankByTransactionId = new Map(eligibleBanks.map((bank) => [Number(bank.bankTransactionId), bank]));
+    const receiptById = new Map(eligibleReceipts.map((receipt) => [Number(receipt.receiptId), receipt]));
+    for (const persisted of persistedMatches.slice().sort((left, right) => Number(left.bankTransactionId) - Number(right.bankTransactionId))) {
+      const bank = bankByTransactionId.get(Number(persisted.bankTransactionId));
+      const receipt = receiptById.get(Number(persisted.receiptId));
+      if (bank) reservedBanks.add(bank.candidateKey);
+      if (receipt) reservedReceipts.add(receipt.receiptCandidateKey);
+      const edgeExists = bank && receipt && graph.bank.get(bank.candidateKey)?.includes(receipt.receiptCandidateKey);
+      const key = edgeExists
+        ? matchKey(bank, receipt, Math.abs(Date.parse(bank.occurredAt) - Date.parse(receipt.dateTime)))
+        : null;
+      if (!edgeExists || key !== String(persisted.matchKey).toLowerCase()) {
+        if (bank) setIneligible('bank', bank.candidateKey, 'PERSISTED_MATCH_CONFLICT');
+        if (receipt) setIneligible('receipt', receipt.receiptCandidateKey, 'PERSISTED_MATCH_CONFLICT');
+        continue;
+      }
+      addMatchedPair(bank, receipt, assignmentPolicy);
     }
-    const component = [];
-    visit('bank', bank.candidateKey, component);
-    const banks = component.filter(([type]) => type === 'bank').map(([, key]) => bankByKey.get(key));
-    const receipts = component.filter(([type]) => type === 'receipt').map(([, key]) => receiptByKey.get(key));
-    if (banks.length === 1 && receipts.length === 1 && graph.bank.get(banks[0].candidateKey).length === 1) {
-      const timeDeltaMs = Math.abs(Date.parse(banks[0].occurredAt) - Date.parse(receipts[0].dateTime));
-      matches.push({
-        modelVersion: BANK_RECEIPT_MATCHING_VERSION,
-        matchStatus: BANK_RECEIPT_MATCHING_STATUSES.MATCHED,
-        matchKey: matchKey(banks[0], receipts[0], timeDeltaMs),
-        relationshipType: 'RECEIPT_EVIDENCE_FOR_BANK_PURCHASE',
-        scopeKey: banks[0].scopeKey,
-        amount: banks[0].amount,
-        currency: banks[0].currency,
-        timeDeltaMs,
-        reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL',
-        bank: { ledgerKey: banks[0].ledgerKey, candidateKey: banks[0].candidateKey, journalKey: banks[0].journalKey, bankTransactionId: banks[0].bankTransactionId, financialAccountId: banks[0].financialAccountId, occurredAt: banks[0].occurredAt },
-        receipt: receipts[0],
-        bankAccountOwnershipProvenance: banks[0].ownershipProvenance,
-        receiptCurrencyResolution: receipts[0].currencyResolution,
-      });
-      statuses.set(`bank:${banks[0].candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
-      statuses.set(`receipt:${receipts[0].receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.MATCHED);
-    } else {
-      for (const item of component) statuses.set(`${item[0]}:${item[1]}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+    const edges = [];
+    for (const bank of eligibleBanks) {
+      if (reservedBanks.has(bank.candidateKey)) continue;
+      for (const receiptKey of graph.bank.get(bank.candidateKey) ?? []) {
+        if (reservedReceipts.has(receiptKey)) continue;
+        const receipt = receiptByKey.get(receiptKey);
+        edges.push({ bank, receipt, delta: Math.abs(Date.parse(bank.occurredAt) - Date.parse(receipt.dateTime)) });
+      }
+    }
+    edges.sort((left, right) => left.delta - right.delta
+      || left.bank.candidateKey.localeCompare(right.bank.candidateKey)
+      || left.receipt.receiptCandidateKey.localeCompare(right.receipt.receiptCandidateKey));
+    const assignedBanks = new Set(reservedBanks);
+    const assignedReceipts = new Set(reservedReceipts);
+    for (const edge of edges) {
+      if (assignedBanks.has(edge.bank.candidateKey) || assignedReceipts.has(edge.receipt.receiptCandidateKey)) continue;
+      assignedBanks.add(edge.bank.candidateKey);
+      assignedReceipts.add(edge.receipt.receiptCandidateKey);
+      addMatchedPair(edge.bank, edge.receipt, assignmentPolicy);
+    }
+    for (const edge of edges) {
+      if (!assignedBanks.has(edge.bank.candidateKey)) {
+        statuses.set(`bank:${edge.bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+        statusReasons.set(`bank:${edge.bank.candidateKey}`, 'NEAREST_POLICY_ALTERNATIVE_NOT_SELECTED');
+      }
+      if (!assignedReceipts.has(edge.receipt.receiptCandidateKey)) {
+        statuses.set(`receipt:${edge.receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+        statusReasons.set(`receipt:${edge.receipt.receiptCandidateKey}`, 'NEAREST_POLICY_ALTERNATIVE_NOT_SELECTED');
+      }
+    }
+  } else {
+    for (const bank of eligibleBanks) {
+      if (visitedBanks.has(bank.candidateKey)) continue;
+      if (graph.bank.get(bank.candidateKey).length === 0) {
+        visitedBanks.add(bank.candidateKey);
+        continue;
+      }
+      const component = [];
+      visit('bank', bank.candidateKey, component);
+      const banks = component.filter(([type]) => type === 'bank').map(([, key]) => bankByKey.get(key));
+      const receipts = component.filter(([type]) => type === 'receipt').map(([, key]) => receiptByKey.get(key));
+      if (banks.length === 1 && receipts.length === 1 && graph.bank.get(banks[0].candidateKey).length === 1) addMatchedPair(banks[0], receipts[0]);
+      else for (const item of component) statuses.set(`${item[0]}:${item[1]}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
     }
   }
   for (const receipt of eligibleReceipts) {
@@ -295,7 +376,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     visitedReceipts.add(receipt.receiptCandidateKey);
   }
   const bankStatuses = ledger.entries.map((entry) => {
-    const eligibility = projectBankReceiptEligibility(entry, ownershipSnapshot);
+    const eligibility = projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding });
     const source = entry.sourceProvenance ?? {};
     const eligible = eligibility.bank;
     const status = eligible
@@ -308,9 +389,10 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
       reasonCode: eligible
         ? (status === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
           ? 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL'
-          : status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
-            ? 'AMBIGUOUS_COMPATIBLE_RECEIPTS'
-            : 'NO_COMPATIBLE_RECEIPT')
+          : statusReasons.get(`bank:${eligible.candidateKey}`)
+            ?? (status === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
+              ? 'AMBIGUOUS_COMPATIBLE_RECEIPTS'
+              : 'NO_COMPATIBLE_RECEIPT'))
         : eligibility.reasonCode,
       upstreamReasonCode: entry.reasonCode ?? null,
       candidateKey: source.candidateKey ?? null,
@@ -325,9 +407,10 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     reasonCode: candidate.receipt
       ? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.MATCHED
         ? 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL'
-        : statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
-          ? 'AMBIGUOUS_COMPATIBLE_BANK_PURCHASES'
-          : 'NO_COMPATIBLE_BANK_PURCHASE')
+        : statusReasons.get(`receipt:${candidate.receipt.receiptCandidateKey}`)
+          ?? (statuses.get(`receipt:${candidate.receipt.receiptCandidateKey}`) === BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS
+            ? 'AMBIGUOUS_COMPATIBLE_BANK_PURCHASES'
+            : 'NO_COMPATIBLE_BANK_PURCHASE'))
       : candidate.reasonCode ?? null,
   })).sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
   matches.sort((left, right) => left.matchKey.localeCompare(right.matchKey));
@@ -366,10 +449,19 @@ function expandedBound(value, delta, direction) {
   return new Date(time + direction * delta).toISOString();
 }
 
-export async function loadBankReceiptMatching(pool, { scopeKey = null, from = null, to = null, internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs } = {}) {
+export async function loadBankReceiptMatching(pool, {
+  scopeKey = null,
+  from = null,
+  to = null,
+  bankIngestedAfter = null,
+  internalTransferMaxTimeDeltaMs,
+  receiptMaxTimeDeltaMs,
+  assignmentPolicy = BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.STRICT_UNIQUE,
+  requireSourceProviderBinding = false,
+} = {}) {
   validateWindow(internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
-  const journals = await loadBalancedBankJournalProjection(pool, { scopeKey, from, to });
+  const journals = await loadBalancedBankJournalProjection(pool, { scopeKey, from, to, bankIngestedAfter });
   const candidates = projectBankBusinessEventCandidates(journals.projections);
   const journalsByTransaction = new Map(journals.projections.map((journal) => [journal.bankTransactionId, journal]));
   const entries = candidates.projections.map((candidate) => ({
@@ -435,5 +527,23 @@ export async function loadBankReceiptMatching(pool, { scopeKey = null, from = nu
       f.credit_sum, f.credit_state, f.provision_sum, f.provision_state,
       receipt_item_coverage."receiptItemCount", receipt_item_coverage."normalizedItemFactCount", receipt_item_coverage."itemPaymentTypeCodes", receipt_scopes."scopeKeys"
     ORDER BY r.id`, params)).rows;
-  return matchBankReceipts(entries, ownershipSnapshot, receipts, { internalTransferMaxTimeDeltaMs, receiptMaxTimeDeltaMs });
+  const persistedMatches = assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    ? (await pool.query(`SELECT m.bank_transaction_id AS "bankTransactionId", m.receipt_id AS "receiptId", m.match_key AS "matchKey"
+      FROM bank_receipt_matches m
+      JOIN accounting_scopes s ON s.id=m.scope_id
+      JOIN bank_transactions bt ON bt.id=m.bank_transaction_id
+      JOIN bank_event_observations eo ON eo.id=bt.observation_id
+      WHERE s.scope_key=$1
+        AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
+        AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
+        AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
+      ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter])).rows
+    : [];
+  return matchBankReceipts(entries, ownershipSnapshot, receipts, {
+    internalTransferMaxTimeDeltaMs,
+    receiptMaxTimeDeltaMs,
+    assignmentPolicy,
+    requireSourceProviderBinding,
+    persistedMatches,
+  });
 }
