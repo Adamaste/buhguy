@@ -1,5 +1,6 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { refreshCertificationForEvents } from './certification.js';
+import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 
 export const LEDGER_MODEL_VERSION = 'ledger-v1';
 export const LEDGER_ORIGIN = 'SYSTEM_DERIVED';
@@ -174,11 +175,16 @@ export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds 
 async function ensureAccounts(tx, scopeKey) {
   const scope = (await tx.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
   if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
-  // Serialize account-catalog upserts per scope to avoid ON CONFLICT lock cycles.
-  await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [scopeKey]);
   const accounts = new Map();
   for (const [code, definition] of Object.entries(LEDGER_ACCOUNTS)) {
-    const row = (await tx.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description) VALUES($1,$2,$3,$4) ON CONFLICT(scope_id,account_code) DO UPDATE SET description=EXCLUDED.description RETURNING id,account_code`, [scope.id, code, definition.type, definition.description])).rows[0];
+    await tx.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description)
+      VALUES($1,$2,$3,$4) ON CONFLICT(scope_id,account_code) DO NOTHING`, [scope.id, code, definition.type, definition.description]);
+    const row = (await tx.query('SELECT id,account_code,account_type FROM ledger_accounts WHERE scope_id=$1 AND account_code=$2', [scope.id, code])).rows[0];
+    if (!row || row.account_type !== definition.type) {
+      const error = new Error(`Ledger account catalog conflict: ${code}`);
+      error.code = 'LEDGER_ACCOUNT_CATALOG_CONFLICT';
+      throw error;
+    }
     accounts.set(code, Number(row.id));
   }
   return accounts;
@@ -355,13 +361,17 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
   if (dryRun) return summarizeLedgerProjection(projection ?? await loadLedgerProjection(pool, scopeKey, eventIds));
   const client = transactionClient ?? await pool.connect();
   const ownsTransaction = !transactionClient;
+  let releaseScopeLock = null;
   try {
+    if (ownsTransaction) releaseScopeLock = await lockMatchedPurchaseScope(client, scopeKey);
+    else await lockMatchedPurchaseScopeTransaction(client, scopeKey);
     // A no-op decision must not commit against a source snapshot that can be
     // invalidated by a concurrent writer after the projection is loaded.
     if (ownsTransaction) await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    if (ownsTransaction) await lockMatchedPurchaseScopeTransaction(client, scopeKey);
     if (!projection) projection = await loadLedgerProjection(client, scopeKey, eventIds);
     if (!replace && !transactionClient) {
-      const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+      const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
       if (!scope) {
         const error = new Error(`Accounting scope not found: ${scopeKey}`);
         error.code = 'ACCOUNTING_SCOPE_NOT_FOUND';
@@ -412,7 +422,13 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
     if (Number(unbalanced) !== 0) throw new Error(`Ledger is unbalanced: ${unbalanced}`);
     if (ownsTransaction) await client.query('COMMIT');
     return { ...summarizeLedgerProjection(projection), created, balancedViolations: Number(unbalanced) };
-  } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally { if (ownsTransaction) client.release(); }
+  } catch (error) { if (ownsTransaction) await client.query('ROLLBACK'); throw error; } finally {
+    let releaseError;
+    if (releaseScopeLock) {
+      try { await releaseScopeLock(); } catch (error) { releaseError = error; }
+    }
+    if (ownsTransaction) client.release(releaseError);
+  }
 }
 
 async function assertNoProtectedLedgerEntries(client, scopeKey, eventIds = null) {

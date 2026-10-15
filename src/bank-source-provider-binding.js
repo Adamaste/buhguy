@@ -1,3 +1,5 @@
+import { lockMatchedPurchaseSourceProvider } from './matched-purchase-locks.js';
+
 const SOURCE_KEY_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/;
 const PROVIDER_PATTERN = /^[a-zA-Z0-9._-]{1,200}$/;
 export const SOURCE_PROVIDER_BINDING_PROVENANCE = 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT';
@@ -48,15 +50,16 @@ export async function bindBankSourceProviderAccount(pool, { sourceKey, provider,
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const source = (await client.query('SELECT id FROM bank_sources WHERE source_key=$1 FOR UPDATE', [safeSourceKey])).rows[0];
+    const source = (await client.query('SELECT id FROM bank_sources WHERE source_key=$1', [safeSourceKey])).rows[0];
     if (!source) throw new BankSourceProviderBindingError('SOURCE_NOT_FOUND', 'source-key was not found');
+    await lockMatchedPurchaseSourceProvider(client, source.id, safeProvider);
     const scopeId = await loadSourceScope(client, source.id);
     const account = (await client.query('SELECT id,scope_id FROM financial_accounts WHERE id=$1', [accountId])).rows[0];
     if (!account) throw new BankSourceProviderBindingError('ACCOUNT_NOT_FOUND', 'financial account was not found');
     if (Number(account.scope_id) !== scopeId) throw new BankSourceProviderBindingError('SCOPE_MISMATCH', 'source and financial account are outside the same accounting scope');
     const existing = (await client.query(`SELECT id,bank_source_id,provider,financial_account_id,provenance,reason,active,created_at,updated_at
       FROM bank_source_provider_account_bindings
-      WHERE bank_source_id=$1 AND provider=$2 AND active FOR UPDATE`, [source.id, safeProvider])).rows[0];
+      WHERE bank_source_id=$1 AND provider=$2 AND active`, [source.id, safeProvider])).rows[0];
     if (existing) {
       if (Number(existing.financial_account_id) !== accountId) throw new BankSourceProviderBindingError('BINDING_CONFLICT', 'an active source/provider binding already targets another account');
       await client.query('COMMIT');
@@ -89,13 +92,21 @@ export async function listBankSourceProviderAccountBindings(pool, { sourceKey = 
 export async function disableBankSourceProviderAccountBinding(pool, { sourceKey, provider }) {
   const safeSourceKey = requireSourceKey(sourceKey);
   const safeProvider = requireProvider(provider);
-  const result = await pool.query(`UPDATE bank_source_provider_account_bindings b
-    SET active=FALSE,updated_at=NOW()
-    FROM bank_sources s
-    WHERE s.id=b.bank_source_id AND s.source_key=$1 AND b.provider=$2 AND b.active
-    RETURNING b.id,b.bank_source_id,b.provider,b.financial_account_id,b.provenance,b.reason,b.active,b.created_at,b.updated_at`, [safeSourceKey, safeProvider]);
-  if (!result.rowCount) throw new BankSourceProviderBindingError('BINDING_NOT_FOUND', 'active source/provider binding was not found');
-  return result.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const source = (await client.query('SELECT id FROM bank_sources WHERE source_key=$1', [safeSourceKey])).rows[0];
+    if (!source) throw new BankSourceProviderBindingError('BINDING_NOT_FOUND', 'active source/provider binding was not found');
+    await lockMatchedPurchaseSourceProvider(client, source.id, safeProvider);
+    const result = await client.query(`UPDATE bank_source_provider_account_bindings b
+      SET active=FALSE,updated_at=NOW()
+      WHERE b.bank_source_id=$1 AND b.provider=$2 AND b.active
+      RETURNING b.id,b.bank_source_id,b.provider,b.financial_account_id,b.provenance,b.reason,b.active,b.created_at,b.updated_at`, [source.id, safeProvider]);
+    if (!result.rowCount) throw new BankSourceProviderBindingError('BINDING_NOT_FOUND', 'active source/provider binding was not found');
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+  finally { client.release(); }
 }
 
 export async function findActiveSourceProviderAccountBinding(client, { bankSourceId, provider, scopeId }) {

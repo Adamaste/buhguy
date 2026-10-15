@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import crypto from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { persistMatchedPurchase, persistMatchedPurchaseForTest } from '../src/matched-purchase-persistence.js';
@@ -9,6 +10,9 @@ import { businessEventEvidenceSemanticKey, BusinessEventGraphRepository, GRAPH_M
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { certificationSourceStateKey, CERTIFICATION_MODEL_VERSION } from '../src/certification.js';
 import { rebuildLedger, refreshLedgerForReceipt } from '../src/ledger.js';
+import { bindBankSourceProviderAccount } from '../src/bank-source-provider-binding.js';
+import { lockMatchedPurchaseBankTransaction, lockMatchedPurchaseSourceProvider } from '../src/matched-purchase-locks.js';
+import { resolveBankTransactionAccount } from '../src/bank-account-resolution.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -435,4 +439,138 @@ integration('ambiguous test-only matcher hook is isolated and fails closed', { c
     await assert.rejects(() => persistMatchedPurchaseForTest(pool, { ...options, matchingLoader: async () => ({ matches: [matching.matches[0], { ...matching.matches[0], matchKey: hash('q') }] }) }), (error) => error.code === 'MATCH_SELECTION_REQUIRED');
     assert.equal(await snapshotScope(pool, fixture.scopeId), before);
   } finally { await pool.end(); }
+});
+
+integration('matched purchase writer is idempotent under the restricted runtime DML matrix', { concurrency: false }, async () => {
+  const admin = new pg.Pool({ connectionString: databaseUrl });
+  let runtime;
+  let fixture;
+  let roleCreated = false;
+  const password = crypto.randomBytes(24).toString('base64url');
+  const writerTables = [
+    'bank_receipt_matches', 'business_graph_rules', 'business_events', 'business_event_evidence',
+    'business_event_bank_evidence', 'ledger_accounts', 'ledger_entries', 'ledger_postings',
+    'ledger_source_links', 'ledger_entry_supersessions', 'reconciliation_runs',
+    'certification_facts', 'reconciliation_results',
+  ];
+  try {
+    const existingRole = await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'");
+    if (existingRole.rowCount) {
+      await admin.query('DROP OWNED BY receipt_collector');
+      await admin.query('DROP ROLE receipt_collector');
+    }
+    await admin.query(`CREATE ROLE receipt_collector LOGIN PASSWORD '${password}'`);
+    roleCreated = true;
+    await admin.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
+    await admin.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO receipt_collector');
+    await admin.query('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM receipt_collector');
+    for (const table of writerTables) await admin.query(`REVOKE SELECT ON TABLE public.${table} FROM receipt_collector`);
+    await admin.query('REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM receipt_collector');
+    await admin.query(await readFile(new URL('../db/migrations/021_matched_purchase_writer_privileges.sql', import.meta.url), 'utf8'));
+
+    const privilegeRows = (await admin.query(`SELECT table_name,
+        has_table_privilege('receipt_collector',format('public.%I',table_name),'INSERT') AS table_insert,
+        has_table_privilege('receipt_collector',format('public.%I',table_name),'UPDATE')
+        OR has_any_column_privilege('receipt_collector',format('public.%I',table_name),'UPDATE') AS any_update
+      FROM unnest($1::text[]) AS table_name`, [writerTables])).rows;
+    assert.equal(privilegeRows.every((row) => row.any_update === false), true, 'writer migration must not grant UPDATE on writer tables or columns');
+    assert.equal(privilegeRows.every((row) => row.table_insert === false), true, 'writer migration must not grant table-wide INSERT');
+    const sequenceCount = Number((await admin.query(`SELECT count(*)::int AS count FROM unnest($1::text[]) s(name)
+      WHERE has_sequence_privilege('receipt_collector',format('public.%I',name),'USAGE')`, [[
+      'bank_receipt_matches_id_seq', 'business_events_id_seq', 'business_event_evidence_id_seq',
+      'business_event_bank_evidence_id_seq', 'ledger_accounts_id_seq', 'ledger_entries_id_seq',
+      'ledger_postings_id_seq', 'ledger_source_links_id_seq', 'ledger_entry_supersessions_id_seq',
+      'reconciliation_runs_id_seq', 'certification_facts_id_seq', 'reconciliation_results_id_seq',
+    ]])).rows[0].count);
+    assert.equal(sequenceCount, 12);
+    const sequenceReadCount = Number((await admin.query(`SELECT count(*)::int AS count FROM unnest($1::text[]) s(name)
+      WHERE has_sequence_privilege('receipt_collector',format('public.%I',name),'SELECT')
+        OR has_sequence_privilege('receipt_collector',format('public.%I',name),'UPDATE')`, [[
+      'bank_receipt_matches_id_seq', 'business_events_id_seq', 'business_event_evidence_id_seq',
+      'business_event_bank_evidence_id_seq', 'ledger_accounts_id_seq', 'ledger_entries_id_seq',
+      'ledger_postings_id_seq', 'ledger_source_links_id_seq', 'ledger_entry_supersessions_id_seq',
+      'reconciliation_runs_id_seq', 'certification_facts_id_seq', 'reconciliation_results_id_seq',
+    ]])).rows[0].count);
+    assert.equal(sequenceReadCount, 0, 'writer migration must grant only sequence USAGE');
+
+    fixture = await createFixture(admin, 'restricted-writer');
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = 'receipt_collector';
+    runtimeUrl.password = password;
+    runtime = new pg.Pool({ connectionString: runtimeUrl.toString(), max: 4 });
+    const options = await writerOptions(fixture);
+    const [first, concurrent] = await Promise.all([
+      persistMatchedPurchase(runtime, options),
+      persistMatchedPurchase(runtime, options),
+    ]);
+    assert.equal(first.matchId, concurrent.matchId);
+    assert.equal(first.eventId, concurrent.eventId);
+    assert.equal(first.ledgerEntryId, concurrent.ledgerEntryId);
+    const replay = await persistMatchedPurchase(runtime, options);
+    assert.equal(replay.matchId, first.matchId);
+    assert.equal(replay.eventId, first.eventId);
+    assert.equal(replay.ledgerEntryId, first.ledgerEntryId);
+    assert.equal((await admin.query('SELECT count(*)::int AS count FROM business_events WHERE id=$1 AND scope_id=$2', [first.eventId, fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await admin.query(`SELECT count(*)::int AS count FROM ledger_entries e
+      WHERE e.scope_id=$1 AND e.source_event_id=$2 AND NOT EXISTS
+        (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId, first.eventId])).rows[0].count, 1);
+    assert.equal((await admin.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE bank_transaction_id=$1 AND receipt_id=$2', [fixture.txId, fixture.receiptId])).rows[0].count, 1);
+  } finally {
+    if (runtime) await runtime.end();
+    if (fixture) await admin.query('DELETE FROM accounting_scopes WHERE id=$1', [fixture.scopeId]).catch(() => {});
+    if (roleCreated) {
+      await admin.query('DROP OWNED BY receipt_collector').catch(() => {});
+      await admin.query('DROP ROLE receipt_collector').catch(() => {});
+    }
+    await admin.end();
+  }
+});
+
+integration('account resolution and source/provider binding serialize with matched writer advisory keys', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  let fixture;
+  let client;
+  try {
+    fixture = await createFixture(pool, 'shared-writer-lock');
+    const provider = 'fixture.provider';
+    const sourceKey = `shared-writer-${fixture.suffix}`;
+    await pool.query('UPDATE bank_sources SET source_key=$1 WHERE id=$2', [sourceKey, fixture.sourceId]);
+    const binding = await bindBankSourceProviderAccount(pool, {
+      sourceKey, provider, financialAccountId: fixture.accountId, reason: 'integration fixture',
+    });
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await lockMatchedPurchaseSourceProvider(client, fixture.sourceId, provider);
+    let bindingSettled = false;
+    const bindingAttempt = bindBankSourceProviderAccount(pool, {
+      sourceKey, provider, financialAccountId: fixture.accountId, reason: 'idempotent integration replay',
+    }).then((value) => { bindingSettled = true; return value; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(bindingSettled, false, 'binding writer must wait for the shared source/provider lock');
+    await client.query('COMMIT');
+    assert.equal((await bindingAttempt).id, binding.id);
+    client.release();
+    client = null;
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await lockMatchedPurchaseBankTransaction(client, fixture.txId);
+    let resolutionSettled = false;
+    const resolutionAttempt = resolveBankTransactionAccount(pool, {
+      bankTransactionId: fixture.txId,
+      financialAccountId: fixture.accountId,
+      resolutionState: 'MANUAL',
+      provenance: 'TEST_CONFIRMED',
+      reason: 'integration concurrency assertion',
+    }).then((value) => { resolutionSettled = true; return value; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(resolutionSettled, false, 'account-resolution writer must wait for the shared bank-transaction lock');
+    await client.query('COMMIT');
+    assert.equal((await resolutionAttempt).resolution_state, 'MANUAL');
+  } finally {
+    if (client) { await client.query('ROLLBACK').catch(() => {}); client.release(); }
+    if (fixture) await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [fixture.scopeId]).catch(() => {});
+    await pool.end();
+  }
 });
