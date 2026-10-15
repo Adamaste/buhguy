@@ -5,6 +5,22 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'receipt_collector') THEN
     EXECUTE 'GRANT SELECT (id, scope_key) ON public.accounting_scopes TO receipt_collector';
 
+    -- Exact source columns required to revalidate matching and certification.
+    -- Raw notification payloads and unrelated source fields remain unreadable.
+    EXECUTE 'GRANT SELECT (id, bank_source_id, ingestion_metadata, created_at) ON public.bank_event_observations TO receipt_collector';
+    EXECUTE 'GRANT SELECT (id) ON public.bank_sources TO receipt_collector';
+    EXECUTE 'GRANT SELECT (bank_source_id, person_id, relation_type) ON public.bank_source_person TO receipt_collector';
+    EXECUTE 'GRANT SELECT (financial_account_id, person_id, relation_type, provenance) ON public.financial_account_person_relations TO receipt_collector';
+    EXECUTE 'GRANT SELECT (id, date_time, currency, total_sum) ON public.receipts TO receipt_collector';
+    EXECUTE 'GRANT SELECT (receipt_id, fns_source_id) ON public.receipt_source_observations TO receipt_collector';
+    EXECUTE 'GRANT SELECT (id, scope_id) ON public.fns_sources TO receipt_collector';
+    EXECUTE 'GRANT SELECT (id, receipt_id) ON public.receipt_items TO receipt_collector';
+    EXECUTE 'GRANT SELECT (receipt_item_id, normalization_version, payment_type_code) ON public.receipt_item_fiscal_facts TO receipt_collector';
+    EXECUTE 'GRANT SELECT (receipt_id, normalization_version, normalized_content_sha256, normalization_status, fiscal_operation_type, household_cash_direction, payment_components_status, payment_stage, correction_status, ecash_total_sum, ecash_total_state, cash_total_sum, cash_total_state, prepaid_sum, prepaid_state, credit_sum, credit_state, provision_sum, provision_state) ON public.receipt_fiscal_facts TO receipt_collector';
+    EXECUTE 'GRANT SELECT (receipt_id) ON public.receipt_raw TO receipt_collector';
+    EXECUTE 'GRANT SELECT (scope_id) ON public.business_event_edges TO receipt_collector';
+    EXECUTE 'GRANT SELECT (scope_id) ON public.business_event_allocations TO receipt_collector';
+
     EXECUTE 'GRANT SELECT (id, scope_id, bank_transaction_id, receipt_id, financial_account_id, matcher_version, match_key, bank_ledger_key, bank_candidate_key, bank_journal_key, receipt_candidate_key, receipt_normalization_version, receipt_normalized_content_sha256, amount, currency, bank_occurred_at, receipt_date_time, time_delta_seconds, relationship_type, reason_code, ownership_provenance) ON public.bank_receipt_matches TO receipt_collector';
     EXECUTE 'GRANT INSERT (scope_id, bank_transaction_id, receipt_id, financial_account_id, matcher_version, match_key, bank_ledger_key, bank_candidate_key, bank_journal_key, receipt_candidate_key, receipt_normalization_version, receipt_normalized_content_sha256, amount, currency, bank_occurred_at, receipt_date_time, time_delta_seconds, relationship_type, reason_code, ownership_provenance) ON public.bank_receipt_matches TO receipt_collector';
 
