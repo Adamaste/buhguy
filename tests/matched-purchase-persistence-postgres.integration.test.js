@@ -462,19 +462,32 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     await admin.query(`CREATE ROLE receipt_collector LOGIN PASSWORD '${password}'`);
     roleCreated = true;
     await admin.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
-    await admin.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO receipt_collector');
-    await admin.query('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM receipt_collector');
-    for (const table of writerTables) await admin.query(`REVOKE SELECT ON TABLE public.${table} FROM receipt_collector`);
-    await admin.query('REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM receipt_collector');
-    await admin.query(await readFile(new URL('../db/migrations/021_matched_purchase_writer_privileges.sql', import.meta.url), 'utf8'));
+    for (const migration of [
+      '016_runtime_identity_lookup_grants.sql',
+      '017_bank_source_provider_account_bindings.sql',
+      '020_runtime_payment_instrument_account_lookup.sql',
+      '021_matched_purchase_writer_privileges.sql',
+    ]) {
+      await admin.query(await readFile(new URL(`../db/migrations/${migration}`, import.meta.url), 'utf8'));
+    }
+
+    const tableWideSelectCount = Number((await admin.query(`SELECT count(*)::int AS count
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','p')
+        AND has_table_privilege('receipt_collector',c.oid,'SELECT')`)).rows[0].count);
+    assert.equal(tableWideSelectCount, 0, 'runtime role must not receive table-wide SELECT grants');
+    assert.equal((await admin.query("SELECT has_column_privilege('receipt_collector','public.bank_event_observations','payload','SELECT') AS allowed")).rows[0].allowed, false, 'runtime role must not read raw bank notification payloads');
 
     const privilegeRows = (await admin.query(`SELECT table_name,
         has_table_privilege('receipt_collector',format('public.%I',table_name),'INSERT') AS table_insert,
         has_table_privilege('receipt_collector',format('public.%I',table_name),'UPDATE')
-        OR has_any_column_privilege('receipt_collector',format('public.%I',table_name),'UPDATE') AS any_update
+        OR has_any_column_privilege('receipt_collector',format('public.%I',table_name),'UPDATE') AS any_update,
+        has_table_privilege('receipt_collector',format('public.%I',table_name),'DELETE')
+        OR has_table_privilege('receipt_collector',format('public.%I',table_name),'TRUNCATE') AS destructive
       FROM unnest($1::text[]) AS table_name`, [writerTables])).rows;
     assert.equal(privilegeRows.every((row) => row.any_update === false), true, 'writer migration must not grant UPDATE on writer tables or columns');
     assert.equal(privilegeRows.every((row) => row.table_insert === false), true, 'writer migration must not grant table-wide INSERT');
+    assert.equal(privilegeRows.every((row) => row.destructive === false), true, 'writer migration must not grant DELETE or TRUNCATE');
     const sequenceCount = Number((await admin.query(`SELECT count(*)::int AS count FROM unnest($1::text[]) s(name)
       WHERE has_sequence_privilege('receipt_collector',format('public.%I',name),'USAGE')`, [[
       'bank_receipt_matches_id_seq', 'business_events_id_seq', 'business_event_evidence_id_seq',
@@ -506,11 +519,21 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     assert.equal(first.matchId, concurrent.matchId);
     assert.equal(first.eventId, concurrent.eventId);
     assert.equal(first.ledgerEntryId, concurrent.ledgerEntryId);
+    assert.equal(first.certification.refreshed === true || first.certification.reused === true, true);
+    assert.ok(first.certification.facts > 0);
+    assert.ok(first.certification.runId > 0);
     const replay = await persistMatchedPurchase(runtime, options);
     assert.equal(replay.matchId, first.matchId);
     assert.equal(replay.eventId, first.eventId);
     assert.equal(replay.ledgerEntryId, first.ledgerEntryId);
     assert.equal((await admin.query('SELECT count(*)::int AS count FROM business_events WHERE id=$1 AND scope_id=$2', [first.eventId, fixture.scopeId])).rows[0].count, 1);
+    const certificationRows = (await admin.query(`SELECT
+        (SELECT count(*)::int FROM reconciliation_runs WHERE id=$1 AND scope_id=$2 AND status='READY') AS runs,
+        (SELECT count(*)::int FROM certification_facts WHERE run_id=$1 AND business_event_id=$3) AS facts,
+        (SELECT count(*)::int FROM reconciliation_results WHERE run_id=$1) AS results`, [first.certification.runId, fixture.scopeId, first.eventId])).rows[0];
+    assert.equal(certificationRows.runs, 1);
+    assert.ok(certificationRows.facts > 0);
+    assert.ok(certificationRows.results > 0);
     assert.equal((await admin.query(`SELECT count(*)::int AS count FROM ledger_entries e
       WHERE e.scope_id=$1 AND e.source_event_id=$2 AND NOT EXISTS
         (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId, first.eventId])).rows[0].count, 1);
