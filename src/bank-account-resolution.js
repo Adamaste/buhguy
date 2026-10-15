@@ -1,5 +1,6 @@
 import { bankPayloadSha256, normalizeBankEvent } from './bank-ingestion.js';
 import { findActiveSourceProviderAccountBinding, SOURCE_PROVIDER_BINDING_PROVENANCE } from './bank-source-provider-binding.js';
+import { lockMatchedPurchaseBankTransaction, lockMatchedPurchaseSourceProvider } from './matched-purchase-locks.js';
 
 const RELATION_TYPES = new Set(['OWNER', 'AUTHORIZED_USER']);
 const INSTRUMENT_TYPES = new Set(['CARD', 'VIRTUAL_CARD', 'OTHER']);
@@ -169,6 +170,7 @@ export async function resolveBankTransactionAccount(pool, { bankTransactionId, f
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await lockMatchedPurchaseBankTransaction(client, transactionId);
     const context = await loadTransactionContext(client, transactionId);
     if (state !== 'UNKNOWN') {
       const account = (await client.query('SELECT id,scope_id FROM financial_accounts WHERE id=$1', [requiredId(financialAccountId, 'financialAccountId')])).rows[0];
@@ -234,7 +236,9 @@ async function insertIngestionInstrumentResolution(client, { transactionId, paym
 
 export async function resolveNewBankTransactionIdentity(client, { bankTransactionId }) {
   const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
+  await lockMatchedPurchaseBankTransaction(client, transactionId);
   const context = await loadIngestionContext(client, transactionId);
+  if (context.bankSourceId && context.provider) await lockMatchedPurchaseSourceProvider(client, context.bankSourceId, context.provider);
   const scopeCount = context.scope_ids.length;
   if (scopeCount !== 1) {
     const scopeState = scopeCount === 0 ? 'INGESTION_SCOPE_UNRESOLVED' : 'INGESTION_SCOPE_AMBIGUOUS';
@@ -344,6 +348,7 @@ export async function resolveBankTransactionAccountFromReference(pool, { bankTra
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await lockMatchedPurchaseBankTransaction(client, transactionId);
     const context = await loadTransactionContext(client, transactionId);
     if (context.accountReference == null && context.accountReferenceKind == null) {
       const existing = (await client.query(`SELECT bank_transaction_id,financial_account_id,resolution_state,provenance,reason,resolved_at
@@ -608,7 +613,7 @@ export async function resolveHistoricalBankTransactionAccountFromObservation(poo
     if (!compatibility.ok) return await rollbackHistorical(client, historicalFailure('Historical normalization compatibility conflict', { audit, candidateCount: candidates.length }));
     if (candidates.length !== 1) return await rollbackHistorical(client, historicalFailure(candidates.length ? 'Historical account reference is ambiguous' : 'Historical account reference has no candidate', { audit, candidateCount: candidates.length }));
 
-    if (persist) await client.query('SELECT pg_advisory_xact_lock($1)', [Number(row.transaction_id)]);
+    if (persist) await lockMatchedPurchaseBankTransaction(client, Number(row.transaction_id));
     const lockedCurrent = persist ? await currentHistoricalResolution(client, Number(row.transaction_id), true) : current;
     const accountId = Number(candidates[0].financial_account_id);
     const lockedAudit = historicalAudit(row, normalized, compatibility, lockedCurrent, candidates, provider);

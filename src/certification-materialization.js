@@ -4,6 +4,7 @@ import {
   certificationSourceStateKey,
   rebuildCertification,
 } from './certification.js';
+import { lockMatchedPurchaseScope } from './matched-purchase-locks.js';
 
 export const CERTIFICATION_MATERIALIZATION_VERSION = 'canonical-spending-certification-materialization-v1';
 
@@ -122,6 +123,7 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   }
   const deadline = Date.now() + overallTimeoutMs;
   const client = await pool.connect();
+  let releaseScopeLock = null;
   let destroyClient = false;
   let supportsTransactionTimeout = false;
   let transactionTimeoutConfigured = false;
@@ -133,6 +135,7 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   try {
     const serverVersionNum = Number((await client.query('SHOW server_version_num')).rows[0]?.server_version_num ?? 0);
     supportsTransactionTimeout = serverVersionNum >= 170000;
+    releaseScopeLock = await lockMatchedPurchaseScope(client, scopeKey);
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
     await client.query(`SET LOCAL statement_timeout = '${supportsTransactionTimeout ? statementTimeoutMs : Math.min(statementTimeoutMs, overallTimeoutMs)}ms'`);
@@ -140,7 +143,7 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
       await client.query(`SET LOCAL transaction_timeout = '${overallTimeoutMs}ms'`);
       transactionTimeoutConfigured = true;
     }
-    const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1 FOR UPDATE', [scopeKey])).rows[0];
+    const scope = (await client.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
     if (!scope) throw materializationError(`Accounting scope not found: ${scopeKey}`, 'CERTIFICATION_SCOPE_NOT_FOUND');
 
     const sourceStateKey = await certificationSourceStateKey(client, Number(scope.id));
@@ -156,10 +159,10 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
     if (independentlyObservedKey !== sourceStateKey) throw materializationError('Source state changed outside the materialization snapshot', 'CERTIFICATION_SOURCE_STATE_CONFLICT');
     assertDeadline(deadline);
 
-    const existing = (await client.query(`SELECT * FROM reconciliation_runs
+    const existing = (await client.query(`SELECT id,scope_id,model_version,source_state_key,period_from,period_to,status,finished_at FROM reconciliation_runs
       WHERE scope_id=$1 AND model_version=$2 AND source_state_key=$3
         AND period_from IS NULL AND period_to IS NULL
-      FOR UPDATE`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows;
+      `, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows;
     if (existing.length > 1) throw materializationError(`Multiple current certification runs exist for scope ${scope.id}`);
     if (existing.length === 1) {
       const run = existing[0];
@@ -172,7 +175,8 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
 
     assertDeadline(deadline);
     const run = (await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,period_from,period_to,status,finished_at)
-      VALUES($1,$2,$3,NULL,NULL,'READY',NOW()) RETURNING *`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
+      VALUES($1,$2,$3,NULL,NULL,'READY',NOW())
+      RETURNING id,scope_id,model_version,source_state_key,period_from,period_to,status,finished_at`, [scope.id, CERTIFICATION_MODEL_VERSION, sourceStateKey])).rows[0];
     if (failAfter === 'run') throw materializationError('Injected materialization failure after run', 'INJECTED_CERTIFICATION_MATERIALIZATION_FAILURE');
     for (const fact of projection.facts) {
       assertDeadline(deadline);
@@ -203,6 +207,9 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
     }
     throw error;
   } finally {
+    if (releaseScopeLock) {
+      try { await releaseScopeLock(); } catch { destroyClient = true; }
+    }
     client.removeListener('error', clientErrorHandler);
     client.release(destroyClient);
   }
