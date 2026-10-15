@@ -1,6 +1,7 @@
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
 import { NORMALIZED_FACT_VERSION } from './prepayment-settlement-matcher.js';
 import { resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
+import { lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 
 export const STANDALONE_PURCHASE_RULE = 'STANDALONE_PURCHASE_V1';
 export const STANDALONE_PURCHASE_VERSION = 'standalone-purchase-v1';
@@ -118,6 +119,7 @@ export async function persistStandalonePurchases(pool, { scopeKey = 'default', r
   const requested = receiptIds ? new Set(receiptIds.map((id) => String(id))) : null;
   const eligible = rowsResult.rows.filter((row) => (!requested || requested.has(String(row.id))) && standaloneEligibility({ ...row, operationType: Number(row.operationType), fiscalOperationType: Number(row.fiscalOperationType) }, sets).category === 'ELIGIBLE_STANDALONE');
   const persisted = await new BusinessEventGraphRepository(pool).withTransaction(async (tx) => {
+    await lockMatchedPurchaseScopeTransaction(tx.pool, scopeKey);
     const results = [];
     for (const row of eligible) results.push(await persistCandidate(tx, row, scopeKey));
     return results;
