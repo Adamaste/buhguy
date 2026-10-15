@@ -115,6 +115,8 @@ function validateRunOptions({ enabled, scopeKey, canaryScopeKey, approvedMatchKe
   }
   if (!Number.isSafeInteger(internalTransferMaxTimeDeltaMs) || internalTransferMaxTimeDeltaMs <= 0
     || !Number.isSafeInteger(receiptMaxTimeDeltaMs) || receiptMaxTimeDeltaMs <= 0) return 'MATCH_WINDOW_INVALID';
+  if (automaticPolicy && (internalTransferMaxTimeDeltaMs !== APPROVED_INTERNAL_TRANSFER_WINDOW_MS
+    || receiptMaxTimeDeltaMs !== APPROVED_RECEIPT_WINDOW_MS)) return 'AUTOMATION_WINDOW_POLICY_MISMATCH';
   return null;
 }
 

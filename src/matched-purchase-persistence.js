@@ -8,6 +8,7 @@ import { FNS_RECEIPT_CURRENCY_MODEL_VERSION, FNS_RECEIPT_CURRENCY_STATUSES, reso
 import { MATCHED_PURCHASE_AUTO_POLICY } from './matched-purchase-orchestration.js';
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
 import { SOURCE_PROVIDER_BINDING_PROVENANCE } from './bank-source-provider-binding.js';
+import { APPROVED_INTERNAL_TRANSFER_WINDOW_MS, APPROVED_RECEIPT_WINDOW_MS } from './matched-purchase-reconciliation-constants.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -312,7 +313,9 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
     || options.requireSourceProviderBinding !== true
     || !options.bankIngestedAfter
-    || options.approvedMatchKey)) fail('AUTO_POLICY_INVALID');
+    || options.approvedMatchKey
+    || options.internalTransferMaxTimeDeltaMs !== APPROVED_INTERNAL_TRANSFER_WINDOW_MS
+    || options.receiptMaxTimeDeltaMs !== APPROVED_RECEIPT_WINDOW_MS)) fail('AUTO_POLICY_INVALID');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

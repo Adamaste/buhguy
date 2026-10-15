@@ -16,6 +16,7 @@ import {
 import { MATCHED_PURCHASE_ORCHESTRATION_VERSION } from '../src/matched-purchase-orchestration.js';
 import { MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from '../src/bank-receipt-matching.js';
+import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
 
 const now = new Date('2026-10-12T12:00:00.000Z');
 const window = matchedPurchaseReconciliationWindow(now);
@@ -143,6 +144,35 @@ test('automatic policy requires explicit activation scope and a canonical new-ba
   assert.equal(noKey.status, 'COMPLETED');
   assert.equal(noKey.persisted, 0);
   assert.equal(MATCHED_PURCHASE_RECONCILIATION_AUTO_MAX_WRITES, 25);
+});
+
+test('automatic policy refuses widened matching windows before preview or persistence', async () => {
+  let previews = 0;
+  const options = {
+    enabled: true,
+    scopeKey: 'scope-a',
+    canaryScopeKey: 'scope-a',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: '2026-10-01T00:00:00.000Z',
+    ...window,
+    internalTransferMaxTimeDeltaMs: 5000,
+    receiptMaxTimeDeltaMs: 3600000,
+    preview: async () => { previews += 1; return projection(); },
+  };
+  const result = await runBoundedMatchedPurchaseReconciliation({}, options);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reasonCode, 'AUTOMATION_WINDOW_POLICY_MISMATCH');
+  assert.equal(previews, 0);
+
+  let connections = 0;
+  await assert.rejects(() => persistMatchedPurchase({
+    connect: async () => { connections += 1; throw new Error('must not acquire a writer connection'); },
+  }, {
+    ...options,
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+    requireSourceProviderBinding: true,
+  }), (error) => error.code === 'AUTO_POLICY_INVALID');
+  assert.equal(connections, 0);
 });
 
 test('approved automatic policy writes multiple verified decisions without per-purchase keys', async () => {

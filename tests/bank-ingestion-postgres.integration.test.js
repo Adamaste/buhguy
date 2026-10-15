@@ -292,6 +292,7 @@ integration('bank ingestion works under the restricted runtime role without extr
     await cleanupRuntimeRole(admin);
     await migrate(admin);
     await admin.query(`CREATE ROLE receipt_collector LOGIN PASSWORD '${password.replaceAll("'", "''")}'`);
+    await admin.query(readFileSync('db/migrations/020_runtime_payment_instrument_account_lookup.sql', 'utf8'));
     await admin.query(readFileSync('scripts/apply-bank-ingestion-grants.sql', 'utf8'));
     await createBankSource(admin, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Runtime role synthetic' });
     const person = (await admin.query("INSERT INTO persons(scope_id,person_key,display_name) SELECT id,$1,$2 FROM accounting_scopes WHERE scope_key='default' RETURNING id", [`runtime-person-${sourceKey}`, 'Runtime synthetic person'])).rows[0];
@@ -355,6 +356,25 @@ integration('bank ingestion works under the restricted runtime role without extr
       has_column_privilege('receipt_collector','public.bank_transactions','direction','SELECT') AS transactions_direction_select,
       has_column_privilege('receipt_collector','public.bank_transactions','normalization_status','SELECT') AS transactions_normalization_select,
       has_column_privilege('receipt_collector','public.bank_transactions','evidence_quality','SELECT') AS transactions_quality_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','amount','SELECT') AS transactions_amount_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','currency','SELECT') AS transactions_currency_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','occurred_at','SELECT') AS transactions_occurred_at_select,
+      has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','bank_transaction_id','SELECT') AS resolution_transaction_select,
+      has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','financial_account_id','SELECT') AS resolution_account_select,
+      has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','resolution_state','SELECT') AS resolution_state_select,
+      has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','provenance','SELECT') AS resolution_provenance_select,
+      has_column_privilege('receipt_collector','public.bank_source_provider_account_bindings','provenance','SELECT') AS binding_provenance_select,
+      has_column_privilege('receipt_collector','public.financial_accounts','currency','SELECT') AS account_currency_select,
+      has_column_privilege('receipt_collector','public.bank_receipt_matches','id','SELECT') AS match_id_select,
+      has_column_privilege('receipt_collector','public.bank_receipt_matches','scope_id','SELECT') AS match_scope_select,
+      has_column_privilege('receipt_collector','public.bank_receipt_matches','bank_transaction_id','SELECT') AS match_transaction_select,
+      has_column_privilege('receipt_collector','public.bank_receipt_matches','receipt_id','SELECT') AS match_receipt_select,
+      has_column_privilege('receipt_collector','public.bank_receipt_matches','match_key','SELECT') AS match_key_select,
+      has_table_privilege('receipt_collector','public.bank_receipt_matches','SELECT') AS matches_table_select,
+      has_table_privilege('receipt_collector','public.bank_receipt_matches','INSERT') AS matches_table_insert,
+      has_table_privilege('receipt_collector','public.bank_receipt_matches','UPDATE') AS matches_table_update,
+      has_table_privilege('receipt_collector','public.bank_transaction_account_resolution','SELECT') AS resolution_table_select,
+      has_table_privilege('receipt_collector','public.bank_transaction_account_resolution','UPDATE') AS resolution_table_update,
       has_table_privilege('receipt_collector','public.bank_event_observations','UPDATE') AS observations_update,
       has_table_privilege('receipt_collector','public.bank_event_observations','DELETE') AS observations_delete,
       has_table_privilege('receipt_collector','public.bank_transactions','DELETE') AS transactions_delete,
@@ -368,6 +388,25 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.transactions_direction_select, true);
     assert.equal(privilegeRows.transactions_normalization_select, true);
     assert.equal(privilegeRows.transactions_quality_select, true);
+    assert.equal(privilegeRows.transactions_amount_select, true);
+    assert.equal(privilegeRows.transactions_currency_select, true);
+    assert.equal(privilegeRows.transactions_occurred_at_select, true);
+    assert.equal(privilegeRows.resolution_transaction_select, true);
+    assert.equal(privilegeRows.resolution_account_select, true);
+    assert.equal(privilegeRows.resolution_state_select, true);
+    assert.equal(privilegeRows.resolution_provenance_select, true);
+    assert.equal(privilegeRows.binding_provenance_select, true);
+    assert.equal(privilegeRows.account_currency_select, true);
+    assert.equal(privilegeRows.match_id_select, true);
+    assert.equal(privilegeRows.match_scope_select, true);
+    assert.equal(privilegeRows.match_transaction_select, true);
+    assert.equal(privilegeRows.match_receipt_select, true);
+    assert.equal(privilegeRows.match_key_select, true);
+    assert.equal(privilegeRows.matches_table_select, false);
+    assert.equal(privilegeRows.matches_table_insert, false);
+    assert.equal(privilegeRows.matches_table_update, false);
+    assert.equal(privilegeRows.resolution_table_select, false);
+    assert.equal(privilegeRows.resolution_table_update, false);
     assert.equal(privilegeRows.observations_update, false);
     assert.equal(privilegeRows.observations_delete, false);
     assert.equal(privilegeRows.transactions_delete, false);
