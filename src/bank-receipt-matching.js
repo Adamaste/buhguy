@@ -17,7 +17,7 @@ export const BANK_RECEIPT_MATCHING_STATUSES = Object.freeze({
 });
 export const BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES = Object.freeze({
   STRICT_UNIQUE: 'STRICT_UNIQUE',
-  NEAREST_DETERMINISTIC: 'NEAREST_DETERMINISTIC',
+  UNAMBIGUOUS_COMPONENTS: 'UNAMBIGUOUS_COMPONENTS',
 });
 
 const NORMALIZED_FACT_VERSION = 'fiscal-normalizer-v1';
@@ -305,7 +305,7 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     const adjacent = type === 'bank' ? graph.bank.get(key) : graph.receipt.get(key);
     for (const next of adjacent) visit(type === 'bank' ? 'receipt' : 'bank', next, component);
   };
-  if (assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC) {
+  if (assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS) {
     const reservedBanks = new Set();
     const reservedReceipts = new Set();
     const bankByTransactionId = new Map(eligibleBanks.map((bank) => [Number(bank.bankTransactionId), bank]));
@@ -326,34 +326,28 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
       }
       addMatchedPair(bank, receipt, assignmentPolicy);
     }
-    const edges = [];
     for (const bank of eligibleBanks) {
-      if (reservedBanks.has(bank.candidateKey)) continue;
-      for (const receiptKey of graph.bank.get(bank.candidateKey) ?? []) {
-        if (reservedReceipts.has(receiptKey)) continue;
-        const receipt = receiptByKey.get(receiptKey);
-        edges.push({ bank, receipt, delta: Math.abs(Date.parse(bank.occurredAt) - Date.parse(receipt.dateTime)) });
+      if (visitedBanks.has(bank.candidateKey) || graph.bank.get(bank.candidateKey).length === 0) continue;
+      const component = [];
+      visit('bank', bank.candidateKey, component);
+      const banks = component.filter(([type]) => type === 'bank').map(([, key]) => bankByKey.get(key));
+      const receipts = component.filter(([type]) => type === 'receipt').map(([, key]) => receiptByKey.get(key));
+      const containsPersistedEndpoint = banks.some((item) => reservedBanks.has(item.candidateKey))
+        || receipts.some((item) => reservedReceipts.has(item.receiptCandidateKey));
+      if (!containsPersistedEndpoint && banks.length === 1 && receipts.length === 1
+        && graph.bank.get(banks[0].candidateKey).length === 1
+        && graph.receipt.get(receipts[0].receiptCandidateKey).length === 1) {
+        addMatchedPair(banks[0], receipts[0], assignmentPolicy);
+        continue;
       }
-    }
-    edges.sort((left, right) => left.delta - right.delta
-      || left.bank.candidateKey.localeCompare(right.bank.candidateKey)
-      || left.receipt.receiptCandidateKey.localeCompare(right.receipt.receiptCandidateKey));
-    const assignedBanks = new Set(reservedBanks);
-    const assignedReceipts = new Set(reservedReceipts);
-    for (const edge of edges) {
-      if (assignedBanks.has(edge.bank.candidateKey) || assignedReceipts.has(edge.receipt.receiptCandidateKey)) continue;
-      assignedBanks.add(edge.bank.candidateKey);
-      assignedReceipts.add(edge.receipt.receiptCandidateKey);
-      addMatchedPair(edge.bank, edge.receipt, assignmentPolicy);
-    }
-    for (const edge of edges) {
-      if (!assignedBanks.has(edge.bank.candidateKey)) {
-        statuses.set(`bank:${edge.bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
-        statusReasons.set(`bank:${edge.bank.candidateKey}`, 'NEAREST_POLICY_ALTERNATIVE_NOT_SELECTED');
-      }
-      if (!assignedReceipts.has(edge.receipt.receiptCandidateKey)) {
-        statuses.set(`receipt:${edge.receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
-        statusReasons.set(`receipt:${edge.receipt.receiptCandidateKey}`, 'NEAREST_POLICY_ALTERNATIVE_NOT_SELECTED');
+      for (const [type, key] of component) {
+        if ((type === 'bank' && reservedBanks.has(key)) || (type === 'receipt' && reservedReceipts.has(key))) continue;
+        const marker = `${type}:${key}`;
+        if (statuses.get(marker) === BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE) continue;
+        statuses.set(marker, BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS);
+        statusReasons.set(marker, containsPersistedEndpoint
+          ? 'PERSISTED_MATCH_ALTERNATIVE_REQUIRES_REVIEW'
+          : 'ALTERNATIVE_COMPATIBLE_MATCHES_REQUIRE_REVIEW');
       }
     }
   } else {
@@ -461,7 +455,10 @@ export async function loadBankReceiptMatching(pool, {
 } = {}) {
   validateWindow(internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
-  const journals = await loadBalancedBankJournalProjection(pool, { scopeKey, from, to, bankIngestedAfter });
+  const automaticOccurrenceCutoff = requireSourceProviderBinding ? bankIngestedAfter : null;
+  const journals = await loadBalancedBankJournalProjection(pool, {
+    scopeKey, from, to, bankIngestedAfter, bankOccurredAfter: automaticOccurrenceCutoff,
+  });
   const candidates = projectBankBusinessEventCandidates(journals.projections);
   const journalsByTransaction = new Map(journals.projections.map((journal) => [journal.bankTransactionId, journal]));
   const entries = candidates.projections.map((candidate) => ({
@@ -527,7 +524,7 @@ export async function loadBankReceiptMatching(pool, {
       f.credit_sum, f.credit_state, f.provision_sum, f.provision_state,
       receipt_item_coverage."receiptItemCount", receipt_item_coverage."normalizedItemFactCount", receipt_item_coverage."itemPaymentTypeCodes", receipt_scopes."scopeKeys"
     ORDER BY r.id`, params)).rows;
-  const persistedMatches = assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+  const persistedMatches = assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     ? (await pool.query(`SELECT m.bank_transaction_id AS "bankTransactionId", m.receipt_id AS "receiptId", m.match_key AS "matchKey"
       FROM bank_receipt_matches m
       JOIN accounting_scopes s ON s.id=m.scope_id
@@ -537,7 +534,8 @@ export async function loadBankReceiptMatching(pool, {
         AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
         AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
         AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
-      ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter])).rows
+        AND ($5::timestamptz IS NULL OR bt.occurred_at >= $5::timestamptz)
+      ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter, automaticOccurrenceCutoff])).rows
     : [];
   return matchBankReceipts(entries, ownershipSnapshot, receipts, {
     internalTransferMaxTimeDeltaMs,

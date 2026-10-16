@@ -84,15 +84,19 @@ async function lockedScope(client, scopeKey) {
 async function assertAutomaticSourceProviderBinding(client, scope, fields, options) {
   if (!options.automaticPolicy) return;
   if (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
-    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     || options.requireSourceProviderBinding !== true
     || typeof options.bankIngestedAfter !== 'string'
     || !Number.isFinite(Date.parse(options.bankIngestedAfter))) fail('AUTO_POLICY_INVALID');
-  const observation = (await client.query(`SELECT eo.bank_source_id,eo.created_at,eo.ingestion_metadata->>'provider' AS provider
+  const observation = (await client.query(`SELECT eo.bank_source_id,eo.created_at,eo.ingestion_metadata->>'provider' AS provider,
+      eo.created_at >= $2::timestamptz AS "observationAfterCutoff",
+      bt.occurred_at >= $2::timestamptz AS "purchaseAfterCutoff"
     FROM bank_event_observations eo
     JOIN bank_sources bs ON bs.id=eo.bank_source_id
-    WHERE eo.id=$1`, [fields.observationId])).rows[0];
-  if (!observation || !observation.provider || new Date(observation.created_at) < new Date(options.bankIngestedAfter)) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
+    JOIN bank_transactions bt ON bt.id=$3 AND bt.observation_id=eo.id
+    WHERE eo.id=$1`, [fields.observationId, options.bankIngestedAfter, fields.bankTransactionId])).rows[0];
+  if (!observation || !observation.provider || observation.observationAfterCutoff !== true
+    || observation.purchaseAfterCutoff !== true) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
   await lockMatchedPurchaseSourceProvider(client, observation.bank_source_id, observation.provider);
   const sourceScopes = (await client.query(`SELECT DISTINCT p.scope_id
     FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
@@ -323,7 +327,7 @@ async function validateExistingSupersessions(client, scope, eventId, enrichmentK
 
 async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader = loadBankReceiptMatching) {
   if (options.automaticPolicy && (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
-    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     || options.requireSourceProviderBinding !== true
     || !options.bankIngestedAfter
     || options.approvedMatchKey
@@ -339,7 +343,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const selected = options.matchKey ? initialMatches.find((item) => item.matchKey === options.matchKey) : initialMatches.length === 1 ? initialMatches[0] : null;
     if (!selected) fail(initialMatches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
     if (selected.scopeKey !== (options.scopeKey ?? 'default')) fail('MATCH_SCOPE_SELECTION_CONFLICT');
-    if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
       || selected.bank?.sourceProviderBindingVerified !== true)) fail('AUTO_MATCH_POLICY_PROOF_MISSING');
     const fields = matchFields(selected);
     const scope = await lockedScope(client, selected.scopeKey);

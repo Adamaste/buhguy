@@ -169,7 +169,7 @@ test('automatic policy refuses widened matching windows before preview or persis
     connect: async () => { connections += 1; throw new Error('must not acquire a writer connection'); },
   }, {
     ...options,
-    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
     requireSourceProviderBinding: true,
   }), (error) => error.code === 'AUTO_POLICY_INVALID');
   assert.equal(connections, 0);
@@ -197,7 +197,7 @@ test('approved automatic policy writes multiple verified decisions without per-p
           ...decision('PERSIST_REQUIRED', matchKey),
           approvalBasis: MATCHED_PURCHASE_AUTO_POLICY,
           automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
-          assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+          assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
           sourceProviderBindingVerified: true,
         })),
         summary: { ...projection().summary, persistRequired: 2 },
@@ -206,7 +206,7 @@ test('approved automatic policy writes multiple verified decisions without per-p
     persist: async (_pool, options) => {
       assert.equal(options.approvedMatchKey, null);
       assert.equal(options.automaticPolicy, MATCHED_PURCHASE_AUTO_POLICY);
-      assert.equal(options.assignmentPolicy, BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC);
+      assert.equal(options.assignmentPolicy, BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS);
       assert.equal(options.requireSourceProviderBinding, true);
       assert.equal(options.bankIngestedAfter, cutoff);
       persisted.push(options.matchKey);
@@ -229,8 +229,8 @@ test('automatic policy rejects a candidate missing binding proof and keeps proce
     bankIngestedAfter: '2026-10-01T00:00:00.000Z', ...window,
     preview: async () => projection({
       decisions: [
-        { ...decision('PERSIST_REQUIRED', 'c'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC, sourceProviderBindingVerified: false },
-        { ...decision('PERSIST_REQUIRED', 'd'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC, sourceProviderBindingVerified: true },
+        { ...decision('PERSIST_REQUIRED', 'c'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS, sourceProviderBindingVerified: false },
+        { ...decision('PERSIST_REQUIRED', 'd'.repeat(64)), approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS, sourceProviderBindingVerified: true },
       ],
       summary: { ...projection().summary, persistRequired: 2 },
     }),

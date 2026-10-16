@@ -9,7 +9,7 @@ import {
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
 
 export const MATCHED_PURCHASE_ORCHESTRATION_VERSION = 'matched-purchase-writer-orchestration-v1';
-export const MATCHED_PURCHASE_AUTO_POLICY = 'AUTO_EXACT_PURCHASE_NEAREST_5M_V1';
+export const MATCHED_PURCHASE_AUTO_POLICY = 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2';
 export const ORCHESTRATION_DECISIONS = Object.freeze({
   PERSIST_REQUIRED: 'PERSIST_REQUIRED',
   NOOP_ALREADY_PERSISTED: 'NOOP_ALREADY_PERSISTED',
@@ -128,7 +128,7 @@ function matchedDecision(match, enrichment, approvedMatchKey, automaticPolicy) {
   ].includes(enrichment.ledgerDisposition);
   const explicitlyApproved = match.matchKey === approvedMatchKey;
   const policyApproved = automaticPolicy === MATCHED_PURCHASE_AUTO_POLICY
-    && match.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    && match.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     && match.bank?.sourceProviderBindingVerified === true;
   const action = reusable
     ? ORCHESTRATION_DECISIONS.NOOP_ALREADY_PERSISTED
@@ -227,7 +227,7 @@ export async function previewMatchedPurchaseOrchestration(pool, options = {}) {
     internalTransferMaxTimeDeltaMs: options.internalTransferMaxTimeDeltaMs,
     receiptMaxTimeDeltaMs: options.receiptMaxTimeDeltaMs,
     ...(automaticPolicy ? {
-      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
       requireSourceProviderBinding: true,
     } : {}),
   };

@@ -195,7 +195,7 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
       || (runOptions.automaticPolicy && decision.orchestrationAction === ORCHESTRATION_DECISIONS.PERSIST_REQUIRED
         && (decision.approvalBasis !== runOptions.automaticPolicy
           || decision.automaticPolicy !== runOptions.automaticPolicy
-          || decision.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+          || decision.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
           || decision.sourceProviderBindingVerified !== true)))) {
       result.status = 'ERROR';
       result.errors = 1;
@@ -257,7 +257,7 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
           automaticPolicy: runOptions.automaticPolicy ?? null,
           bankIngestedAfter: runOptions.bankIngestedAfter ?? null,
           ...(runOptions.automaticPolicy ? {
-            assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+            assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
             requireSourceProviderBinding: true,
           } : {}),
           internalTransferMaxTimeDeltaMs: runOptions.internalTransferMaxTimeDeltaMs,

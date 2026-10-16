@@ -163,8 +163,17 @@ function normalizeBankIngestedAfter(value) {
   return new Date(Date.parse(value)).toISOString();
 }
 
-export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null, bankIngestedAfter = null } = {}) {
+function normalizeBankOccurredAfter(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw Object.assign(new Error('bank purchase cutoff is invalid'), { code: 'BANK_OCCURRED_AFTER_INVALID' });
+  }
+  return new Date(Date.parse(value)).toISOString();
+}
+
+export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null, bankIngestedAfter = null, bankOccurredAfter = null } = {}) {
   const ingestedAfter = normalizeBankIngestedAfter(bankIngestedAfter);
+  const occurredAfter = normalizeBankOccurredAfter(bankOccurredAfter);
   const result = await pool.query(`
     WITH source_scopes AS (
       SELECT bs.id AS bank_source_id,
@@ -199,6 +208,7 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
       AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
       AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
-    ORDER BY bt.id`, [scopeKey, from, to, ingestedAfter]);
+      AND ($5::timestamptz IS NULL OR bt.occurred_at >= $5::timestamptz)
+    ORDER BY bt.id`, [scopeKey, from, to, ingestedAfter, occurredAfter]);
   return projectBankCashFlowTransactions(result.rows, { scopeKey });
 }
