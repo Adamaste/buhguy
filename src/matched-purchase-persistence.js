@@ -88,11 +88,15 @@ async function assertAutomaticSourceProviderBinding(client, scope, fields, optio
     || options.requireSourceProviderBinding !== true
     || typeof options.bankIngestedAfter !== 'string'
     || !Number.isFinite(Date.parse(options.bankIngestedAfter))) fail('AUTO_POLICY_INVALID');
-  const observation = (await client.query(`SELECT eo.bank_source_id,eo.created_at,eo.ingestion_metadata->>'provider' AS provider
+  const observation = (await client.query(`SELECT eo.bank_source_id,eo.created_at,eo.ingestion_metadata->>'provider' AS provider,
+      eo.created_at >= $2::timestamptz AS "observationAfterCutoff",
+      bt.occurred_at >= $2::timestamptz AS "purchaseAfterCutoff"
     FROM bank_event_observations eo
     JOIN bank_sources bs ON bs.id=eo.bank_source_id
-    WHERE eo.id=$1`, [fields.observationId])).rows[0];
-  if (!observation || !observation.provider || new Date(observation.created_at) < new Date(options.bankIngestedAfter)) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
+    JOIN bank_transactions bt ON bt.id=$3 AND bt.observation_id=eo.id
+    WHERE eo.id=$1`, [fields.observationId, options.bankIngestedAfter, fields.bankTransactionId])).rows[0];
+  if (!observation || !observation.provider || observation.observationAfterCutoff !== true
+    || observation.purchaseAfterCutoff !== true) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
   await lockMatchedPurchaseSourceProvider(client, observation.bank_source_id, observation.provider);
   const sourceScopes = (await client.query(`SELECT DISTINCT p.scope_id
     FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id

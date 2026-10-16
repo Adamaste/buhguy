@@ -15,6 +15,7 @@ import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { syncReceipts } from '../src/sync.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
 import { MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
+import { persistMatchedPurchaseForTest } from '../src/matched-purchase-persistence.js';
 import {
   matchedPurchaseReconciliationWindow,
   runAccountingCatchupsWithMatchedPurchaseCanary,
@@ -316,7 +317,7 @@ integration('bank-first pair stays review-only until exact matchKey approval, th
 });
 
 integration('new bank-first purchase automatically reuses its receipt expense and survives duplicate delivery and restart', { concurrency: false }, async () => {
-  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
   const fixture = await createFixture('auto-bank-first-e2e', {
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
     bankIngestedAfter: cutoff,
@@ -367,7 +368,7 @@ integration('new bank-first purchase automatically reuses its receipt expense an
 integration('new FNS-first purchase is automatically linked when its bound bank event arrives later', { concurrency: false }, async () => {
   const fixture = await createFixture('auto-fns-first-e2e', {
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
-    bankIngestedAfter: new Date(Date.now() - 60_000).toISOString(),
+    bankIngestedAfter: new Date(Date.now() - 5 * 60_000).toISOString(),
   });
   try {
     const receipt = await syncFns(fixture, { receipts: [{ amount: '45.67', suffix: 'late-bank-receipt' }] });
@@ -390,7 +391,7 @@ integration('new automatic matching processes independent unique pairs across pr
   const fixture = await createFixture('auto-global-assignment-e2e', {
     canaryEnabled: false,
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
-    bankIngestedAfter: new Date(Date.now() - 60_000).toISOString(),
+    bankIngestedAfter: new Date(Date.now() - 15 * 60_000).toISOString(),
   });
   try {
     const base = Date.now() - 10 * 60_000;
@@ -494,8 +495,72 @@ integration('automatic matching cutoff excludes pre-activation bank observations
   } finally { await closeFixture(fixture); }
 });
 
+integration('automatic matching rejects old purchases even when their notifications arrive after cutoff', { concurrency: false }, async () => {
+  const cutoff = new Date(Date.now() - 30_000).toISOString();
+  const oldPurchaseAt = new Date(Date.parse(cutoff) - 60_000).toISOString();
+  const fixture = await createFixture('auto-old-purchase-new-observation-e2e', {
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: cutoff,
+  });
+  try {
+    const bank = await ingestBank(fixture, { amount: '9.25', id: 'old-purchase-late-notification', dateTime: oldPurchaseAt });
+    assert.equal(bank.status, 201);
+    const observation = (await pool.query(`SELECT eo.created_at,bt.occurred_at
+      FROM bank_transactions bt JOIN bank_event_observations eo ON eo.id=bt.observation_id
+      WHERE bt.id=$1`, [bank.body.transactionId])).rows[0];
+    assert.ok(new Date(observation.created_at) >= new Date(cutoff));
+    assert.ok(new Date(observation.occurred_at) < new Date(cutoff));
+
+    const receipt = await syncFns(fixture, { receipts: [{ amount: '9.25', suffix: 'old-purchase-receipt', dateTime: oldPurchaseAt }] });
+    assert.equal(receipt.syncResult.normalization_ready_count, 1);
+    assert.equal(receipt.accounting.reconciliations[0].persisted, 0);
+    const preview = await matchingForFixture(fixture, { automatic: true });
+    assert.equal(preview.summary.matchedPairs, 0);
+    const manualPreview = await loadBankReceiptMatching(pool, {
+      scopeKey: fixture.scopeKey,
+      ...matchedPurchaseReconciliationWindow(),
+      bankIngestedAfter: cutoff,
+      internalTransferMaxTimeDeltaMs: 5000,
+      receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.equal(manualPreview.summary.matchedPairs, 1);
+
+    const staleCandidate = (await loadBankReceiptMatching(pool, {
+      scopeKey: fixture.scopeKey,
+      ...matchedPurchaseReconciliationWindow(),
+      internalTransferMaxTimeDeltaMs: 5000,
+      receiptMaxTimeDeltaMs: 300000,
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+      requireSourceProviderBinding: true,
+    })).matches[0];
+    assert.ok(staleCandidate);
+    await assert.rejects(() => persistMatchedPurchaseForTest(pool, {
+      scopeKey: fixture.scopeKey,
+      ...matchedPurchaseReconciliationWindow(),
+      matchKey: staleCandidate.matchKey,
+      automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+      requireSourceProviderBinding: true,
+      bankIngestedAfter: cutoff,
+      internalTransferMaxTimeDeltaMs: 5000,
+      receiptMaxTimeDeltaMs: 300000,
+      matchingLoader: async () => ({ matches: [staleCandidate] }),
+    }), (error) => error.code === 'AUTO_BANK_EVENT_OUTSIDE_COHORT');
+
+    assert.deepEqual(await matchedCounts(fixture), {
+      matches: 0, bank_evidence: 0, matched_entries: 0, active_purchase_entries: 1, active_purchase_debits: '9.25',
+    });
+    assert.deepEqual(await expenseTotals(fixture), { amount: '9.25', count: 1 });
+    const replay = await runAutomaticForFixture(fixture);
+    assert.equal(replay.persisted, 0);
+    assert.equal(replay.reused, 0);
+    assert.equal((await matchedCounts(fixture)).matches, 0);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '9.25', count: 1 });
+  } finally { await closeFixture(fixture); }
+});
+
 integration('one purchase with two compatible receipts stays review-only while an independent pair is persisted', { concurrency: false }, async () => {
-  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
   const fixture = await createFixture('auto-one-bank-two-receipts-e2e', {
     canaryEnabled: false,
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
@@ -537,7 +602,7 @@ integration('one purchase with two compatible receipts stays review-only while a
 });
 
 integration('two purchases with one compatible receipt stay review-only without financial matching writes', { concurrency: false }, async () => {
-  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
   const fixture = await createFixture('auto-two-banks-one-receipt-e2e', {
     canaryEnabled: false,
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,

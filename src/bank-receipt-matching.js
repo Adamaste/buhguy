@@ -455,7 +455,10 @@ export async function loadBankReceiptMatching(pool, {
 } = {}) {
   validateWindow(internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
-  const journals = await loadBalancedBankJournalProjection(pool, { scopeKey, from, to, bankIngestedAfter });
+  const automaticOccurrenceCutoff = requireSourceProviderBinding ? bankIngestedAfter : null;
+  const journals = await loadBalancedBankJournalProjection(pool, {
+    scopeKey, from, to, bankIngestedAfter, bankOccurredAfter: automaticOccurrenceCutoff,
+  });
   const candidates = projectBankBusinessEventCandidates(journals.projections);
   const journalsByTransaction = new Map(journals.projections.map((journal) => [journal.bankTransactionId, journal]));
   const entries = candidates.projections.map((candidate) => ({
@@ -531,7 +534,8 @@ export async function loadBankReceiptMatching(pool, {
         AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
         AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
         AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
-      ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter])).rows
+        AND ($5::timestamptz IS NULL OR bt.occurred_at >= $5::timestamptz)
+      ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter, automaticOccurrenceCutoff])).rows
     : [];
   return matchBankReceipts(entries, ownershipSnapshot, receipts, {
     internalTransferMaxTimeDeltaMs,
