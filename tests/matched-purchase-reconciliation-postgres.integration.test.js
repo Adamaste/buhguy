@@ -234,10 +234,21 @@ async function matchingForFixture(fixture, { automatic = false } = {}) {
     internalTransferMaxTimeDeltaMs: 5000,
     receiptMaxTimeDeltaMs: 300000,
     ...(automatic ? {
-      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC,
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
       requireSourceProviderBinding: true,
       bankIngestedAfter: fixture.canary.bankIngestedAfter,
     } : {}),
+  });
+}
+
+async function runAutomaticForFixture(fixture) {
+  return runBoundedMatchedPurchaseReconciliation(pool, {
+    ...matchedPurchaseReconciliationWindow(),
+    enabled: true,
+    scopeKey: fixture.scopeKey,
+    canaryScopeKey: fixture.scopeKey,
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: fixture.canary.bankIngestedAfter,
   });
 }
 
@@ -375,28 +386,29 @@ integration('new FNS-first purchase is automatically linked when its bound bank 
   } finally { await closeFixture(fixture); }
 });
 
-integration('new automatic matching uses a global one-to-one assignment and rejects unbound providers', { concurrency: false }, async () => {
+integration('new automatic matching processes independent unique pairs across providers and rejects unbound providers', { concurrency: false }, async () => {
   const fixture = await createFixture('auto-global-assignment-e2e', {
+    canaryEnabled: false,
     automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
     bankIngestedAfter: new Date(Date.now() - 60_000).toISOString(),
   });
   try {
     const base = Date.now() - 10 * 60_000;
     await syncFns(fixture, { receipts: [
-      { amount: '20.00', suffix: 'nearest-receipt-a', dateTime: new Date(base + 30_000).toISOString() },
-      { amount: '20.00', suffix: 'nearest-receipt-b', dateTime: new Date(base + 240_000).toISOString() },
+      { amount: '20.00', suffix: 'independent-receipt-yandex', dateTime: new Date(base + 30_000).toISOString() },
+      { amount: '22.00', suffix: 'independent-receipt-sber', dateTime: new Date(base + 240_000).toISOString() },
     ] });
     const otherBank = await createAdditionalBoundBankSource(fixture, 'ru.sberbankmobile', 'sber');
     const banks = await Promise.all([
-      ingestBank(fixture, { amount: '20.00', id: 'nearest-bank-a', dateTime: new Date(base).toISOString() }),
+      ingestBank(fixture, { amount: '20.00', id: 'independent-bank-yandex', dateTime: new Date(base).toISOString() }),
       ingestBank(fixture, {
-        amount: '20.00', id: 'nearest-bank-b', dateTime: new Date(base + 240_000).toISOString(),
+        amount: '22.00', id: 'independent-bank-sber', dateTime: new Date(base + 240_000).toISOString(),
         provider: 'ru.sberbankmobile', adapter: 'android-notification',
         sourceKey: otherBank.sourceKey, credential: otherBank.credential,
         payload: {
           title: 'Покупка СИНТЕТИЧЕСКИЙ МЕРЧАНТ',
-          description: '20 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357',
-          text: '20 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357',
+          description: '22 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357',
+          text: '22 ₽ — Баланс: 123,45 ₽ Счёт карты МИР •• 1357',
         },
       }),
     ]);
@@ -418,8 +430,12 @@ integration('new automatic matching uses a global one-to-one assignment and reje
       banks: matching.bankStatuses.map((item) => ({ status: item.status, reasonCode: item.reasonCode })),
       receipts: matching.receiptStatuses.map((item) => ({ status: item.status, reasonCode: item.reasonCode })),
     }));
+    assert.equal((await matchedCounts(fixture)).matches, 0);
+    const reconciliation = await runAutomaticForFixture(fixture);
+    assert.equal(reconciliation.persisted, 2);
+    assert.equal(reconciliation.status, 'COMPLETED');
     assert.equal((await matchedCounts(fixture)).matches, 2);
-    assert.deepEqual(await expenseTotals(fixture), { amount: '40.00', count: 2 });
+    assert.deepEqual(await expenseTotals(fixture), { amount: '42.00', count: 2 });
     assert.equal((await matchedCounts(fixture)).active_purchase_entries, 2);
     const providerAssignments = (await pool.query(`SELECT eo.ingestion_metadata->>'provider' AS provider,
         m.financial_account_id,count(DISTINCT m.bank_transaction_id)::int AS banks,
@@ -475,6 +491,82 @@ integration('automatic matching cutoff excludes pre-activation bank observations
     assert.equal(receipt.accounting.reconciliations[0].persisted, 0);
     assert.equal((await matchedCounts(fixture)).matches, 0);
     assert.deepEqual(await expenseTotals(fixture), { amount: '8.00', count: 1 });
+  } finally { await closeFixture(fixture); }
+});
+
+integration('one purchase with two compatible receipts stays review-only while an independent pair is persisted', { concurrency: false }, async () => {
+  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const fixture = await createFixture('auto-one-bank-two-receipts-e2e', {
+    canaryEnabled: false,
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: cutoff,
+  });
+  try {
+    const base = Date.now() - 8 * 60_000;
+    await syncFns(fixture, { receipts: [
+      { amount: '20.00', suffix: 'ambiguous-a', dateTime: new Date(base).toISOString() },
+      { amount: '20.00', suffix: 'ambiguous-b', dateTime: new Date(base + 240_000).toISOString() },
+      { amount: '33.00', suffix: 'independent', dateTime: new Date(base + 120_000).toISOString() },
+    ] });
+    await ingestBank(fixture, { amount: '20.00', id: 'one-bank-two-receipts', dateTime: new Date(base + 120_000).toISOString() });
+    await ingestBank(fixture, { amount: '33.00', id: 'independent-pair', dateTime: new Date(base + 120_000).toISOString() });
+
+    const preview = await matchingForFixture(fixture, { automatic: true });
+    assert.equal(preview.summary.matchedPairs, 1);
+    assert.equal(preview.summary.ambiguousBankPurchases, 1);
+    assert.equal(preview.summary.ambiguousReceipts, 2);
+    assert.equal(preview.matches[0].amount, '33.00');
+
+    const before = await matchedCounts(fixture);
+    assert.equal(before.matches, 0);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '73.00', count: 3 });
+    const result = await runAutomaticForFixture(fixture);
+    assert.equal(result.persisted, 1);
+    assert.equal(result.ambiguous, 1);
+    assert.equal(result.ambiguousReceipts, 2);
+    assert.equal(result.status, 'REVIEW_REQUIRED');
+    assert.deepEqual(await expenseTotals(fixture), { amount: '73.00', count: 3 });
+    assert.deepEqual(await matchedCounts(fixture), {
+      matches: 1, bank_evidence: 1, matched_entries: 1, active_purchase_entries: 3, active_purchase_debits: '73.00',
+    });
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_receipt_matches
+      WHERE scope_id=$1 AND amount=20.00`, [fixture.scopeId])).rows[0].count, 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_receipt_matches
+      WHERE scope_id=$1 AND amount=33.00`, [fixture.scopeId])).rows[0].count, 1);
+  } finally { await closeFixture(fixture); }
+});
+
+integration('two purchases with one compatible receipt stay review-only without financial matching writes', { concurrency: false }, async () => {
+  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const fixture = await createFixture('auto-two-banks-one-receipt-e2e', {
+    canaryEnabled: false,
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: cutoff,
+  });
+  try {
+    const base = Date.now() - 8 * 60_000;
+    await syncFns(fixture, { receipts: [
+      { amount: '45.00', suffix: 'single-compatible', dateTime: new Date(base + 30_000).toISOString() },
+    ] });
+    await ingestBank(fixture, { amount: '45.00', id: 'competing-purchase-a', dateTime: new Date(base).toISOString() });
+    await ingestBank(fixture, { amount: '45.00', id: 'competing-purchase-b', dateTime: new Date(base + 60_000).toISOString() });
+
+    const preview = await matchingForFixture(fixture, { automatic: true });
+    assert.equal(preview.summary.matchedPairs, 0);
+    assert.equal(preview.summary.ambiguousBankPurchases, 2);
+    assert.equal(preview.summary.ambiguousReceipts, 1);
+    assert.ok(preview.bankStatuses.filter((row) => row.status === 'AMBIGUOUS').length >= 2);
+    assert.equal(preview.receiptStatuses[0].status, 'AMBIGUOUS');
+
+    const result = await runAutomaticForFixture(fixture);
+    assert.equal(result.persisted, 0);
+    assert.equal(result.ambiguous, 2);
+    assert.equal(result.ambiguousReceipts, 1);
+    assert.equal(result.status, 'REVIEW_REQUIRED');
+    assert.deepEqual(await matchedCounts(fixture), {
+      matches: 0, bank_evidence: 0, matched_entries: 0, active_purchase_entries: 1, active_purchase_debits: '45.00',
+    });
+    assert.deepEqual(await expenseTotals(fixture), { amount: '45.00', count: 1 });
   } finally { await closeFixture(fixture); }
 });
 

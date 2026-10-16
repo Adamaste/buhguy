@@ -84,7 +84,7 @@ async function lockedScope(client, scopeKey) {
 async function assertAutomaticSourceProviderBinding(client, scope, fields, options) {
   if (!options.automaticPolicy) return;
   if (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
-    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     || options.requireSourceProviderBinding !== true
     || typeof options.bankIngestedAfter !== 'string'
     || !Number.isFinite(Date.parse(options.bankIngestedAfter))) fail('AUTO_POLICY_INVALID');
@@ -323,7 +323,7 @@ async function validateExistingSupersessions(client, scope, eventId, enrichmentK
 
 async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader = loadBankReceiptMatching) {
   if (options.automaticPolicy && (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
-    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
     || options.requireSourceProviderBinding !== true
     || !options.bankIngestedAfter
     || options.approvedMatchKey
@@ -339,7 +339,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const selected = options.matchKey ? initialMatches.find((item) => item.matchKey === options.matchKey) : initialMatches.length === 1 ? initialMatches[0] : null;
     if (!selected) fail(initialMatches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
     if (selected.scopeKey !== (options.scopeKey ?? 'default')) fail('MATCH_SCOPE_SELECTION_CONFLICT');
-    if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.NEAREST_DETERMINISTIC
+    if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
       || selected.bank?.sourceProviderBindingVerified !== true)) fail('AUTO_MATCH_POLICY_PROOF_MISSING');
     const fields = matchFields(selected);
     const scope = await lockedScope(client, selected.scopeKey);
