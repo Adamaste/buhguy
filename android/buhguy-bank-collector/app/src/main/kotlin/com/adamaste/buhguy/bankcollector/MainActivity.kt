@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -59,6 +60,26 @@ class MainActivity : AppCompatActivity() {
             text = "Test connection / deliver pending"
             setOnClickListener { com.adamaste.buhguy.bankcollector.delivery.AppRuntime.enqueue(this@MainActivity) }
         })
+        val tbankDiagnosticToggle = CheckBox(this).apply {
+            text = "One-time local T-Bank extra-field capture (debit card *7268 only)"
+            isChecked = preferences.isTbankExtraDiagnosticsEnabled()
+            setOnCheckedChangeListener { _, enabled ->
+                if (enabled) preferences.startTbankExtraDiagnostics()
+                else preferences.setTbankExtraDiagnosticsEnabled(false)
+            }
+        }
+        layout.addView(tbankDiagnosticToggle)
+        layout.addView(TextView(this).apply {
+            text = "Off by default. Captures only a future purchase-shaped T-Bank notification carrying the confirmed *7268 mask. Only redacted field structure is saved on this device; extra fields are not added to the server event."
+        })
+        val tbankDiagnosticReport = TextView(this).apply {
+            text = preferences.tbankExtraDiagnosticsReport().ifBlank { "No local T-Bank extra-field report captured" }
+        }
+        layout.addView(tbankDiagnosticReport)
+        layout.addView(Button(this).apply {
+            text = "Clear local T-Bank diagnostic report"
+            setOnClickListener { preferences.clearTbankExtraDiagnosticsReport() }
+        })
         val pending = TextView(this).apply {
             tag = "diagnostics"
             text = "Pending events: loading..."
@@ -69,7 +90,12 @@ class MainActivity : AppCompatActivity() {
                 val pendingFlow = (application as BankCollectorApplication).database.outbox().pendingCountFlow()
                 preferences.diagnosticChanges()
                     .combine(pendingFlow) { _, count -> count }
-                    .collect { count -> pending.text = preferences.diagnosticsSnapshot(count).render() }
+                    .collect { count ->
+                        pending.text = preferences.diagnosticsSnapshot(count).render()
+                        tbankDiagnosticToggle.isChecked = preferences.isTbankExtraDiagnosticsEnabled()
+                        tbankDiagnosticReport.text = preferences.tbankExtraDiagnosticsReport()
+                            .ifBlank { "No local T-Bank extra-field report captured" }
+                    }
             }
         }
         setContentView(layout)

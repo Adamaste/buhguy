@@ -24,6 +24,8 @@ class AppPreferences(context: Context) {
     fun lastCallbackStage(): String = preferences.getString("lastCallbackStage", "never")!!
     fun lastListenerState(): String = preferences.getString("lastListenerState", "never")!!
     fun lastListenerStateAt(): String = preferences.getString("lastListenerStateAt", "never")!!
+    fun isTbankExtraDiagnosticsEnabled(): Boolean = preferences.getBoolean(TBANK_EXTRA_DIAGNOSTICS_ENABLED, false)
+    fun tbankExtraDiagnosticsReport(): String = preferences.getString(TBANK_EXTRA_DIAGNOSTICS_REPORT, "")!!
     fun save(serverUrl: String, sourceKey: String, allowedPackages: Set<String>) {
         preferences.edit().putString("serverUrl", serverUrl.trim()).putString("sourceKey", sourceKey.trim())
             .putStringSet("allowedPackages", allowedPackages.map(String::trim).filter(String::isNotEmpty).toSet()).apply()
@@ -62,6 +64,22 @@ class AppPreferences(context: Context) {
             .putString("lastListenerStateAt", timestamp)
             .apply()
 
+    fun startTbankExtraDiagnostics() = preferences.edit()
+        .putBoolean(TBANK_EXTRA_DIAGNOSTICS_ENABLED, true)
+        .remove(TBANK_EXTRA_DIAGNOSTICS_REPORT)
+        .apply()
+
+    fun setTbankExtraDiagnosticsEnabled(enabled: Boolean) =
+        preferences.edit().putBoolean(TBANK_EXTRA_DIAGNOSTICS_ENABLED, enabled).apply()
+
+    fun completeTbankExtraDiagnostics(sanitizedReport: String) = preferences.edit()
+        .putBoolean(TBANK_EXTRA_DIAGNOSTICS_ENABLED, false)
+        .putString(TBANK_EXTRA_DIAGNOSTICS_REPORT, sanitizedReport)
+        .apply()
+
+    fun clearTbankExtraDiagnosticsReport() =
+        preferences.edit().remove(TBANK_EXTRA_DIAGNOSTICS_REPORT).apply()
+
     fun diagnosticChanges(): Flow<Unit> = callbackFlow {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == null || key in DIAGNOSTIC_KEYS) trySend(Unit).isSuccess
@@ -86,6 +104,11 @@ class AppPreferences(context: Context) {
             "lastCallbackStage",
             "lastListenerState",
             "lastListenerStateAt",
+            TBANK_EXTRA_DIAGNOSTICS_ENABLED,
+            TBANK_EXTRA_DIAGNOSTICS_REPORT,
         )
+
+        private const val TBANK_EXTRA_DIAGNOSTICS_ENABLED = "tbankExtraDiagnosticsEnabled"
+        private const val TBANK_EXTRA_DIAGNOSTICS_REPORT = "tbankExtraDiagnosticsReport"
     }
 }
