@@ -1,14 +1,17 @@
 package com.adamaste.buhguy.bankcollector
 
 import android.content.Intent
+import android.content.Context
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.text.InputType
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
@@ -98,6 +101,11 @@ class MainActivity : AppCompatActivity() {
                     }
             }
         }
-        setContentView(layout)
+        setContentView(scrollableScreen(this, layout))
     }
+}
+
+internal fun scrollableScreen(context: Context, content: View): ScrollView = ScrollView(context).apply {
+    isFillViewport = true
+    addView(content)
 }
