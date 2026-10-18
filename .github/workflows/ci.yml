@@ -211,6 +211,26 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Validate release signing secrets are configured
+        shell: bash
+        env:
+          BUHGUY_ANDROID_KEYSTORE_B64: ${{ secrets.BUHGUY_ANDROID_KEYSTORE_B64 }}
+          BUHGUY_ANDROID_STORE_PASSWORD: ${{ secrets.BUHGUY_ANDROID_STORE_PASSWORD }}
+          BUHGUY_ANDROID_KEY_ALIAS: ${{ secrets.BUHGUY_ANDROID_KEY_ALIAS }}
+          BUHGUY_ANDROID_KEY_PASSWORD: ${{ secrets.BUHGUY_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            BUHGUY_ANDROID_KEYSTORE_B64 \
+            BUHGUY_ANDROID_STORE_PASSWORD \
+            BUHGUY_ANDROID_KEY_ALIAS \
+            BUHGUY_ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required Actions secret: ${name}"
+              exit 1
+            fi
+          done
+
       - name: Reconstruct signing keystore
         shell: bash
         env:
