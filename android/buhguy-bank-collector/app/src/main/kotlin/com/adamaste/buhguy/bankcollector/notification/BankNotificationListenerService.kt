@@ -53,6 +53,24 @@ class BankNotificationListenerService : NotificationListenerService() {
         }
         val mapper = NotificationEventMapper(registry, preferences.sourceKey())
         val snapshot = sbn.toSnapshot(channelId)
+        if (preferences.isTbankExtraDiagnosticsEnabled() &&
+            TbankNotificationExtraDiagnostics.shouldCapture(
+                snapshot.packageName,
+                listOf(snapshot.title, snapshot.text, snapshot.bigText, snapshot.subText),
+            )
+        ) {
+            val report = try {
+                TbankNotificationExtraDiagnostics.render(
+                    snapshot.packageName,
+                    TbankNotificationExtraReader.read(sbn.notification.extras),
+                )
+            } catch (_: Exception) {
+                TbankNotificationExtraDiagnostics.readFailureReport(snapshot.packageName)
+            }
+            if (report != null) {
+                preferences.completeTbankExtraDiagnostics(report)
+            }
+        }
         if (sourceMatch.requiresClassifier) {
             val classification = try {
                 YandexProFinancialClassifier().classify(snapshot)

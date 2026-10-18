@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,5 +53,32 @@ class AppPreferencesTest {
     @Test fun diagnosticChangesProvideInitialRefreshTrigger() = runBlocking {
         val preferences = AppPreferences(context)
         withTimeout(2_000) { preferences.diagnosticChanges().first() }
+    }
+
+    @Test fun tbankExtraDiagnosticsAreOptInAndStoreOnlyTheSanitizedReport() {
+        val preferences = AppPreferences(context)
+        assertFalse(preferences.isTbankExtraDiagnosticsEnabled())
+
+        preferences.startTbankExtraDiagnostics()
+        assertTrue(preferences.isTbankExtraDiagnosticsEnabled())
+        preferences.completeTbankExtraDiagnostics("EXTRA_BIG_TEXT=PRESENT(shape=PURCHASE <AMOUNT> CARD_MASK(*7268))")
+
+        assertFalse(preferences.isTbankExtraDiagnosticsEnabled())
+        assertEquals(
+            "EXTRA_BIG_TEXT=PRESENT(shape=PURCHASE <AMOUNT> CARD_MASK(*7268))",
+            preferences.tbankExtraDiagnosticsReport(),
+        )
+        assertFalse(context.getSharedPreferences("collector-config", android.content.Context.MODE_PRIVATE)
+            .all.values.any { it.toString().contains("785,19") || it.toString().contains("Ашан") })
+    }
+
+    @Test fun startingANewTbankCaptureClearsThePreviousLocalReport() {
+        val preferences = AppPreferences(context)
+        preferences.completeTbankExtraDiagnostics("old sanitized report")
+
+        preferences.startTbankExtraDiagnostics()
+
+        assertTrue(preferences.isTbankExtraDiagnosticsEnabled())
+        assertEquals("", preferences.tbankExtraDiagnosticsReport())
     }
 }
