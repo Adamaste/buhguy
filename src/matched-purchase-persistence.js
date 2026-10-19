@@ -10,6 +10,7 @@ import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.
 import { SOURCE_PROVIDER_BINDING_PROVENANCE } from './bank-source-provider-binding.js';
 import { APPROVED_INTERNAL_TRANSFER_WINDOW_MS, APPROVED_RECEIPT_WINDOW_MS } from './matched-purchase-reconciliation-constants.js';
 import { lockMatchedPurchaseBankTransaction, lockMatchedPurchaseScope, lockMatchedPurchaseSourceProvider } from './matched-purchase-locks.js';
+import { hasAutomaticMatchedPurchaseAccountProof, TBANK_ANDROID_PROVIDER } from './matched-purchase-account-proof.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -81,6 +82,75 @@ async function lockedScope(client, scopeKey) {
   return result.rows[0];
 }
 
+async function assertAutomaticTbankCardProof(client, scope, fields, observation) {
+  const sourceScopes = (await client.query(`SELECT DISTINCT p.scope_id
+    FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
+    WHERE sp.bank_source_id=$1
+    ORDER BY p.scope_id`, [observation.bank_source_id])).rows;
+  if (sourceScopes.length !== 1 || Number(sourceScopes[0].scope_id) !== Number(scope.id)) fail('AUTO_BANK_SCOPE_CHANGED');
+
+  const activeBindings = (await client.query(`SELECT financial_account_id
+    FROM bank_source_provider_account_bindings
+    WHERE bank_source_id=$1 AND provider=$2 AND active`, [observation.bank_source_id, TBANK_ANDROID_PROVIDER])).rows;
+  if (activeBindings.length !== 0) fail('AUTO_TBANK_PROVIDER_BINDING_FORBIDDEN');
+
+  const evidence = (await client.query(`SELECT bt.event_type,bt.direction,bt.normalization_status,bt.evidence_quality,
+      bt.amount::text AS amount,bt.currency,bt.account_reference_kind,bt.account_reference,
+      account_resolution.financial_account_id,account_resolution.resolution_state AS account_resolution_state,
+      account_resolution.provenance AS account_resolution_provenance,
+      account.scope_id AS account_scope_id,account.currency AS account_currency,account.active AS account_active,
+      account_scope.scope_key AS account_scope_key,
+      instrument_resolution.payment_instrument_id,instrument_resolution.resolution_state AS instrument_resolution_state,
+      instrument_resolution.provenance AS instrument_resolution_provenance,
+      instrument.provider AS instrument_provider,instrument.instrument_type,instrument.active AS instrument_active,
+      instrument.scope_id AS instrument_scope_id,instrument.financial_account_id AS instrument_account_id,
+      instrument_scope.scope_key AS instrument_scope_key,
+      (SELECT count(DISTINCT candidate_instrument.id)::integer
+       FROM bank_account_references candidate_reference
+       JOIN payment_instruments candidate_instrument ON candidate_instrument.id=candidate_reference.payment_instrument_id
+       JOIN financial_accounts candidate_account ON candidate_account.id=candidate_instrument.financial_account_id
+       WHERE candidate_reference.provider=$2
+         AND candidate_reference.reference_kind='MASKED_CARD'
+         AND candidate_reference.reference_value='****7268'
+         AND candidate_instrument.provider=$2 AND candidate_instrument.instrument_type='CARD'
+         AND candidate_instrument.active AND candidate_instrument.scope_id=account.scope_id
+         AND candidate_account.scope_id=candidate_instrument.scope_id AND candidate_account.active
+      ) AS matching_card_instrument_count,
+      EXISTS (
+        SELECT 1 FROM bank_account_references exact_reference
+        WHERE exact_reference.provider=$2 AND exact_reference.reference_kind='MASKED_CARD'
+          AND exact_reference.reference_value='****7268'
+          AND exact_reference.payment_instrument_id=instrument_resolution.payment_instrument_id
+      ) AS reference_targets_resolved_instrument
+    FROM bank_transactions bt
+    JOIN bank_event_observations eo ON eo.id=bt.observation_id
+    LEFT JOIN bank_transaction_account_resolution account_resolution ON account_resolution.bank_transaction_id=bt.id
+    LEFT JOIN financial_accounts account ON account.id=account_resolution.financial_account_id
+    LEFT JOIN accounting_scopes account_scope ON account_scope.id=account.scope_id
+    LEFT JOIN bank_transaction_payment_instrument_resolution instrument_resolution ON instrument_resolution.bank_transaction_id=bt.id
+    LEFT JOIN payment_instruments instrument ON instrument.id=instrument_resolution.payment_instrument_id
+    LEFT JOIN accounting_scopes instrument_scope ON instrument_scope.id=instrument.scope_id
+    WHERE bt.id=$1 AND eo.id=$3 AND eo.ingestion_metadata->>'provider'=$2`, [fields.bankTransactionId, TBANK_ANDROID_PROVIDER, fields.observationId])).rows[0];
+
+  if (!evidence
+    || evidence.event_type !== 'PURCHASE' || evidence.direction !== 'DEBIT'
+    || evidence.normalization_status !== 'READY' || evidence.evidence_quality !== 'EXACT'
+    || evidence.amount !== fields.amount || evidence.currency !== 'RUB' || evidence.currency !== fields.currency
+    || evidence.account_reference_kind !== 'MASKED_CARD' || evidence.account_reference !== '****7268'
+    || Number(evidence.financial_account_id) !== fields.financialAccountId
+    || evidence.account_resolution_state !== 'EXACT' || evidence.account_resolution_provenance !== 'OBSERVED_PROVIDER_REFERENCE'
+    || Number(evidence.account_scope_id) !== Number(scope.id) || evidence.account_scope_key !== scope.scope_key
+    || evidence.account_currency !== 'RUB' || evidence.account_active !== true
+    || evidence.instrument_resolution_state !== 'EXACT' || evidence.instrument_resolution_provenance !== 'OBSERVED_PROVIDER_REFERENCE'
+    || !Number.isSafeInteger(Number(evidence.payment_instrument_id)) || Number(evidence.payment_instrument_id) <= 0
+    || evidence.instrument_provider !== TBANK_ANDROID_PROVIDER || evidence.instrument_type !== 'CARD'
+    || evidence.instrument_active !== true || Number(evidence.instrument_account_id) !== fields.financialAccountId
+    || Number(evidence.instrument_scope_id) !== Number(scope.id) || evidence.instrument_scope_key !== scope.scope_key
+    || Number(evidence.matching_card_instrument_count) !== 1 || evidence.reference_targets_resolved_instrument !== true) {
+    fail('AUTO_TBANK_CARD_PROOF_UNVERIFIED');
+  }
+}
+
 async function assertAutomaticSourceProviderBinding(client, scope, fields, options) {
   if (!options.automaticPolicy) return;
   if (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
@@ -98,6 +168,10 @@ async function assertAutomaticSourceProviderBinding(client, scope, fields, optio
   if (!observation || !observation.provider || observation.observationAfterCutoff !== true
     || observation.purchaseAfterCutoff !== true) fail('AUTO_BANK_EVENT_OUTSIDE_COHORT');
   await lockMatchedPurchaseSourceProvider(client, observation.bank_source_id, observation.provider);
+  if (observation.provider === TBANK_ANDROID_PROVIDER) {
+    await assertAutomaticTbankCardProof(client, scope, fields, observation);
+    return;
+  }
   const sourceScopes = (await client.query(`SELECT DISTINCT p.scope_id
     FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
     WHERE sp.bank_source_id=$1 AND sp.relation_type='OWNER'
@@ -344,7 +418,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     if (!selected) fail(initialMatches.length ? 'MATCH_SELECTION_REQUIRED' : 'MATCH_NOT_FOUND');
     if (selected.scopeKey !== (options.scopeKey ?? 'default')) fail('MATCH_SCOPE_SELECTION_CONFLICT');
     if (options.automaticPolicy && (selected.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
-      || selected.bank?.sourceProviderBindingVerified !== true)) fail('AUTO_MATCH_POLICY_PROOF_MISSING');
+      || !hasAutomaticMatchedPurchaseAccountProof(selected.bank))) fail('AUTO_MATCH_POLICY_PROOF_MISSING');
     const fields = matchFields(selected);
     const scope = await lockedScope(client, selected.scopeKey);
     const locked = await lockInputs(client, scope, fields, options);

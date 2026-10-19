@@ -467,6 +467,8 @@ integration('matched purchase writer is idempotent under the restricted runtime 
       '017_bank_source_provider_account_bindings.sql',
       '020_runtime_payment_instrument_account_lookup.sql',
       '021_matched_purchase_writer_privileges.sql',
+      '022_tbank_card_resolution_lookup_grants.sql',
+      '023_tbank_v2_card_proof_lookup_grants.sql',
     ]) {
       await admin.query(await readFile(new URL(`../db/migrations/${migration}`, import.meta.url), 'utf8'));
     }
@@ -477,6 +479,18 @@ integration('matched purchase writer is idempotent under the restricted runtime 
         AND has_table_privilege('receipt_collector',c.oid,'SELECT')`)).rows[0].count);
     assert.equal(tableWideSelectCount, 0, 'runtime role must not receive table-wide SELECT grants');
     assert.equal((await admin.query("SELECT has_column_privilege('receipt_collector','public.bank_event_observations','payload','SELECT') AS allowed")).rows[0].allowed, false, 'runtime role must not read raw bank notification payloads');
+    const cardProofPrivileges = (await admin.query(`SELECT
+      has_column_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','bank_transaction_id','SELECT') AS transaction_id,
+      has_column_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','payment_instrument_id','SELECT') AS instrument_id,
+      has_column_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','resolution_state','SELECT') AS state,
+      has_column_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','provenance','SELECT') AS provenance,
+      has_column_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','reason','SELECT') AS reason,
+      has_table_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','UPDATE') AS update_allowed,
+      has_table_privilege('receipt_collector','public.bank_transaction_payment_instrument_resolution','DELETE') AS delete_allowed`)).rows[0];
+    assert.deepEqual(cardProofPrivileges, {
+      transaction_id: true, instrument_id: true, state: true, provenance: true,
+      reason: false, update_allowed: false, delete_allowed: false,
+    });
 
     const privilegeRows = (await admin.query(`SELECT table_name,
         has_table_privilege('receipt_collector',format('public.%I',table_name),'INSERT') AS table_insert,

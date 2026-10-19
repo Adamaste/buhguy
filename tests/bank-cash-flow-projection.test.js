@@ -77,6 +77,65 @@ test('account identity is concrete only from explicit resolved account evidence'
   assert.equal(unknown.financialAccountId, null);
 });
 
+function tbankCardProofRow(overrides = {}) {
+  return base({
+    provider: 'com.idamob.tinkoff.android',
+    accountReferenceKind: 'MASKED_CARD',
+    accountReference: '****7268',
+    financialAccountId: 42,
+    accountResolutionState: 'EXACT',
+    accountResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE',
+    financialAccountScopeKey: 'scope-a',
+    financialAccountActive: true,
+    financialAccountCurrency: 'RUB',
+    paymentInstrumentId: 81,
+    paymentInstrumentResolutionState: 'EXACT',
+    paymentInstrumentResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE',
+    paymentInstrumentProvider: 'com.idamob.tinkoff.android',
+    paymentInstrumentType: 'CARD',
+    paymentInstrumentActive: true,
+    paymentInstrumentScopeKey: 'scope-a',
+    paymentInstrumentFinancialAccountId: 42,
+    matchingCardReferenceInstrumentCount: 1,
+    tbankReferenceTargetsResolvedInstrument: true,
+    ...overrides,
+  });
+}
+
+test('T-Bank exact active debit-card resolver proof is narrow, scope-bound, and account-id agnostic', () => {
+  const valid = projectBankCashFlowTransaction(tbankCardProofRow());
+  assert.equal(valid.financialAccountId, 42);
+  assert.equal(valid.tbankCardSpecificAccountProofVerified, true);
+  assert.equal(valid.sourceProviderBindingVerified, undefined);
+
+  for (const overrides of [
+    { accountReference: '****1357' },
+    { accountReference: null },
+    { accountReferenceKind: 'MASKED_ACCOUNT' },
+    { provider: 'com.other.bank' },
+    { sourceEventType: 'OUTGOING_TRANSFER' },
+    { direction: 'CREDIT' },
+    { normalizationStatus: 'PARTIAL' },
+    { evidenceQuality: 'PARTIAL' },
+    { currency: 'EUR', financialAccountCurrency: 'EUR' },
+    { accountResolutionState: 'MANUAL' },
+    { accountResolutionProvenance: 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT' },
+    { paymentInstrumentResolutionState: 'UNKNOWN' },
+    { paymentInstrumentResolutionProvenance: 'OTHER' },
+    { paymentInstrumentType: 'OTHER' },
+    { paymentInstrumentActive: false },
+    { financialAccountActive: false },
+    { paymentInstrumentFinancialAccountId: 99 },
+    { matchingCardReferenceInstrumentCount: 2 },
+    { tbankReferenceTargetsResolvedInstrument: false },
+    { paymentInstrumentScopeKey: 'scope-b' },
+    { financialAccountScopeKey: 'scope-b' },
+    { sourceScopeKeys: ['scope-a', 'scope-b'] },
+  ]) {
+    assert.equal(projectBankCashFlowTransaction(tbankCardProofRow(overrides)).tbankCardSpecificAccountProofVerified ?? false, false, JSON.stringify(overrides));
+  }
+});
+
 test('canonicalizes NUMERIC(18,2) money as a string without IEEE-754 rounding', () => {
   const result = projectBankCashFlowTransaction(base({ amount: '99999999999999.99' }));
   assert.equal(result.amount, '99999999999999.99');
@@ -118,5 +177,5 @@ test('loader uses SELECT-only query and half-open period parameters', async () =
   assert.equal(result.summary.projectedTransactions, 1);
   assert.match(calls[0].sql, /SELECT/);
   assert.doesNotMatch(calls[0].sql, /\b(INSERT|UPDATE|DELETE|MERGE)\b/i);
-  assert.deepEqual(calls[0].params, ['scope-a', '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z']);
+  assert.deepEqual(calls[0].params, ['scope-a', '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z', null, null]);
 });

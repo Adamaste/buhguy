@@ -44,6 +44,31 @@ function bankEntry(overrides = {}) {
   return { journal, candidate: projectBankBusinessEventCandidate(journal) };
 }
 
+function tbankBankEntry(overrides = {}) {
+  return bankEntry({
+    provider: 'com.idamob.tinkoff.android',
+    accountReferenceKind: 'MASKED_CARD',
+    accountReference: '****7268',
+    financialAccountId: 42,
+    accountResolutionState: 'EXACT',
+    accountResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE',
+    financialAccountScopeKey: 'scope-a',
+    financialAccountActive: true,
+    financialAccountCurrency: 'RUB',
+    paymentInstrumentId: 81,
+    paymentInstrumentResolutionState: 'EXACT',
+    paymentInstrumentResolutionProvenance: 'OBSERVED_PROVIDER_REFERENCE',
+    paymentInstrumentProvider: 'com.idamob.tinkoff.android',
+    paymentInstrumentType: 'CARD',
+    paymentInstrumentActive: true,
+    paymentInstrumentScopeKey: 'scope-a',
+    paymentInstrumentFinancialAccountId: 42,
+    matchingCardReferenceInstrumentCount: 1,
+    tbankReferenceTargetsResolvedInstrument: true,
+    ...overrides,
+  });
+}
+
 function receiptRow(overrides = {}) {
   return {
     receiptId: 20,
@@ -270,6 +295,45 @@ test('automatic matching does not guess when source/provider binding evidence is
   assert.equal(result.matches.length, 0);
   assert.equal(result.bankStatuses[0].reasonCode, 'BANK_SOURCE_PROVIDER_BINDING_UNPROVEN');
   assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+});
+
+test('automatic matching accepts only the exact T-Bank card proof and never provider-wide fallback', () => {
+  const receipts = [receiptRow()];
+  const options = {
+    internalTransferMaxTimeDeltaMs: 60_000,
+    receiptMaxTimeDeltaMs: 60_000,
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+    requireSourceProviderBinding: true,
+  };
+  const accepted = matchBankReceipts([tbankBankEntry()], ownership([owner(42)]), receipts, options);
+  assert.equal(accepted.matches.length, 1);
+  assert.equal(accepted.matches[0].bank.tbankCardSpecificAccountProofVerified, true);
+  assert.equal(accepted.matches[0].bank.financialAccountId, 42);
+  assert.equal(accepted.matches[0].bank.sourceProviderBindingVerified, undefined);
+
+  for (const entry of [
+    tbankBankEntry({ accountReference: '****1357' }),
+    tbankBankEntry({ paymentInstrumentResolutionState: 'UNKNOWN' }),
+    tbankBankEntry({ sourceProviderBindingVerified: true, accountReference: null }),
+  ]) {
+    const result = matchBankReceipts([entry], ownership([owner(42)]), receipts, options);
+    assert.equal(result.matches.length, 0);
+    assert.equal(result.bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  }
+});
+
+test('Yandex and Sber automatic matching continue to use their existing source/provider proof', () => {
+  for (const provider of ['com.yandex.bank', 'ru.sberbankmobile']) {
+    const result = matchBankReceipts([bankEntry({ provider, sourceProviderBindingVerified: true })], ownership(), [receiptRow()], {
+      internalTransferMaxTimeDeltaMs: 60_000,
+      receiptMaxTimeDeltaMs: 60_000,
+      assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+      requireSourceProviderBinding: true,
+    });
+    assert.equal(result.matches.length, 1, provider);
+    assert.equal(result.matches[0].bank.sourceProviderBindingVerified, true);
+    assert.equal(result.matches[0].bank.tbankCardSpecificAccountProofVerified, undefined);
+  }
 });
 
 test('receipt statuses preserve ids and matcher-owned reasons at every status', () => {

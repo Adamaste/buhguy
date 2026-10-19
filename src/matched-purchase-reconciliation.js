@@ -16,6 +16,7 @@ import {
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
 import { persistMatchedPurchase } from './matched-purchase-persistence.js';
 import { deriveAccountingCatchupScopeKeys } from './source-sync-cycle.js';
+import { hasAutomaticMatchedPurchaseAccountProof } from './matched-purchase-account-proof.js';
 
 export const MATCHED_PURCHASE_RECONCILIATION_ENABLED_ENV = 'MATCHED_PURCHASE_RECONCILIATION_ENABLED';
 export const MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE_ENV = 'MATCHED_PURCHASE_RECONCILIATION_CANARY_SCOPE';
@@ -196,7 +197,7 @@ export async function runBoundedMatchedPurchaseReconciliation(pool, options = {}
         && (decision.approvalBasis !== runOptions.automaticPolicy
           || decision.automaticPolicy !== runOptions.automaticPolicy
           || decision.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
-          || decision.sourceProviderBindingVerified !== true)))) {
+          || !hasAutomaticMatchedPurchaseAccountProof(decision))))) {
       result.status = 'ERROR';
       result.errors = 1;
       result.reasonCode = 'PREVIEW_CONTRACT_INVALID';

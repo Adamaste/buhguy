@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import crypto from 'node:crypto';
-import { buildMatchedPurchaseOrchestrationPreview, logMatchedPurchaseOrchestrationPreview } from '../src/matched-purchase-orchestration.js';
+import { buildMatchedPurchaseOrchestrationPreview, logMatchedPurchaseOrchestrationPreview, MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
 import { runMatchedPurchaseOrchestrationCommand } from '../src/cli.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from '../src/bank-receipt-matching.js';
 
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const match = (suffix = 'a') => ({
@@ -89,6 +90,38 @@ test('orchestration identity is stable when only the action changes', () => {
   assert.equal(refine.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
   assert.equal(noop.decisions[0].orchestrationAction, 'NOOP_ALREADY_PERSISTED');
   assert.equal(refine.decisions[0].orchestrationKey, noop.decisions[0].orchestrationKey);
+});
+
+test('automatic orchestration accepts the T-Bank card-specific proof but rejects its provider-wide fallback', () => {
+  const exact = {
+    ...match(),
+    assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+    bank: {
+      ...match().bank,
+      provider: 'com.idamob.tinkoff.android',
+      tbankCardSpecificAccountProofVerified: true,
+    },
+  };
+  const allowed = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [exact] }),
+    enrichments: [enrichment(exact, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+  });
+  assert.equal(allowed.decisions[0].orchestrationAction, 'PERSIST_REQUIRED');
+  assert.equal(allowed.decisions[0].tbankCardSpecificAccountProofVerified, true);
+  assert.equal(allowed.decisions[0].sourceProviderBindingVerified, undefined);
+
+  const fallbackOnly = {
+    ...exact,
+    bank: { ...exact.bank, sourceProviderBindingVerified: true, tbankCardSpecificAccountProofVerified: false },
+  };
+  const blocked = buildMatchedPurchaseOrchestrationPreview({
+    matching: matching({ matches: [fallbackOnly] }),
+    enrichments: [enrichment(fallbackOnly, 'FUTURE_SINGLE_LEDGER_ENTRY_REQUIRED')],
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+  });
+  assert.equal(blocked.decisions[0].orchestrationAction, 'BLOCKED');
+  assert.equal(blocked.decisions[0].approvalBasis, 'NONE');
 });
 
 test('blocked enrichment and ambiguous matching require review, while ordinary unmatched evidence is visible', () => {

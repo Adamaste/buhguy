@@ -7,6 +7,7 @@ import {
   loadMatchedPurchaseEnrichment,
 } from './matched-purchase-enrichment-projection.js';
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
+import { hasAutomaticMatchedPurchaseAccountProof } from './matched-purchase-account-proof.js';
 
 export const MATCHED_PURCHASE_ORCHESTRATION_VERSION = 'matched-purchase-writer-orchestration-v1';
 export const MATCHED_PURCHASE_AUTO_POLICY = 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2';
@@ -66,7 +67,9 @@ function safeDecisionFields(match, enrichment, action, reasonCode) {
     orchestrationAction: action,
     reasonCode: reasonCode ?? enrichment?.reasonCode ?? null,
     ...(match?.assignmentPolicy ? { assignmentPolicy: match.assignmentPolicy } : {}),
+    ...(typeof bank.provider === 'string' ? { provider: bank.provider } : {}),
     ...(match?.bank?.sourceProviderBindingVerified === true ? { sourceProviderBindingVerified: true } : {}),
+    ...(match?.bank?.tbankCardSpecificAccountProofVerified === true ? { tbankCardSpecificAccountProofVerified: true } : {}),
   };
 }
 
@@ -129,7 +132,7 @@ function matchedDecision(match, enrichment, approvedMatchKey, automaticPolicy) {
   const explicitlyApproved = match.matchKey === approvedMatchKey;
   const policyApproved = automaticPolicy === MATCHED_PURCHASE_AUTO_POLICY
     && match.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
-    && match.bank?.sourceProviderBindingVerified === true;
+    && hasAutomaticMatchedPurchaseAccountProof(match.bank);
   const action = reusable
     ? ORCHESTRATION_DECISIONS.NOOP_ALREADY_PERSISTED
     : actionable && (explicitlyApproved || policyApproved)

@@ -75,3 +75,12 @@ test('T-Bank card resolution adds only the minimum runtime lookup privileges', a
   assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
   assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
 });
+
+test('T-Bank V2 card proof grants only read access to the required instrument resolution columns', async () => {
+  const sql = await readFile(new URL('../db/migrations/023_tbank_v2_card_proof_lookup_grants.sql', import.meta.url), 'utf8');
+  assert.match(sql, /GRANT SELECT \(bank_transaction_id, payment_instrument_id, resolution_state, provenance\) ON public\.bank_transaction_payment_instrument_resolution TO receipt_collector/);
+  assert.match(sql, /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'receipt_collector'\)/);
+  assert.doesNotMatch(sql, /GRANT SELECT\s+ON public\./i);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
+  assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
+});
