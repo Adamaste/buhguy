@@ -6,6 +6,7 @@ const RELATION_TYPES = new Set(['OWNER', 'AUTHORIZED_USER']);
 const INSTRUMENT_TYPES = new Set(['CARD', 'VIRTUAL_CARD', 'OTHER']);
 const REFERENCE_KINDS = new Set(['MASKED_CARD', 'MASKED_ACCOUNT', 'OTHER']);
 const RESOLUTION_STATES = new Set(['EXACT', 'MANUAL', 'RECONCILED', 'UNKNOWN']);
+const TBANK_ANDROID_PROVIDER = 'com.idamob.tinkoff.android';
 export const HISTORICAL_REPLAY_PROVENANCE = 'HISTORICAL_OBSERVATION_REPLAY';
 
 function requiredText(value, field, max = 200) {
@@ -234,6 +235,78 @@ async function insertIngestionInstrumentResolution(client, { transactionId, paym
   return { paymentInstrumentId, resolutionState, provenance, reason };
 }
 
+async function resolveTbankTransactionIdentity(client, { transactionId, context, scopeId }) {
+  const hasMaskedCard = context.accountReferenceKind === 'MASKED_CARD'
+    && typeof context.accountReference === 'string'
+    && context.accountReference.length > 0;
+  const candidates = hasMaskedCard
+    ? (await client.query(`SELECT DISTINCT r.payment_instrument_id, pi.financial_account_id,
+          a.id AS validated_financial_account_id
+        FROM bank_account_references r
+        JOIN payment_instruments pi ON pi.id=r.payment_instrument_id
+        LEFT JOIN financial_accounts a
+          ON a.id=pi.financial_account_id AND a.scope_id=pi.scope_id AND a.active
+        WHERE r.provider=$1 AND r.reference_kind='MASKED_CARD' AND r.reference_value=$2
+          AND pi.provider=$1 AND pi.instrument_type='CARD' AND pi.active AND pi.scope_id=$3
+        ORDER BY r.payment_instrument_id`, [TBANK_ANDROID_PROVIDER, context.accountReference, scopeId])).rows
+    : [];
+
+  const ambiguous = candidates.length > 1;
+  const paymentInstrument = candidates.length === 1
+    ? await insertIngestionInstrumentResolution(client, {
+      transactionId,
+      paymentInstrumentId: Number(candidates[0].payment_instrument_id),
+      resolutionState: 'EXACT',
+      provenance: 'OBSERVED_PROVIDER_REFERENCE',
+      reason: 'One exact T-Bank masked-card reference identifies one active payment instrument in scope',
+    })
+    : await insertIngestionInstrumentResolution(client, {
+      transactionId,
+      provenance: ambiguous ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED',
+      reason: ambiguous
+        ? 'Exact T-Bank masked-card reference has multiple active payment instruments in scope'
+        : 'No exact T-Bank masked-card reference identifies an active payment instrument in scope',
+    });
+
+  let account;
+  if (ambiguous) {
+    account = await insertIngestionAccountResolution(client, {
+      transactionId,
+      provenance: 'OBSERVED_PROVIDER_REFERENCE_AMBIGUOUS',
+      reason: 'Exact T-Bank masked-card reference has multiple active payment instruments in scope',
+    });
+  } else if (candidates.length !== 1 || candidates[0].financial_account_id == null
+    || candidates[0].validated_financial_account_id == null) {
+    account = await insertIngestionAccountResolution(client, {
+      transactionId,
+      provenance: 'INGESTION_CARD_ACCOUNT_UNRESOLVED',
+      reason: 'T-Bank account resolution requires one exact card reference linked to an active financial account in the same scope',
+    });
+  } else {
+    const accountId = Number(candidates[0].validated_financial_account_id);
+    const bindingAccountId = await findActiveSourceProviderAccountBinding(client, {
+      bankSourceId: context.bankSourceId,
+      provider: TBANK_ANDROID_PROVIDER,
+      scopeId,
+    });
+    account = bindingAccountId != null && bindingAccountId !== accountId
+      ? await insertIngestionAccountResolution(client, {
+        transactionId,
+        provenance: 'SOURCE_PROVIDER_BINDING_INSTRUMENT_CONFLICT',
+        reason: 'T-Bank per-card account conflicts with the active source/provider account binding',
+      })
+      : await insertIngestionAccountResolution(client, {
+        transactionId,
+        financialAccountId: accountId,
+        resolutionState: 'EXACT',
+        provenance: 'OBSERVED_PROVIDER_REFERENCE',
+        reason: 'Exact T-Bank masked-card reference resolves to one active payment instrument and same-scope active financial account',
+      });
+  }
+
+  return { account, paymentInstrument };
+}
+
 export async function resolveNewBankTransactionIdentity(client, { bankTransactionId }) {
   const transactionId = requiredId(bankTransactionId, 'bankTransactionId');
   await lockMatchedPurchaseBankTransaction(client, transactionId);
@@ -253,6 +326,11 @@ export async function resolveNewBankTransactionIdentity(client, { bankTransactio
   }
 
   const scopeId = Number(context.scope_ids[0]);
+  if (context.provider === TBANK_ANDROID_PROVIDER) {
+    // T-Bank has multiple cards; a source/provider binding must never substitute for card evidence.
+    return resolveTbankTransactionIdentity(client, { transactionId, context, scopeId });
+  }
+
   if (context.accountReferenceKind === 'MASKED_CARD') {
     const candidates = context.provider && context.accountReference
       ? (await client.query(`SELECT DISTINCT r.payment_instrument_id, pi.financial_account_id
