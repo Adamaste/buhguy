@@ -165,6 +165,21 @@ test('T-Bank account resolution stays UNKNOWN when the mask or payment instrumen
   }
 });
 
+test('T-Bank does not persist an instrument resolution when no usable masked-card reference exists', async () => {
+  for (const options of [
+    { referenceKind: null, reference: null },
+    { referenceKind: 'MASKED_CARD', reference: null },
+    { referenceKind: 'MASKED_CARD', reference: '' },
+  ]) {
+    const { account, paymentInstrument, client } = await resolveWith({ ...options, candidates: [] });
+    assert.equal(account.resolutionState, 'UNKNOWN');
+    assert.equal(account.financialAccountId, null);
+    assert.equal(paymentInstrument, null);
+    assert.deepEqual(client.instrumentResolutions, []);
+    assert.equal(client.calls.providerBindingLookup, 0);
+  }
+});
+
 test('T-Bank identified instrument without a linked active financial account is not assigned an account', async () => {
   for (const candidate of [
     { ...exactDebitCard, financial_account_id: null, validated_financial_account_id: null },

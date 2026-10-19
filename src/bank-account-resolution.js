@@ -252,21 +252,23 @@ async function resolveTbankTransactionIdentity(client, { transactionId, context,
     : [];
 
   const ambiguous = candidates.length > 1;
-  const paymentInstrument = candidates.length === 1
-    ? await insertIngestionInstrumentResolution(client, {
-      transactionId,
-      paymentInstrumentId: Number(candidates[0].payment_instrument_id),
-      resolutionState: 'EXACT',
-      provenance: 'OBSERVED_PROVIDER_REFERENCE',
-      reason: 'One exact T-Bank masked-card reference identifies one active payment instrument in scope',
-    })
-    : await insertIngestionInstrumentResolution(client, {
-      transactionId,
-      provenance: ambiguous ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED',
-      reason: ambiguous
-        ? 'Exact T-Bank masked-card reference has multiple active payment instruments in scope'
-        : 'No exact T-Bank masked-card reference identifies an active payment instrument in scope',
-    });
+  const paymentInstrument = !hasMaskedCard
+    ? null
+    : candidates.length === 1
+      ? await insertIngestionInstrumentResolution(client, {
+        transactionId,
+        paymentInstrumentId: Number(candidates[0].payment_instrument_id),
+        resolutionState: 'EXACT',
+        provenance: 'OBSERVED_PROVIDER_REFERENCE',
+        reason: 'One exact T-Bank masked-card reference identifies one active payment instrument in scope',
+      })
+      : await insertIngestionInstrumentResolution(client, {
+        transactionId,
+        provenance: ambiguous ? 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_AMBIGUOUS' : 'OBSERVED_PAYMENT_INSTRUMENT_REFERENCE_UNRESOLVED',
+        reason: ambiguous
+          ? 'Exact T-Bank masked-card reference has multiple active payment instruments in scope'
+          : 'No exact T-Bank masked-card reference identifies an active payment instrument in scope',
+      });
 
   let account;
   if (ambiguous) {
