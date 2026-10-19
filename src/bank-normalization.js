@@ -20,7 +20,7 @@ const SBER_PURCHASE_TITLE_PATTERN = /^Покупка [\p{L}\p{M} .'-]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
 const TBANK_DEBIT_PURCHASE_MARKER_PATTERN = /(?:покупк[а-яё]*|оплат[а-яё]*)/giu;
-const TBANK_DEBIT_PURCHASE_REJECT_PATTERN = /(?:кредит|перевод|пополн|возврат|отмен|сняти|наличн|отказ|отклон|недостаточ|неуспеш|ошибк|не\\s+(?:прошл\\w*|выполн\\w*|проведен\\w*)|refund|transfer|cash withdrawal|top[ -]?up|declin\\w*|reject\\w*|fail\\w*|insufficient)/iu;
+const TBANK_DEBIT_PURCHASE_REJECT_PATTERN = /(?:кредит|перевод|пополн|возврат|отмен|сняти|наличн|отказ|отклон|недостаточ|неуспеш|ошибк|не\s+(?:прош\p{L}*|выполн\p{L}*|проведен\p{L}*)|refund|transfer|cash withdrawal|top[ -]?up|declin\w*|reject\w*|fail\w*|cancel(?:led|ed|lation|ling|ing)|insufficient|not\s+(?:completed|successful|processed|approved|authorized))/iu;
 const TBANK_MASKED_7268_PATTERN = /(?<![\p{L}\p{N}])\*{1,4}\s*7268(?!\d)/giu;
 const TBANK_BALANCE_MARKER_PATTERN = /(?:баланс|остаток|доступно)/giu;
 const TBANK_MONEY_PATTERN = /(?<![\p{L}\p{N}])(\d+(?:[ \u00a0\u202f]\d{3})*(?:[,.]\d{1,2})?)[ \u00a0\u202f]*(RUB(?![\p{L}])|₽|руб(?:ль|ля|лей)?\.?(?![\p{L}]))/giu;
@@ -169,7 +169,8 @@ function tbankPurchaseAmount(value) {
 function normalizeTbankDebitPurchase({ title, description, text, occurred }) {
   if (description && text && description !== text) return null;
   const body = description || text;
-  if (!body || TBANK_DEBIT_PURCHASE_REJECT_PATTERN.test(`${title} ${body}`)) return null;
+  const notificationEvidence = [title, text, description].filter(Boolean).join(' ');
+  if (!body || TBANK_DEBIT_PURCHASE_REJECT_PATTERN.test(notificationEvidence)) return null;
 
   const purchaseMarkers = [...body.matchAll(TBANK_DEBIT_PURCHASE_MARKER_PATTERN)];
   const cardMasks = [...body.matchAll(TBANK_MASKED_7268_PATTERN)];

@@ -26,14 +26,14 @@ function normalizeDebitPurchase(payload, enabled = true, overrides = {}) {
   return normalizeBankEvent({ ...base, ...overrides, payload }, { enableTbankDebitPurchaseParser: enabled });
 }
 
-function assertUnknownPurchase(payload) {
+function assertUnknownPurchase(payload, message) {
   const result = normalizeDebitPurchase(payload);
-  assert.equal(result.eventType, 'UNKNOWN');
-  assert.equal(result.direction, 'UNKNOWN');
-  assert.equal(result.amount, null);
-  assert.equal(result.currency, null);
-  assert.notEqual(result.normalizationStatus, 'READY');
-  assert.notEqual(result.evidenceQuality, 'EXACT');
+  assert.equal(result.eventType, 'UNKNOWN', message);
+  assert.equal(result.direction, 'UNKNOWN', message);
+  assert.equal(result.amount, null, message);
+  assert.equal(result.currency, null, message);
+  assert.notEqual(result.normalizationStatus, 'READY', message);
+  assert.notEqual(result.evidenceQuality, 'EXACT', message);
 }
 
 function syntheticIngestionPool() {
@@ -259,14 +259,37 @@ test('T-Bank debit purchase rejects credit, transfer, top-up, refund, and cash w
   }
 });
 
-test('T-Bank debit purchase rejects declined, insufficient-funds, failed, and cancelled operations', () => {
-  for (const marker of [
+test('T-Bank failed operations remain UNKNOWN in title, text, and description despite valid purchase structure', () => {
+  const refusalMarkers = [
+    'Покупка не прошла',
+    'Покупка не выполнена',
+    'Покупка не проведена',
     'Покупка отклонена',
-    'Недостаточно средств. Покупка',
-    'Оплата неуспешна',
-    'Покупка отменена',
-  ]) {
-    assertUnknownPurchase({ description: debitPurchaseBody({ marker }) });
+    'Недостаточно средств',
+    'failed',
+    'declined',
+    'cancelled',
+    'canceled',
+    'отмена покупки',
+    'отказ в операции',
+  ];
+  const refusedBody = (marker) => /покупк/iu.test(marker)
+    ? debitPurchaseBody().replace('Покупка', marker)
+    : `${debitPurchaseBody()} ${marker}`;
+
+  for (const marker of refusalMarkers) {
+    assertUnknownPurchase(
+      { title: marker, description: debitPurchaseBody() },
+      `rejection in title: ${marker}`,
+    );
+    assertUnknownPurchase(
+      { text: refusedBody(marker) },
+      `rejection in text: ${marker}`,
+    );
+    assertUnknownPurchase(
+      { description: refusedBody(marker) },
+      `rejection in description: ${marker}`,
+    );
   }
 });
 
