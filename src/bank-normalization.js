@@ -1,6 +1,7 @@
 export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v2';
 export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
+export const TBANK_DEBIT_PURCHASE_NORMALIZATION_VERSION = 'tbank-debit-purchase-normalizer-v1';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
 
 const YANDEX_PROVIDER = 'com.yandex.bank';
@@ -18,6 +19,11 @@ const SBER_OUTGOING_TITLE_PATTERN = /^[\p{L}\p{M}]+ [\p{L}\p{M}]+‑[\p{L}\p{M}]
 const SBER_PURCHASE_TITLE_PATTERN = /^Покупка [\p{L}\p{M} .'-]+$/u;
 const RUB_AMOUNT = /^(\d+)\.(\d{2})\s+RUB\b/i;
 const TBANK_TOP_UP_BODY_PATTERN = /^Пополнение\s+на\s+(\d+)\s+₽,\s+счет\s+RUB\.\s+[\p{L}\p{M} .'-]+\s+Доступно\s+\d+(?:[\s\u00a0\u202f]\d{3})*,\d{2}\s+₽$/u;
+const TBANK_DEBIT_PURCHASE_MARKER_PATTERN = /(?:покупк[а-яё]*|оплат[а-яё]*)/giu;
+const TBANK_DEBIT_PURCHASE_REJECT_PATTERN = /(?:кредит|перевод|пополн|возврат|отмен|сняти|наличн|refund|transfer|cash withdrawal|top[ -]?up)/iu;
+const TBANK_MASKED_7268_PATTERN = /(?<![\p{L}\p{N}])\*{1,4}\s*7268(?!\d)/giu;
+const TBANK_BALANCE_MARKER_PATTERN = /(?:баланс|остаток|доступно)/giu;
+const TBANK_MONEY_PATTERN = /(?<![\p{L}\p{N}])(\d+(?:[ \u00a0\u202f]\d{3})*(?:[,.]\d{1,2})?)[ \u00a0\u202f]*(RUB(?![\p{L}])|₽|руб(?:ль|ля|лей)?\.?(?![\p{L}]))/giu;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
 const ALFA_F5_ACCOUNT_SECTION = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})$/u;
 const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB$/u;
@@ -154,29 +160,94 @@ function incompleteTbank({ occurred, hasFinancialMarker }) {
   };
 }
 
-export function normalizeTbankBankEvent(input) {
-  const payload = input.payload ?? {};
-  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
-  const occurred = occurredAt(input.eventTime);
-  const match = body.match(TBANK_TOP_UP_BODY_PATTERN);
-  const hasFinancialMarker = body.startsWith('Пополнение на ');
+function tbankPurchaseAmount(value) {
+  if (!/^\d{1,12}$/.test(value)) return null;
+  const whole = BigInt(value);
+  return whole > 0n ? `${whole}.00` : null;
+}
 
-  if (!match || !occurred) return incompleteTbank({ occurred, hasFinancialMarker });
+function normalizeTbankDebitPurchase({ title, description, text, occurred }) {
+  if (description && text && description !== text) return null;
+  const body = description || text;
+  if (!body || TBANK_DEBIT_PURCHASE_REJECT_PATTERN.test(`${title} ${body}`)) return null;
 
+  const purchaseMarkers = [...body.matchAll(TBANK_DEBIT_PURCHASE_MARKER_PATTERN)];
+  const cardMasks = [...body.matchAll(TBANK_MASKED_7268_PATTERN)];
+  const balanceMarkers = [...body.matchAll(TBANK_BALANCE_MARKER_PATTERN)];
+  const money = [...body.matchAll(TBANK_MONEY_PATTERN)];
+  if (purchaseMarkers.length !== 1 || cardMasks.length !== 1 || balanceMarkers.length !== 1 || money.length !== 2 || !occurred) return null;
+
+  const [purchaseMarker] = purchaseMarkers;
+  const [cardMask] = cardMasks;
+  const [balanceMarker] = balanceMarkers;
+  const [purchaseAmount, balanceAmount] = money;
+  const permittedDigitSpans = [
+    [purchaseAmount.index, purchaseAmount.index + purchaseAmount[0].length],
+    [cardMask.index, cardMask.index + cardMask[0].length],
+    [balanceAmount.index, balanceAmount.index + balanceAmount[0].length],
+  ];
+  const unaccountedDigits = [...body.matchAll(/\d+/g)].some((digits) =>
+    !permittedDigitSpans.some(([start, end]) => digits.index >= start && digits.index + digits[0].length <= end));
+  if (unaccountedDigits) return null;
+  const purchaseAmountEnd = purchaseAmount.index + purchaseAmount[0].length;
+  const cardMaskEnd = cardMask.index + cardMask[0].length;
+  const balanceMarkerEnd = balanceMarker.index + balanceMarker[0].length;
+  if (!(purchaseMarker.index < purchaseAmount.index
+    && purchaseAmountEnd <= cardMask.index
+    && cardMaskEnd <= balanceMarker.index
+    && balanceMarkerEnd <= balanceAmount.index)) return null;
+
+  const amount = tbankPurchaseAmount(purchaseAmount[1]);
+  if (!amount) return null;
   return {
-    eventType: 'UNKNOWN',
+    eventType: 'PURCHASE',
     occurredAt: occurred,
-    amount: `${match[1]}.00`,
+    amount,
     currency: 'RUB',
-    direction: 'CREDIT',
+    direction: 'DEBIT',
     merchant: null,
     counterparty: null,
-    accountReference: null,
-    accountReferenceKind: null,
+    accountReference: '****7268',
+    accountReferenceKind: 'MASKED_CARD',
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: TBANK_BANK_NORMALIZATION_VERSION,
+    normalizationVersion: TBANK_DEBIT_PURCHASE_NORMALIZATION_VERSION,
   };
+}
+
+export function normalizeTbankBankEvent(input, { enableDebitPurchaseParser = false } = {}) {
+  const payload = input.payload ?? {};
+  const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
+  const description = normalizeWhitespace(payload.description);
+  const text = normalizeWhitespace(payload.text);
+  const title = normalizeWhitespace(payload.title);
+  const occurred = occurredAt(input.eventTime);
+  const match = body.match(TBANK_TOP_UP_BODY_PATTERN);
+  const hasFinancialMarker = body.startsWith('Пополнение на ')
+    || /(?:покупк|оплат|перевод|пополн|возврат|сняти)/iu.test(body);
+
+  if (match && occurred) {
+    return {
+      eventType: 'UNKNOWN',
+      occurredAt: occurred,
+      amount: `${match[1]}.00`,
+      currency: 'RUB',
+      direction: 'CREDIT',
+      merchant: null,
+      counterparty: null,
+      accountReference: null,
+      accountReferenceKind: null,
+      normalizationStatus: 'READY',
+      evidenceQuality: 'EXACT',
+      normalizationVersion: TBANK_BANK_NORMALIZATION_VERSION,
+    };
+  }
+
+  if (enableDebitPurchaseParser) {
+    const purchase = normalizeTbankDebitPurchase({ title, description, text, occurred });
+    if (purchase) return purchase;
+  }
+  return incompleteTbank({ occurred, hasFinancialMarker });
 }
 
 export function isTbankBankAndroidNotification(input) {
