@@ -103,6 +103,10 @@ function sourceProvenance(source) {
     ...(source.sourceProviderBindingVerified !== undefined
       ? { sourceProviderBindingVerified: source.sourceProviderBindingVerified === true }
       : {}),
+    ...(typeof source.provider === 'string' ? { provider: source.provider } : {}),
+    ...(source.tbankCardSpecificAccountProofVerified !== undefined
+      ? { tbankCardSpecificAccountProofVerified: source.tbankCardSpecificAccountProofVerified === true }
+      : {}),
   };
 }
 

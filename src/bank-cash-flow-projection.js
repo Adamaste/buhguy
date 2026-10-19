@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { TBANK_ANDROID_PROVIDER } from './matched-purchase-account-proof.js';
 
 export const BANK_CASH_FLOW_PROJECTION_VERSION = 'bank-cash-flow-projection-v1';
 
@@ -44,6 +45,41 @@ function normalizeAmount(value) {
 function asScopeKeys(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()))].sort();
+}
+
+export function isTbankCardSpecificAccountProof(row, { scopeKey = null } = {}) {
+  const sourceScopeKeys = asScopeKeys(row?.sourceScopeKeys);
+  const accountId = Number(row?.financialAccountId);
+  const instrumentId = Number(row?.paymentInstrumentId);
+  const instrumentAccountId = Number(row?.paymentInstrumentFinancialAccountId);
+  const candidateCount = Number(row?.matchingCardReferenceInstrumentCount);
+  const resolvedScopeKey = row?.financialAccountScopeKey;
+  return row?.provider === TBANK_ANDROID_PROVIDER
+    && normalizeText(row.sourceEventType) === 'PURCHASE'
+    && normalizeText(row.direction) === 'DEBIT'
+    && normalizeText(row.normalizationStatus) === 'READY'
+    && normalizeText(row.evidenceQuality) === 'EXACT'
+    && normalizeText(row.currency) === 'RUB'
+    && row.accountReferenceKind === 'MASKED_CARD'
+    && row.accountReference === '****7268'
+    && row.paymentInstrumentResolutionState === 'EXACT'
+    && row.paymentInstrumentResolutionProvenance === 'OBSERVED_PROVIDER_REFERENCE'
+    && row.accountResolutionState === 'EXACT'
+    && row.accountResolutionProvenance === 'OBSERVED_PROVIDER_REFERENCE'
+    && Number.isSafeInteger(instrumentId) && instrumentId > 0
+    && Number.isSafeInteger(accountId) && accountId > 0
+    && Number.isSafeInteger(instrumentAccountId) && instrumentAccountId === accountId
+    && row.paymentInstrumentProvider === TBANK_ANDROID_PROVIDER
+    && row.paymentInstrumentType === 'CARD'
+    && row.paymentInstrumentActive === true
+    && row.financialAccountActive === true
+    && row.paymentInstrumentScopeKey === resolvedScopeKey
+    && row.financialAccountCurrency === 'RUB'
+    && candidateCount === 1
+    && row.tbankReferenceTargetsResolvedInstrument === true
+    && sourceScopeKeys.length === 1
+    && sourceScopeKeys[0] === resolvedScopeKey
+    && (scopeKey == null || sourceScopeKeys[0] === scopeKey);
 }
 
 function accountIdentity(row, sourceScopeKeys, requestedScopeKey) {
@@ -131,6 +167,10 @@ export function projectBankCashFlowTransaction(row, { scopeKey = null } = {}) {
     ...(row.sourceProviderBindingVerified !== undefined
       ? { sourceProviderBindingVerified: row.sourceProviderBindingVerified === true }
       : {}),
+    ...(typeof row.provider === 'string' ? { provider: row.provider } : {}),
+    ...(row.provider === TBANK_ANDROID_PROVIDER
+      ? { tbankCardSpecificAccountProofVerified: isTbankCardSpecificAccountProof(row, { scopeKey }) }
+      : {}),
   };
 }
 
@@ -187,8 +227,36 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
     SELECT bt.id AS "bankTransactionId", bt.occurred_at AS "occurredAt", bt.amount, bt.currency,
            bt.event_type AS "sourceEventType", bt.direction,
            bt.normalization_status AS "normalizationStatus", bt.evidence_quality AS "evidenceQuality",
+           eo.ingestion_metadata->>'provider' AS provider,
+           bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
            r.financial_account_id AS "financialAccountId", r.resolution_state AS "accountResolutionState",
            r.provenance AS "accountResolutionProvenance", a_scope.scope_key AS "financialAccountScopeKey",
+           a.active AS "financialAccountActive", a.currency AS "financialAccountCurrency",
+           pir.payment_instrument_id AS "paymentInstrumentId",
+           pir.resolution_state AS "paymentInstrumentResolutionState",
+           pir.provenance AS "paymentInstrumentResolutionProvenance",
+           pi.financial_account_id AS "paymentInstrumentFinancialAccountId",
+           pi.provider AS "paymentInstrumentProvider", pi.instrument_type AS "paymentInstrumentType",
+           pi.active AS "paymentInstrumentActive", pi_scope.scope_key AS "paymentInstrumentScopeKey",
+           (SELECT count(DISTINCT candidate_pi.id)::integer
+            FROM bank_account_references candidate_ref
+            JOIN payment_instruments candidate_pi ON candidate_pi.id=candidate_ref.payment_instrument_id
+            JOIN financial_accounts candidate_account ON candidate_account.id=candidate_pi.financial_account_id
+            WHERE candidate_ref.provider=eo.ingestion_metadata->>'provider'
+              AND candidate_ref.reference_kind='MASKED_CARD'
+              AND candidate_ref.reference_value=bt.account_reference
+              AND candidate_pi.provider=eo.ingestion_metadata->>'provider'
+              AND candidate_pi.instrument_type='CARD' AND candidate_pi.active
+              AND candidate_pi.scope_id=a.scope_id
+              AND candidate_account.scope_id=candidate_pi.scope_id AND candidate_account.active
+           ) AS "matchingCardReferenceInstrumentCount",
+           EXISTS (
+             SELECT 1 FROM bank_account_references exact_ref
+             WHERE exact_ref.provider=eo.ingestion_metadata->>'provider'
+               AND exact_ref.reference_kind='MASKED_CARD'
+               AND exact_ref.reference_value=bt.account_reference
+               AND exact_ref.payment_instrument_id=pir.payment_instrument_id
+           ) AS "tbankReferenceTargetsResolvedInstrument",
            EXISTS (
              SELECT 1 FROM bank_source_provider_account_bindings binding
              WHERE binding.bank_source_id=eo.bank_source_id
@@ -196,6 +264,7 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
                AND binding.financial_account_id=r.financial_account_id
                AND binding.active
                AND binding.provenance='USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT'
+               AND eo.ingestion_metadata->>'provider' IS DISTINCT FROM 'com.idamob.tinkoff.android'
            ) AS "sourceProviderBindingVerified",
            ss.source_scope_keys AS "sourceScopeKeys"
     FROM bank_transactions bt
@@ -204,6 +273,9 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
     LEFT JOIN bank_transaction_account_resolution r ON r.bank_transaction_id = bt.id
     LEFT JOIN financial_accounts a ON a.id = r.financial_account_id
     LEFT JOIN accounting_scopes a_scope ON a_scope.id = a.scope_id
+    LEFT JOIN bank_transaction_payment_instrument_resolution pir ON pir.bank_transaction_id=bt.id
+    LEFT JOIN payment_instruments pi ON pi.id=pir.payment_instrument_id
+    LEFT JOIN accounting_scopes pi_scope ON pi_scope.id=pi.scope_id
     WHERE ($1::text IS NULL OR $1 = ANY(ss.source_scope_keys))
       AND ($2::timestamptz IS NULL OR bt.occurred_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)

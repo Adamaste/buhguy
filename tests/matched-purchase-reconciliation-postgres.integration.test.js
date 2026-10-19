@@ -1,11 +1,12 @@
 import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import pg from 'pg';
 import { createBankSource, linkBankSourcePerson } from '../src/bank-ingestion.js';
 import { createBankDeviceCredential } from '../src/bank-device-auth.js';
 import { createBankIngestionServer } from '../src/bank-ingestion-http.js';
 import { bindBankSourceProviderAccount } from '../src/bank-source-provider-binding.js';
-import { createFinancialAccount, relateFinancialAccountPerson } from '../src/bank-account-resolution.js';
+import { createBankAccountReference, createFinancialAccount, createPaymentInstrument, relateFinancialAccountPerson } from '../src/bank-account-resolution.js';
 import { ReceiptRepository, migrate } from '../src/database.js';
 import { normalizeAndStoreReceipt } from '../src/fiscal-normalization.js';
 import { analyticsSummary } from '../src/analytics.js';
@@ -148,6 +149,65 @@ async function ingestBank(fixture, {
     body: JSON.stringify(event),
   });
   return { status: response.status, body: await response.json() };
+}
+
+async function createTbankCard(fixture, { referenceValue, label }) {
+  const account = await createFinancialAccount(pool, {
+    scopeKey: fixture.scopeKey,
+    institution: 'Synthetic T-Bank',
+    provider: 'com.idamob.tinkoff.android',
+    displayName: `${fixture.prefix} ${label} account`,
+    currency: 'RUB',
+  });
+  await relateFinancialAccountPerson(pool, {
+    financialAccountId: Number(account.id),
+    personId: fixture.personId,
+    relationType: 'OWNER',
+    provenance: 'SYNTHETIC_TEST',
+    reason: 'Synthetic T-Bank card account owner',
+  });
+  const instrument = await createPaymentInstrument(pool, {
+    scopeKey: fixture.scopeKey,
+    financialAccountId: Number(account.id),
+    instrumentType: 'CARD',
+    provider: 'com.idamob.tinkoff.android',
+    displayName: `${fixture.prefix} ${label} card`,
+  });
+  await createBankAccountReference(pool, {
+    paymentInstrumentId: Number(instrument.id),
+    provider: 'com.idamob.tinkoff.android',
+    referenceKind: 'MASKED_CARD',
+    referenceValue,
+  });
+  return { accountId: Number(account.id), paymentInstrumentId: Number(instrument.id), referenceValue };
+}
+
+async function insertResolvedTbankPurchase(fixture, card, { id, amount = '12.34', dateTime = fixture.dateTime } = {}) {
+  const sourceId = Number((await pool.query('SELECT id FROM bank_sources WHERE source_key=$1', [fixture.bankSourceKey])).rows[0].id);
+  const dedupKey = crypto.createHash('sha256').update(`${fixture.prefix}:${id}`).digest('hex');
+  const payloadHash = crypto.createHash('sha256').update(`synthetic:${fixture.prefix}:${id}`).digest('hex');
+  const observation = (await pool.query(`INSERT INTO bank_event_observations
+      (bank_source_id,source_event_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
+    VALUES($1,$2,$3,NOW(),$4,'{}'::jsonb,$5,$6::jsonb) RETURNING id`, [
+    sourceId,
+    `${fixture.prefix}:${id}`,
+    dedupKey,
+    dateTime,
+    payloadHash,
+    JSON.stringify({ provider: 'com.idamob.tinkoff.android', adapter: 'synthetic-test', schemaVersion: '1' }),
+  ])).rows[0];
+  const transaction = (await pool.query(`INSERT INTO bank_transactions
+      (observation_id,occurred_at,amount,currency,direction,event_type,normalization_status,normalization_version,evidence_quality,account_reference,account_reference_kind)
+    VALUES($1,$2,$3,'RUB','DEBIT','PURCHASE','READY','synthetic-tbank-v1','EXACT',$4,'MASKED_CARD') RETURNING id`, [
+    observation.id, dateTime, amount, card.referenceValue,
+  ])).rows[0];
+  await pool.query(`INSERT INTO bank_transaction_account_resolution
+      (bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
+    VALUES($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic exact card-account resolution')`, [transaction.id, card.accountId]);
+  await pool.query(`INSERT INTO bank_transaction_payment_instrument_resolution
+      (bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason)
+    VALUES($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic exact card-instrument resolution')`, [transaction.id, card.paymentInstrumentId]);
+  return Number(transaction.id);
 }
 
 async function createAdditionalBoundBankSource(fixture, provider, label) {
@@ -313,6 +373,38 @@ integration('bank-first pair stays review-only until exact matchKey approval, th
     assert.deepEqual(await matchedCounts(fixture), {
       matches: 1, bank_evidence: 1, matched_entries: 1, active_purchase_entries: 1, active_purchase_debits: '12.34',
     });
+  } finally { await closeFixture(fixture); }
+});
+
+integration('automatic V2 matches only the exact resolved T-Bank debit card without provider-wide binding', { concurrency: false }, async () => {
+  const fixture = await createFixture('auto-tbank-card-proof-e2e', {
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: new Date(Date.now() - 5 * 60_000).toISOString(),
+  });
+  try {
+    const debitCard = await createTbankCard(fixture, { referenceValue: '****7268', label: 'confirmed debit' });
+    const debitTransactionId = await insertResolvedTbankPurchase(fixture, debitCard, { id: 'debit-7268' });
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_source_provider_account_bindings
+      WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)
+        AND provider='com.idamob.tinkoff.android' AND active`, [fixture.bankSourceKey])).rows[0].count, 0);
+
+    const fns = await syncFns(fixture);
+    assert.equal(fns.accounting.reconciliations[0].persisted, 1);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '12.34', count: 1 });
+    const persisted = (await pool.query(`SELECT financial_account_id,bank_transaction_id
+      FROM bank_receipt_matches WHERE scope_id=$1`, [fixture.scopeId])).rows[0];
+    assert.equal(Number(persisted.bank_transaction_id), debitTransactionId);
+    assert.equal(Number(persisted.financial_account_id), debitCard.accountId);
+
+    const otherCard = await createTbankCard(fixture, { referenceValue: '****1357', label: 'synthetic credit' });
+    const otherCardTransactionId = await insertResolvedTbankPurchase(fixture, otherCard, { id: 'other-card-1357' });
+    const matching = await matchingForFixture(fixture, { automatic: true });
+    const rejected = matching.bankStatuses.find((row) => row.bankTransactionId === otherCardTransactionId);
+    assert.equal(rejected.status, 'INELIGIBLE');
+    assert.equal(rejected.reasonCode, 'BANK_SOURCE_PROVIDER_BINDING_UNPROVEN');
+    assert.equal(matching.matches.length, 1);
+    assert.equal(matching.matches[0].bank.bankTransactionId, debitTransactionId);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '12.34', count: 1 });
   } finally { await closeFixture(fixture); }
 });
 

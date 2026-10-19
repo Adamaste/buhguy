@@ -240,6 +240,44 @@ test('automatic policy rejects a candidate missing binding proof and keeps proce
   assert.deepEqual(persisted, []);
 });
 
+test('automatic policy accepts T-Bank card proof but not its source/provider fallback', async () => {
+  const cutoff = '2026-10-01T00:00:00.000Z';
+  const acceptedWrites = [];
+  const accepted = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, bankIngestedAfter: cutoff, ...window,
+    preview: async () => projection({
+      decisions: [{
+        ...decision('PERSIST_REQUIRED'), provider: 'com.idamob.tinkoff.android',
+        approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+        assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+        tbankCardSpecificAccountProofVerified: true,
+      }],
+      summary: { ...projection().summary, persistRequired: 1 },
+    }),
+    persist: async (_pool, options) => { acceptedWrites.push(options.matchKey); return { outcome: 'PERSISTED' }; },
+  });
+  assert.equal(accepted.persisted, 1);
+  assert.equal(acceptedWrites.length, 1);
+
+  const fallback = await runBoundedMatchedPurchaseReconciliation(readOnlyPool(), {
+    enabled: true, scopeKey: 'canary-scope', canaryScopeKey: 'canary-scope',
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY, bankIngestedAfter: cutoff, ...window,
+    preview: async () => projection({
+      decisions: [{
+        ...decision('PERSIST_REQUIRED'), provider: 'com.idamob.tinkoff.android',
+        approvalBasis: MATCHED_PURCHASE_AUTO_POLICY, automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+        assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+        sourceProviderBindingVerified: true,
+      }],
+      summary: { ...projection().summary, persistRequired: 1 },
+    }),
+    persist: async () => { throw new Error('must not persist'); },
+  });
+  assert.equal(fallback.reasonCode, 'PREVIEW_CONTRACT_INVALID');
+  assert.equal(fallback.persisted, 0);
+});
+
 test('only one deterministic PERSIST_REQUIRED decision is sent to the transactional writer', async () => {
   const pool = readOnlyPool();
   const persistedKeys = [];

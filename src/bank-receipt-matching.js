@@ -7,6 +7,7 @@ import { loadBalancedBankJournalProjection } from './balanced-bank-journal-proje
 import { projectBankBusinessEventCandidates } from './bank-business-event-candidate-projection.js';
 import { loadBankInternalTransferOwnershipSnapshot } from './bank-internal-transfer-matching.js';
 import { resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
+import { hasAutomaticMatchedPurchaseAccountProof } from './matched-purchase-account-proof.js';
 
 export const BANK_RECEIPT_MATCHING_VERSION = 'bank-receipt-matching-v1';
 export const BANK_RECEIPT_MATCHING_STATUSES = Object.freeze({
@@ -94,7 +95,13 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSource
   if (!SHA256.test(source?.candidateKey ?? '') || !SHA256.test(source?.journalKey ?? '') || !positiveInteger(source?.bankTransactionId)) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_PROVENANCE_INCOMPLETE' };
   const owners = ownerGate(ownershipSnapshot, credit.account.financialAccountId, entry.scopeKey);
   if (!owners) return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_ACCOUNT_OWNER_UNPROVEN' };
-  if (requireSourceProviderBinding && entry.sourceProvenance?.sourceProvenance?.sourceProviderBindingVerified !== true) {
+  const proofSource = entry.sourceProvenance?.sourceProvenance ?? {};
+  const accountProof = {
+    provider: proofSource.provider,
+    sourceProviderBindingVerified: proofSource.sourceProviderBindingVerified,
+    tbankCardSpecificAccountProofVerified: proofSource.tbankCardSpecificAccountProofVerified,
+  };
+  if (requireSourceProviderBinding && !hasAutomaticMatchedPurchaseAccountProof(accountProof)) {
     return { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'BANK_SOURCE_PROVIDER_BINDING_UNPROVEN' };
   }
   return {
@@ -105,7 +112,9 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSource
       journalKey: source.journalKey,
       bankTransactionId: source.bankTransactionId,
       financialAccountId: credit.account.financialAccountId,
-      ...(requireSourceProviderBinding ? { sourceProviderBindingVerified: true } : {}),
+      ...(typeof proofSource.provider === 'string' ? { provider: proofSource.provider } : {}),
+      ...(proofSource.sourceProviderBindingVerified === true ? { sourceProviderBindingVerified: true } : {}),
+      ...(proofSource.tbankCardSpecificAccountProofVerified === true ? { tbankCardSpecificAccountProofVerified: true } : {}),
       scopeKey: entry.scopeKey,
       amount: entry.amount,
       currency: entry.currency,
@@ -284,7 +293,9 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
         ledgerKey: bank.ledgerKey, candidateKey: bank.candidateKey, journalKey: bank.journalKey,
         bankTransactionId: bank.bankTransactionId, financialAccountId: bank.financialAccountId,
         occurredAt: bank.occurredAt,
+        ...(typeof bank.provider === 'string' ? { provider: bank.provider } : {}),
         ...(bank.sourceProviderBindingVerified ? { sourceProviderBindingVerified: true } : {}),
+        ...(bank.tbankCardSpecificAccountProofVerified ? { tbankCardSpecificAccountProofVerified: true } : {}),
       },
       receipt,
       bankAccountOwnershipProvenance: bank.ownershipProvenance,
