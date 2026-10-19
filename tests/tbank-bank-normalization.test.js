@@ -240,6 +240,19 @@ test('T-Bank debit purchase requires the exact confirmed masked card', () => {
   assertUnknownPurchase({ description: debitPurchaseBody({ card: '****1234' }) });
 });
 
+test('T-Bank debit purchase parser is isolated by provider, adapter, and schema', () => {
+  for (const ingestionMetadata of [
+    { ...base.ingestionMetadata, provider: 'other.bank' },
+    { ...base.ingestionMetadata, adapter: 'BANK_API' },
+    { ...base.ingestionMetadata, schemaVersion: '2' },
+  ]) {
+    const result = normalizeDebitPurchase({ description: debitPurchaseBody() }, true, { ingestionMetadata });
+    assert.equal(result.eventType, 'UNKNOWN');
+    assert.equal(result.amount, null);
+    assert.notEqual(result.normalizationStatus, 'READY');
+  }
+});
+
 test('T-Bank debit purchase rejects credit, transfer, top-up, refund, and cash withdrawal wording', () => {
   for (const marker of ['Кредитная операция', 'Перевод', 'Пополнение', 'Возврат', 'Снятие наличных']) {
     assertUnknownPurchase({ description: debitPurchaseBody({ marker }) });
