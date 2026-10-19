@@ -65,3 +65,13 @@ test('automatic purchase matching migration grants only required column reads', 
   assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
   assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
 });
+
+test('T-Bank card resolution adds only the minimum runtime lookup privileges', async () => {
+  const sql = await readFile(new URL('../db/migrations/022_tbank_card_resolution_lookup_grants.sql', import.meta.url), 'utf8');
+  assert.match(sql, /GRANT SELECT \(provider, instrument_type, active\) ON public\.payment_instruments TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(active\) ON public\.financial_accounts TO receipt_collector/);
+  assert.match(sql, /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'receipt_collector'\)/);
+  assert.doesNotMatch(sql, /GRANT SELECT\s+ON public\./i);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
+  assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
+});
