@@ -3,6 +3,7 @@ import { isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBa
 import { resolveNewBankTransactionIdentity } from './bank-account-resolution.js';
 
 export const BANK_NORMALIZATION_VERSION = 'bank-normalizer-v1';
+export const TBANK_DEBIT_PURCHASE_PARSER_ENABLED_ENV = 'TBANK_DEBIT_PURCHASE_PARSER_ENABLED';
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
 const DIRECTIONS = new Set(['DEBIT', 'CREDIT', 'UNKNOWN']);
 const PAYLOAD_KEYS = new Set(['amount', 'currency', 'direction', 'merchant', 'counterparty', 'accountReference', 'accountReferenceKind', 'occurredAt', 'description', 'title', 'text', 'eventType', 'reference']);
@@ -71,14 +72,16 @@ function normalizeAmount(value) {
   return null;
 }
 
-export function normalizeBankEvent(input) {
+export function normalizeBankEvent(input, { enableTbankDebitPurchaseParser = false } = {}) {
   if (isYandexPayOutgoingTransport(input)) {
     const outgoing = normalizeYandexPayBankEvent(input);
     if (outgoing) return outgoing;
   }
   if (isYandexBankProvider(input)) return normalizeYandexBankEvent(input);
   if (isSberBankAndroidNotification(input)) return normalizeSberBankEvent(input);
-  if (isTbankBankAndroidNotification(input)) return normalizeTbankBankEvent(input);
+  if (isTbankBankAndroidNotification(input)) {
+    return normalizeTbankBankEvent(input, { enableDebitPurchaseParser: enableTbankDebitPurchaseParser === true });
+  }
   if (isAlfaBankAndroidNotification(input)) return normalizeAlfaBankEvent(input) ?? normalizeGenericBankEvent(input);
   return normalizeGenericBankEvent(input);
 }
@@ -146,7 +149,9 @@ export async function ingestBankEvent(pool, input) {
     ? `${event.sourceKey}\0event:${event.sourceEventId}`
     : `${event.sourceKey}\0payload:${payloadSha256}\0event:${event.eventTime ?? ''}`;
   const dedupKey = sha256(dedupMaterial);
-  const normalized = normalizeBankEvent(event);
+  const normalized = normalizeBankEvent(event, {
+    enableTbankDebitPurchaseParser: process.env[TBANK_DEBIT_PURCHASE_PARSER_ENABLED_ENV] === 'true',
+  });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
