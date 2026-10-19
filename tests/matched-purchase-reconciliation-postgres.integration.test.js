@@ -408,6 +408,64 @@ integration('automatic V2 matches only the exact resolved T-Bank debit card with
   } finally { await closeFixture(fixture); }
 });
 
+integration('automatic T-Bank writer rechecks card proof after selection and writes nothing if it changes', { concurrency: false }, async () => {
+  const cases = [
+    ['reference-removed', 'AUTO_TBANK_CARD_PROOF_UNVERIFIED'],
+    ['instrument-reassigned', 'AUTO_TBANK_CARD_PROOF_UNVERIFIED'],
+    ['provider-binding-added', 'AUTO_TBANK_PROVIDER_BINDING_FORBIDDEN'],
+  ];
+  for (const [change, expectedCode] of cases) {
+    const fixture = await createFixture(`auto-tbank-${change}`, {
+      canaryEnabled: false,
+      automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+      bankIngestedAfter: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    try {
+      const debitCard = await createTbankCard(fixture, { referenceValue: '****7268', label: 'confirmed debit' });
+      await insertResolvedTbankPurchase(fixture, debitCard, { id: 'debit-7268' });
+      await syncFns(fixture);
+      const selected = (await matchingForFixture(fixture, { automatic: true })).matches;
+      assert.equal(selected.length, 1, change);
+      const before = await matchedCounts(fixture);
+
+      if (change === 'reference-removed') {
+        await pool.query(`DELETE FROM bank_account_references
+          WHERE provider='com.idamob.tinkoff.android' AND reference_kind='MASKED_CARD'
+            AND reference_value='****7268' AND payment_instrument_id=$1`, [debitCard.paymentInstrumentId]);
+      } else if (change === 'instrument-reassigned') {
+        const otherCard = await createTbankCard(fixture, { referenceValue: '****1357', label: 'synthetic other card' });
+        await pool.query('UPDATE payment_instruments SET financial_account_id=$1 WHERE id=$2', [otherCard.accountId, debitCard.paymentInstrumentId]);
+      } else {
+        await bindBankSourceProviderAccount(pool, {
+          sourceKey: fixture.bankSourceKey,
+          provider: 'com.idamob.tinkoff.android',
+          financialAccountId: debitCard.accountId,
+          reason: 'Synthetic conflicting provider-wide binding',
+        });
+      }
+
+      let calls = 0;
+      const options = {
+        ...matchedPurchaseReconciliationWindow(),
+        scopeKey: fixture.scopeKey,
+        internalTransferMaxTimeDeltaMs: 5000,
+        receiptMaxTimeDeltaMs: 300000,
+        assignmentPolicy: BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS,
+        requireSourceProviderBinding: true,
+        bankIngestedAfter: fixture.canary.bankIngestedAfter,
+        automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+        matchingLoader: (client, matchingOptions) => {
+          if (calls++ === 0) return { matches: selected };
+          return loadBankReceiptMatching(client, matchingOptions);
+        },
+      };
+      await assert.rejects(() => persistMatchedPurchaseForTest(pool, options), (error) => error.code === expectedCode, change);
+      assert.deepEqual(await matchedCounts(fixture), before, change);
+      assert.deepEqual(await expenseTotals(fixture), { amount: '12.34', count: 1 }, change);
+    } finally { await closeFixture(fixture); }
+  }
+});
+
 integration('new bank-first purchase automatically reuses its receipt expense and survives duplicate delivery and restart', { concurrency: false }, async () => {
   const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
   const fixture = await createFixture('auto-bank-first-e2e', {
