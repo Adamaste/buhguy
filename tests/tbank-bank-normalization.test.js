@@ -259,6 +259,17 @@ test('T-Bank debit purchase rejects credit, transfer, top-up, refund, and cash w
   }
 });
 
+test('T-Bank debit purchase rejects declined, insufficient-funds, failed, and cancelled operations', () => {
+  for (const marker of [
+    'Покупка отклонена',
+    'Недостаточно средств. Покупка',
+    'Оплата неуспешна',
+    'Покупка отменена',
+  ]) {
+    assertUnknownPurchase({ description: debitPurchaseBody({ marker }) });
+  }
+});
+
 test('T-Bank debit purchase rejects balance-only notices and missing RUB markers', () => {
   assertUnknownPurchase({ description: 'Баланс 8 765,43 ₽ карта ****7268' });
   assertUnknownPurchase({ description: debitPurchaseBody().replace('24 ₽', '24') });
