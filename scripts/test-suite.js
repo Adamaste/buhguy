@@ -18,6 +18,7 @@ const unitFiles = [
   'tests/return-refund-research.test.js',
   'tests/return-refund-matcher.test.js',
   'tests/ledger.test.js',
+  'tests/prepaid-wallet.test.js',
   'tests/certification.test.js',
   'tests/analytics.test.js',
   'tests/purchase-details-analytics.test.js',
@@ -69,6 +70,7 @@ const unitFiles = [
 const postgresFiles = [
   'tests/active-ledger-semantics-postgres.integration.test.js',
   'tests/ledger-postgres.integration.test.js',
+  'tests/prepaid-wallet-postgres.integration.test.js',
   'tests/certification-postgres.integration.test.js',
   'tests/analytics-postgres.integration.test.js',
   'tests/purchase-details-analytics-postgres.integration.test.js',

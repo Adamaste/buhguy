@@ -125,6 +125,20 @@ test('exact PURCHASE and full electronic receipt produce one evidence match with
   assert.deepEqual(input, before);
 });
 
+test('a manually confirmed prepaid-wallet bank movement is ineligible for PURCHASE matching', () => {
+  const result = match(bankEntry(), receiptRow(), ownership(), { prepaidWalletBankTransactionIds: new Set([10]) });
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.bankStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  assert.equal(result.bankStatuses[0].reasonCode, 'PREPAID_WALLET_MOVEMENT_ALREADY_CONFIRMED');
+});
+
+test('a receipt explicitly linked to prepaid-wallet evidence cannot match another bank purchase', () => {
+  const result = match(bankEntry(), receiptRow(), ownership(), { prepaidWalletReceiptIds: new Set([20]) });
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.receiptStatuses[0].status, BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE);
+  assert.equal(result.receiptStatuses[0].reasonCode, 'PREPAID_WALLET_RECEIPT_ALREADY_LINKED');
+});
+
 test('NULL canonical currency is eligible only with proven FNS source and derives RUB', () => {
   const receipt = receiptRow({ currency: null, fnsSourceProven: true });
   const candidate = projectBankReceiptCandidate(receipt);
@@ -450,12 +464,14 @@ test('loader reads bank, ownership, and receipt evidence once with SELECT-only S
       }] };
       if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1)] };
       if (/FROM receipts r/i.test(sql)) return { rows: [receiptRow()] };
+      if (/FROM prepaid_wallet_movements/i.test(sql)) return { rows: [] };
+      if (/FROM prepaid_wallet_receipt_evidence/i.test(sql)) return { rows: [] };
       throw new Error('unexpected query');
     },
   };
   const result = await loadBankReceiptMatching(pool, { scopeKey: 'scope-a', internalTransferMaxTimeDeltaMs: 60_000, receiptMaxTimeDeltaMs: 60_000 });
   assert.equal(result.matches.length, 1);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 5);
   assert.equal(calls.every((sql) => !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql)), true);
   assert.equal(calls.some((sql) => /fns_source_person/i.test(sql)), false);
   const receiptSql = calls.find((sql) => /FROM receipts r/i.test(sql));
@@ -482,6 +498,8 @@ test('loader preserves one payment type value per normalized receipt item', asyn
       }] };
       if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1)] };
       if (/FROM receipts r/i.test(sql)) return { rows: [receiptRow({ receiptItemCount: 2, normalizedItemFactCount: 2, itemPaymentTypeCodes: [4, 4] })] };
+      if (/FROM prepaid_wallet_movements/i.test(sql)) return { rows: [] };
+      if (/FROM prepaid_wallet_receipt_evidence/i.test(sql)) return { rows: [] };
       throw new Error('unexpected query');
     },
   };
@@ -496,6 +514,8 @@ test('loader preserves cross-scope receipt evidence before requested-scope selec
       if (/FROM bank_transactions bt/i.test(sql)) return { rows: [bankEntry().candidate] };
       if (/FROM financial_accounts a/i.test(sql)) return { rows: [owner(1)] };
       if (/FROM receipts r/i.test(sql)) return { rows: [receiptRow({ scopeKeys: ['scope-a', 'scope-b'] })] };
+      if (/FROM prepaid_wallet_movements/i.test(sql)) return { rows: [] };
+      if (/FROM prepaid_wallet_receipt_evidence/i.test(sql)) return { rows: [] };
       throw new Error('unexpected query');
     },
   };

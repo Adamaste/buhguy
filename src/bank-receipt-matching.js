@@ -21,6 +21,18 @@ export const BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES = Object.freeze({
   UNAMBIGUOUS_COMPONENTS: 'UNAMBIGUOUS_COMPONENTS',
 });
 
+function normalizeIdSet(value, name) {
+  if (value === undefined) return new Set();
+  if (!(value instanceof Set) && !Array.isArray(value)) throw new Error(`${name} must be a Set or array`);
+  const result = new Set();
+  for (const raw of value) {
+    const id = Number(raw);
+    if (!positiveInteger(id)) throw new Error(`${name} contains an invalid id`);
+    result.add(id);
+  }
+  return result;
+}
+
 const NORMALIZED_FACT_VERSION = 'fiscal-normalizer-v1';
 const MONEY = /^(?:0|[1-9]\d*)\.\d{2}$/;
 const CURRENCY = /^[A-Z]{3}$/;
@@ -245,6 +257,8 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   assignmentPolicy = BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.STRICT_UNIQUE,
   requireSourceProviderBinding = false,
   persistedMatches = [],
+  prepaidWalletBankTransactionIds = new Set(),
+  prepaidWalletReceiptIds = new Set(),
 } = {}) {
   validateWindow(internalTransferMaxTimeDeltaMs, 'internalTransferMaxTimeDeltaMs');
   validateWindow(receiptMaxTimeDeltaMs, 'receiptMaxTimeDeltaMs');
@@ -252,11 +266,28 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   if (typeof requireSourceProviderBinding !== 'boolean') throw new Error('requireSourceProviderBinding must be a boolean');
   if (!Array.isArray(persistedMatches)) throw new Error('persistedMatches must be an array');
   if (!Array.isArray(bankEntries)) throw new Error('bankEntries must be an array');
+  const prepaidBankIds = normalizeIdSet(prepaidWalletBankTransactionIds, 'prepaidWalletBankTransactionIds');
+  const prepaidReceiptIds = normalizeIdSet(prepaidWalletReceiptIds, 'prepaidWalletReceiptIds');
   validateReceiptInputs(receiptRows);
   const ledger = projectBankLedger(bankEntries, ownershipSnapshot, { maxTimeDeltaMs: internalTransferMaxTimeDeltaMs });
-  const bankCandidates = ledger.entries.map((entry) => ({ entry, eligibility: projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding }) }));
+  const bankCandidates = ledger.entries.map((entry) => {
+    const eligibility = projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding });
+    const transactionId = Number(eligibility.bank?.bankTransactionId ?? entry.sourceProvenance?.bankTransactionId);
+    return {
+      entry,
+      eligibility: eligibility.bank && prepaidBankIds.has(transactionId)
+        ? { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'PREPAID_WALLET_MOVEMENT_ALREADY_CONFIRMED' }
+        : eligibility,
+    };
+  });
   const eligibleBanks = bankCandidates.filter((row) => row.eligibility.bank).map((row) => row.eligibility.bank);
-  const receiptCandidates = receiptRows.map((row) => projectBankReceiptCandidate(row));
+  const receiptCandidates = receiptRows.map((row) => {
+    const candidate = projectBankReceiptCandidate(row);
+    const receiptId = Number(candidate.receipt?.receiptId ?? candidate.receiptId);
+    return prepaidReceiptIds.has(receiptId)
+      ? { status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE, reasonCode: 'PREPAID_WALLET_RECEIPT_ALREADY_LINKED', receiptId }
+      : candidate;
+  });
   const eligibleReceipts = receiptCandidates.filter((row) => row.receipt).map((row) => row.receipt);
   const bankByKey = new Map(eligibleBanks.map((bank) => [bank.candidateKey, bank]));
   const receiptByKey = new Map(eligibleReceipts.map((receipt) => [receipt.receiptCandidateKey, receipt]));
@@ -380,8 +411,8 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
     if (visitedReceipts.has(receipt.receiptCandidateKey)) continue;
     visitedReceipts.add(receipt.receiptCandidateKey);
   }
-  const bankStatuses = ledger.entries.map((entry) => {
-    const eligibility = projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding });
+  const bankStatuses = ledger.entries.map((entry, index) => {
+    const eligibility = bankCandidates[index].eligibility;
     const source = entry.sourceProvenance ?? {};
     const eligible = eligibility.bank;
     const status = eligible
@@ -548,11 +579,23 @@ export async function loadBankReceiptMatching(pool, {
         AND ($5::timestamptz IS NULL OR bt.occurred_at >= $5::timestamptz)
       ORDER BY m.bank_transaction_id`, [scopeKey, from, to, bankIngestedAfter, automaticOccurrenceCutoff])).rows
     : [];
+  const transactionIds = [...new Set(journals.projections.map((entry) => Number(entry.bankTransactionId)).filter(positiveInteger))];
+  const receiptIds = [...new Set(receipts.map((entry) => Number(entry.receiptId)).filter(positiveInteger))];
+  const [prepaidBankRows, prepaidReceiptRows] = await Promise.all([
+    transactionIds.length
+      ? pool.query('SELECT bank_transaction_id AS "bankTransactionId" FROM prepaid_wallet_movements WHERE bank_transaction_id=ANY($1::bigint[])', [transactionIds])
+      : { rows: [] },
+    receiptIds.length
+      ? pool.query('SELECT receipt_id AS "receiptId" FROM prepaid_wallet_receipt_evidence WHERE receipt_id=ANY($1::bigint[])', [receiptIds])
+      : { rows: [] },
+  ]);
   return matchBankReceipts(entries, ownershipSnapshot, receipts, {
     internalTransferMaxTimeDeltaMs,
     receiptMaxTimeDeltaMs,
     assignmentPolicy,
     requireSourceProviderBinding,
     persistedMatches,
+    prepaidWalletBankTransactionIds: new Set(prepaidBankRows.rows.map((row) => Number(row.bankTransactionId))),
+    prepaidWalletReceiptIds: new Set(prepaidReceiptRows.rows.map((row) => Number(row.receiptId))),
   });
 }

@@ -19,6 +19,11 @@ test('prepaid, credit and provision components fail closed', () => {
 test('missing components are not treated as zero', () => assert.notEqual(standaloneEligibility(row({ prepaidSum: null, prepaidState: 'FIELD_MISSING' })).category, 'ELIGIBLE_STANDALONE'));
 test('existing multi-receipt lifecycle is excluded before ordinary predicates', () => assert.equal(standaloneEligibility(row(), { lifecycleReceiptIds: new Set(['1']) }).category, 'EXCLUDED_ALREADY_MULTI_RECEIPT'));
 test('existing purchase evidence is reused, not duplicated', () => assert.equal(standaloneEligibility(row(), { purchaseReceiptIds: new Set(['1']) }).category, 'EXCLUDED_ALREADY_PURCHASE'));
+test('user-confirmed Troika receipt evidence is excluded from standalone expense accounting', () => {
+  assert.deepEqual(standaloneEligibility(row(), { prepaidWalletReceiptIds: new Set(['1']) }), {
+    category: 'EXCLUDED_TROIKA_WALLET', reason: 'PREPAID_WALLET_RECEIPT_ALREADY_LINKED',
+  });
+});
 test('return target can converge through existing purchase evidence', () => assert.equal(standaloneEligibility(row(), { purchaseReceiptIds: new Set(['1']) }).reason, 'PURCHASE_EVIDENCE_ALREADY_EXISTS'));
 test('identity and operation guards fail closed', () => {
   assert.equal(standaloneEligibility(row({ operationType: 2 })).category, 'OTHER_UNSUPPORTED');

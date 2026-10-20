@@ -8,7 +8,7 @@ export const STANDALONE_PURCHASE_VERSION = 'standalone-purchase-v1';
 
 const money = (value) => Number(value ?? 0);
 const amount = (value) => money(value).toFixed(2);
-const CATEGORY_ORDER = ['ELIGIBLE_STANDALONE', 'EXCLUDED_ALREADY_MULTI_RECEIPT', 'EXCLUDED_PREPAYMENT', 'EXCLUDED_ADVANCE', 'EXCLUDED_MIXED', 'EXCLUDED_CREDIT', 'EXCLUDED_PREPAID_COMPONENT', 'EXCLUDED_ALREADY_PURCHASE', 'OTHER_UNSUPPORTED'];
+const CATEGORY_ORDER = ['ELIGIBLE_STANDALONE', 'EXCLUDED_ALREADY_MULTI_RECEIPT', 'EXCLUDED_TROIKA_WALLET', 'EXCLUDED_PREPAYMENT', 'EXCLUDED_ADVANCE', 'EXCLUDED_MIXED', 'EXCLUDED_CREDIT', 'EXCLUDED_PREPAID_COMPONENT', 'EXCLUDED_ALREADY_PURCHASE', 'OTHER_UNSUPPORTED'];
 export const standaloneSemanticKey = (receiptId) => `standalone-purchase:${receiptId}`;
 
 export const STANDALONE_RECEIPTS_SQL = `
@@ -45,8 +45,9 @@ ORDER BY r.id`;
 function zeroComponent(value, state) { return Number(value) === 0 && ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(state); }
 function newMoneyReconciles(row) { return ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(row.cashTotalState) && ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(row.ecashTotalState) && Math.abs(money(row.cashTotalSum) + money(row.ecashTotalSum) - money(row.totalSum)) < 0.005; }
 
-export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), purchaseReceiptIds = new Set() } = {}) {
+export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), purchaseReceiptIds = new Set(), prepaidWalletReceiptIds = new Set() } = {}) {
   if (lifecycleReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_MULTI_RECEIPT', reason: 'CONFIRMED_MULTI_RECEIPT_LIFECYCLE' };
+  if (prepaidWalletReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_TROIKA_WALLET', reason: 'PREPAID_WALLET_RECEIPT_ALREADY_LINKED' };
   if (purchaseReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_PURCHASE', reason: 'PURCHASE_EVIDENCE_ALREADY_EXISTS' };
   const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
   if (row.normalizationStatus !== 'READY' || row.operationType !== 1 || row.fiscalOperationType !== 1 || currencyResolution.status !== 'RESOLVED') return { category: 'OTHER_UNSUPPORTED', reason: 'NORMALIZATION_OPERATION_OR_CURRENCY_NOT_SUPPORTED' };
@@ -60,9 +61,9 @@ export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), pu
   return { category: 'ELIGIBLE_STANDALONE', reason: 'STRICT_NEW_MONEY_FULL_SETTLEMENT' };
 }
 
-async function graphReceiptSets(pool, scopeKey) {
-  const [lifecycle, purchases] = await Promise.all([
-    pool.query(`SELECT DISTINCT ev.receipt_id
+async function graphReceiptSets(pool, scopeKey, { serial = false } = {}) {
+  const queries = [
+    () => pool.query(`SELECT DISTINCT ev.receipt_id
       FROM business_event_evidence ev
       JOIN business_events evidence_event ON evidence_event.id=ev.event_id
       JOIN accounting_scopes scope ON scope.id=evidence_event.scope_id
@@ -77,14 +78,25 @@ async function graphReceiptSets(pool, scopeKey) {
           AND source.event_type IN ('PREPAYMENT','FULFILLMENT')
           AND (evidence_event.id=edge.source_event_id OR evidence_event.id=edge.target_event_id)
       )`, [scopeKey]),
-    pool.query(`SELECT DISTINCT ev.receipt_id
+    () => pool.query(`SELECT DISTINCT ev.receipt_id
       FROM business_event_evidence ev
       JOIN business_events event ON event.id=ev.event_id
       JOIN accounting_scopes scope ON scope.id=event.scope_id
       WHERE scope.scope_key=$1 AND event.event_type='PURCHASE'
         AND event.resolution_status='CONFIRMED'`, [scopeKey]),
-  ]);
-  return { lifecycleReceiptIds: new Set(lifecycle.rows.map((row) => String(row.receipt_id))), purchaseReceiptIds: new Set(purchases.rows.map((row) => String(row.receipt_id))) };
+    () => pool.query(`SELECT DISTINCT evidence.receipt_id
+      FROM prepaid_wallet_receipt_evidence evidence
+      JOIN accounting_scopes scope ON scope.id=evidence.scope_id
+      WHERE scope.scope_key=$1`, [scopeKey]),
+  ];
+  const [lifecycle, purchases, prepaidWalletReceipts] = serial
+    ? [await queries[0](), await queries[1](), await queries[2]()]
+    : await Promise.all(queries.map((query) => query()));
+  return {
+    lifecycleReceiptIds: new Set(lifecycle.rows.map((row) => String(row.receipt_id))),
+    purchaseReceiptIds: new Set(purchases.rows.map((row) => String(row.receipt_id))),
+    prepaidWalletReceiptIds: new Set(prepaidWalletReceipts.rows.map((row) => String(row.receipt_id))),
+  };
 }
 
 export async function standalonePurchaseCensus(pool, { scopeKey = 'default', from = null, to = null } = {}) {
@@ -103,6 +115,13 @@ export async function standalonePurchaseCensus(pool, { scopeKey = 'default', fro
 
 async function persistCandidate(tx, row, scopeKey) {
   await tx.pool.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${STANDALONE_PURCHASE_RULE}:${scopeKey}:${row.id}`]);
+  if ((await tx.pool.query(`SELECT 1 FROM prepaid_wallet_receipt_evidence evidence
+    JOIN accounting_scopes scope ON scope.id=evidence.scope_id
+    WHERE scope.scope_key=$1 AND evidence.receipt_id=$2 LIMIT 1`, [scopeKey, row.id])).rowCount) {
+    const error = new Error('FNS receipt is already evidence for a confirmed prepaid wallet movement');
+    error.code = 'PREPAID_WALLET_RECEIPT_ALREADY_LINKED';
+    throw error;
+  }
   const existing = await tx.pool.query(`SELECT event.id,event.resolution_status FROM business_event_evidence ev JOIN business_events event ON event.id=ev.event_id JOIN accounting_scopes scope ON scope.id=event.scope_id WHERE scope.scope_key=$1 AND ev.receipt_id=$2 AND event.event_type='PURCHASE' AND event.resolution_status='CONFIRMED' LIMIT 1`, [scopeKey, row.id]);
   if (existing.rowCount) return { receiptId: Number(row.id), eventId: Number(existing.rows[0].id), created: false, reused: true };
   const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
@@ -117,14 +136,16 @@ export async function persistStandalonePurchases(pool, { scopeKey = 'default', r
   const ids = receiptIds?.map((id) => Number(id)) ?? null;
   const [rowsResult, sets] = await Promise.all([pool.query(STANDALONE_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, ids, scopeKey]), graphReceiptSets(pool, scopeKey)]);
   const requested = receiptIds ? new Set(receiptIds.map((id) => String(id))) : null;
-  const eligible = rowsResult.rows.filter((row) => (!requested || requested.has(String(row.id))) && standaloneEligibility({ ...row, operationType: Number(row.operationType), fiscalOperationType: Number(row.fiscalOperationType) }, sets).category === 'ELIGIBLE_STANDALONE');
   const persisted = await new BusinessEventGraphRepository(pool).withTransaction(async (tx) => {
     await lockMatchedPurchaseScopeTransaction(tx.pool, scopeKey);
+    const currentSets = await graphReceiptSets(tx.pool, scopeKey, { serial: true });
+    const eligible = rowsResult.rows.filter((row) => (!requested || requested.has(String(row.id))) && standaloneEligibility({ ...row, operationType: Number(row.operationType), fiscalOperationType: Number(row.fiscalOperationType) }, currentSets).category === 'ELIGIBLE_STANDALONE');
     const results = [];
     for (const row of eligible) results.push(await persistCandidate(tx, row, scopeKey));
-    return results;
+    return { results, candidateCount: eligible.length };
   });
-  const created = persisted.filter((row) => row.created);
+  const persistedRows = persisted.results;
+  const created = persistedRows.filter((row) => row.created);
   const propagation = { ledger: 0, certification: 0 };
   for (const row of created) {
     if (ledgerRefresher) {
@@ -133,5 +154,5 @@ export async function persistStandalonePurchases(pool, { scopeKey = 'default', r
       propagation.certification += Number(ledger?.certification?.facts ?? 0);
     }
   }
-  return { model: STANDALONE_PURCHASE_RULE, candidates: eligible.length, created: created.length, reused: persisted.filter((row) => row.reused).length, purchases: persisted, propagation };
+  return { model: STANDALONE_PURCHASE_RULE, candidates: persisted.candidateCount, created: created.length, reused: persistedRows.filter((row) => row.reused).length, purchases: persistedRows, propagation };
 }

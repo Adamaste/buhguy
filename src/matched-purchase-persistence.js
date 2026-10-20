@@ -197,6 +197,12 @@ async function assertAutomaticSourceProviderBinding(client, scope, fields, optio
 
 async function lockInputs(client, scope, fields, options = {}) {
   await lockMatchedPurchaseBankTransaction(client, fields.bankTransactionId);
+  const prepaid = (await client.query(`SELECT
+      EXISTS (SELECT 1 FROM prepaid_wallet_movements movement
+        WHERE movement.scope_id=$1 AND movement.bank_transaction_id=$2) AS "bankTopupConfirmed",
+      EXISTS (SELECT 1 FROM prepaid_wallet_receipt_evidence evidence
+        WHERE evidence.scope_id=$1 AND evidence.receipt_id=$3) AS "receiptLinkedToWallet"`, [scope.id, fields.bankTransactionId, fields.receiptId])).rows[0];
+  if (prepaid?.bankTopupConfirmed || prepaid?.receiptLinkedToWallet) fail('PREPAID_WALLET_MATCH_INELIGIBLE');
   const tx = await client.query('SELECT id,observation_id,occurred_at,amount,currency FROM bank_transactions WHERE id=$1', [fields.bankTransactionId]);
   const receipt = await client.query('SELECT id,date_time,total_sum,currency FROM receipts WHERE id=$1', [fields.receiptId]);
   if (!tx.rowCount || !receipt.rowCount) fail('AUTHORITATIVE_INPUT_MISSING');

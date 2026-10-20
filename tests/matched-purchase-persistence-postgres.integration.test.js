@@ -472,6 +472,10 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     ]) {
       await admin.query(await readFile(new URL(`../db/migrations/${migration}`, import.meta.url), 'utf8'));
     }
+    // Mirror migration 024's minimal exclusion lookups for this newly-created
+    // restricted role; the wallet integration test verifies the migration grants.
+    await admin.query('GRANT SELECT (scope_id,bank_transaction_id) ON prepaid_wallet_movements TO receipt_collector');
+    await admin.query('GRANT SELECT (scope_id,receipt_id) ON prepaid_wallet_receipt_evidence TO receipt_collector');
 
     const tableWideSelectCount = Number((await admin.query(`SELECT count(*)::int AS count
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
