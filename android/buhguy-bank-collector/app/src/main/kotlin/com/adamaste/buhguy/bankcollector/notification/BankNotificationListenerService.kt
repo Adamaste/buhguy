@@ -21,6 +21,7 @@ class BankNotificationListenerService : NotificationListenerService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        AlfaOneShotNotificationDiagnostics.captureIfActive(sbn)
         val callbackAt = Instant.now().toString()
         BankCaptureDiagnostics.log(
             BankCaptureLogEvent(
