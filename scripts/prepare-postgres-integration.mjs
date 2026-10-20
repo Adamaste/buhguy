@@ -8,7 +8,9 @@ import { rebuildCertification } from '../src/certification.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error('TEST_DATABASE_URL is required');
-const databaseName = new URL(connectionString).pathname.replace(/^\//, '');
+const testUrl = new URL(connectionString);
+const databaseName = testUrl.pathname.replace(/^\//, '');
+if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(testUrl.hostname.toLowerCase())) throw new Error('TEST_DATABASE_URL must target localhost only');
 if (!databaseName.startsWith('finance_receipt_collector_test_')) throw new Error('TEST_DATABASE_URL must target a disposable finance_receipt_collector_test_ database');
 
 const pool = createPool({ connectionString, max: 10 });
@@ -33,6 +35,16 @@ const raw = {
 
 try {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  await pool.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='receipt_collector') THEN
+        CREATE ROLE receipt_collector NOLOGIN;
+      ELSIF (SELECT rolcanlogin FROM pg_roles WHERE rolname='receipt_collector') THEN
+        RAISE EXCEPTION 'Disposable test role receipt_collector must be NOLOGIN';
+      END IF;
+    END
+  $$`);
+  await pool.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
   await migrate(pool);
   for (const file of ['db/analytics/008_analytics_v1.sql', 'db/analytics/009_purchase_details_v1.sql']) {
     await pool.query(await fs.readFile(file, 'utf8'));

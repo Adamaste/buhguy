@@ -6,11 +6,18 @@ const allTestFiles = readdirSync('tests')
   .filter((file) => file.endsWith('.test.js'))
   .sort()
   .map((file) => `tests/${file}`);
+if (process.env.TEST_DATABASE_URL) {
+  const testUrl = new URL(process.env.TEST_DATABASE_URL);
+  const databaseName = testUrl.pathname.replace(/^\//, '');
+  if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(testUrl.hostname.toLowerCase())) throw new Error('TEST_DATABASE_URL must target localhost only');
+  if (!databaseName.startsWith('finance_receipt_collector_test_')) throw new Error('TEST_DATABASE_URL must target a disposable finance_receipt_collector_test_ database');
+}
 const migrationTest = 'tests/postgres.integration.test.js';
 const integrationFiles = [
   'tests/analytics-postgres.integration.test.js',
   'tests/certification-postgres.integration.test.js',
   'tests/ledger-postgres.integration.test.js',
+  'tests/prepaid-wallet-postgres.integration.test.js',
   'tests/purchase-details-analytics-postgres.integration.test.js',
   'tests/bank-ingestion-postgres.integration.test.js',
   'tests/bank-device-auth-postgres.integration.test.js',
@@ -63,12 +70,14 @@ try {
     try { execFileSync('docker', ['exec', name, 'pg_isready', '-U', 'postgres', '-d', database], { stdio: 'ignore' }); break; } catch { if (attempt === 59) throw new Error('Disposable PostgreSQL did not become ready'); await new Promise((resolve) => setTimeout(resolve, 500)); }
   }
   const env = { ...process.env, TEST_DATABASE_URL: `postgres://postgres:${encodeURIComponent(password)}@127.0.0.1:${port}/${database}` };
-  if (run([migrationTest], env) !== 0) process.exit(1);
-  for (const file of integrationFiles) {
-    if (runFixture(env) !== 0) process.exit(1);
-    if (run([file], env) !== 0) process.exit(1);
+  let testExitCode = run([migrationTest], env);
+  if (testExitCode === 0) {
+    for (const file of integrationFiles) {
+      if (runFixture(env) !== 0) { testExitCode = 1; break; }
+      if (run([file], env) !== 0) { testExitCode = 1; break; }
+    }
   }
-  process.exitCode = 0;
+  process.exitCode = testExitCode;
 } finally {
   if (containerStarted) { try { execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' }); } catch {} }
 }

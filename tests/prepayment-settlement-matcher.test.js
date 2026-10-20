@@ -96,6 +96,16 @@ test('incremental arrival and accounting scope isolation are explicit', () => {
   assert.equal(matchPrepaymentSettlements([{ ...prepayment, scopeKey: 'scope-a' }, { ...settlement, scopeKey: 'scope-b' }]).candidates[0].strict, false);
 });
 
+test('explicitly wallet-linked receipt is excluded from prepayment and settlement candidates', () => {
+  const rows = pair();
+  const prepayment = matchPrepaymentSettlements(rows, { excludedReceiptIds: new Set(['1']) });
+  assert.equal(prepayment.summary.candidatePairs, 0);
+  assert.equal(prepayment.summary.confirmedSettlements, 0);
+  const settlement = matchPrepaymentSettlements(rows, { excludedReceiptIds: new Set([2]) });
+  assert.equal(settlement.summary.candidatePairs, 0);
+  assert.equal(settlement.summary.confirmedSettlements, 0);
+});
+
 test('manual/external graph assertions are outside pure matcher output', () => {
   const result = matchPrepaymentSettlements(pair());
   assert.equal(Object.hasOwn(result, 'businessEvents'), false);

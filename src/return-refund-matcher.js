@@ -77,7 +77,7 @@ export function matchReturnReceipts(receipts, options = {}) {
 }
 
 async function loadReturnInputs(pool, scopeKey = 'default') {
-  const rows = (await pool.query(MATCHER_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION])).rows;
+  const rows = (await pool.query(MATCHER_RECEIPTS_SQL, [NORMALIZED_FACT_VERSION, scopeKey])).rows;
   const graphRows = (await pool.query(`
     SELECT e.receipt_id, b.id AS event_id, b.event_type, b.resolution_status,
            b.origin, b.amount, s.scope_key
