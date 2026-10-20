@@ -5,11 +5,11 @@ import { backfillNormalization } from '../src/fiscal-normalization.js';
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from '../src/business-event-graph.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { rebuildCertification } from '../src/certification.js';
+import { assertDisposableLocalTestDatabase } from './assert-disposable-local-test-database.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error('TEST_DATABASE_URL is required');
-const databaseName = new URL(connectionString).pathname.replace(/^\//, '');
-if (!databaseName.startsWith('finance_receipt_collector_test_')) throw new Error('TEST_DATABASE_URL must target a disposable finance_receipt_collector_test_ database');
+const databaseName = assertDisposableLocalTestDatabase(connectionString);
 
 const pool = createPool({ connectionString, max: 10 });
 const raw = {
@@ -32,7 +32,11 @@ const raw = {
 };
 
 try {
+  const runtimeRole = await pool.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='receipt_collector'");
+  if (!runtimeRole.rowCount) await pool.query('CREATE ROLE receipt_collector NOLOGIN');
+  else if (runtimeRole.rows[0].rolcanlogin) throw new Error('Disposable test role receipt_collector unexpectedly allows login');
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  await pool.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
   await migrate(pool);
   for (const file of ['db/analytics/008_analytics_v1.sql', 'db/analytics/009_purchase_details_v1.sql']) {
     await pool.query(await fs.readFile(file, 'utf8'));

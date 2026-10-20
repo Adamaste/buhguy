@@ -9,11 +9,13 @@ import { dryRunPrepaymentSettlements, persistPrepaymentSettlementMatches, recons
 import { fiscalContentFingerprint } from '../src/fiscal-evidence.js';
 import { decodePostgresJsonEvidence } from '../src/postgres-json-evidence.js';
 import { decodePostgresTextEvidence } from '../src/postgres-text-evidence.js';
+import { assertDisposableLocalTestDatabase } from '../scripts/assert-disposable-local-test-database.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) {
   test('PostgreSQL integration environment is required', { skip: 'TEST_DATABASE_URL is not set; use npm run test:integration' }, () => {});
 } else {
+  assertDisposableLocalTestDatabase(connectionString);
   let pool;
 
   const rawFixture = (id, suffix = id, overrides = {}) => ({

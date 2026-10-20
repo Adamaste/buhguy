@@ -1,6 +1,7 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from './business-event-graph.js';
 import { decodePostgresTextEvidence } from './postgres-text-evidence.js';
+import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 
 export const PREPAYMENT_SETTLEMENT_RULE = 'PREPAYMENT_SETTLEMENT_V1';
 export const MATCHER_VERSION = 'prepayment-settlement-matcher-v1';
@@ -43,7 +44,9 @@ function comparePair(prepayment, settlement, { scopeKey = 'default' } = {}) {
     predicate('same_accounting_scope', prepayment.scopeKey === settlement.scopeKey && prepayment.scopeKey === scopeKey),
     predicate('operation_type_compatible', [1].includes(Number(prepayment.operationType)) && [1].includes(Number(settlement.operationType))),
     predicate('prepayment_stage', PREPAYMENT_STAGES.has(prepayment.paymentStage)),
+    predicate('prepayment_not_already_expensed', prepayment.manualTroikaTopupAlreadyExpensed !== true),
     predicate('full_settlement_stage', settlement.paymentStage === 'SETTLEMENT_ONLY'),
+    predicate('settlement_not_already_expensed', settlement.manualTroikaTopupAlreadyExpensed !== true),
     predicate('ready_normalization', prepayment.normalizationStatus === 'READY' && settlement.normalizationStatus === 'READY'),
     predicate('chronology', new Date(prepayment.dateTime).getTime() < new Date(settlement.dateTime).getTime()),
     predicate('seller_identity', prepayment.sellerInn !== null && prepayment.sellerInn === settlement.sellerInn),
@@ -146,7 +149,8 @@ SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.seller_inn AS "se
        COALESCE(jsonb_agg(jsonb_build_object('name', i.name, 'quantity', i.quantity,
          'price', i.price, 'itemSum', i.item_sum, 'providerInn', f_item.provider_inn,
          'gtin', f_item.gtin, 'rawProductCode', f_item.raw_product_code)
-         ORDER BY i.position) FILTER (WHERE i.id IS NOT NULL), '[]'::jsonb) AS items
+         ORDER BY i.position) FILTER (WHERE i.id IS NOT NULL), '[]'::jsonb) AS items,
+       EXISTS (SELECT 1 FROM manual_troika_topup_receipt_links manual_link WHERE manual_link.receipt_id=r.id) AS "manualTroikaTopupAlreadyExpensed"
 FROM receipts r
 JOIN receipt_fiscal_facts f ON f.receipt_id = r.id AND f.normalization_version = $1
 LEFT JOIN receipt_items i ON i.receipt_id = r.id
@@ -203,7 +207,6 @@ export async function reconsiderPrepaymentSettlement(pool, receiptId, options = 
 
 export async function persistPrepaymentSettlementMatches(pool, options = {}) {
   const result = options.result ?? await dryRunPrepaymentSettlements(pool, { ...options, retainDetails: false });
-  const graph = new BusinessEventGraphRepository(pool);
   const strictBySettlement = new Map();
   for (const pair of result.candidates.filter((candidate) => candidate.strict)) {
     const list = strictBySettlement.get(pair.settlementReceiptId) ?? [];
@@ -216,10 +219,31 @@ export async function persistPrepaymentSettlementMatches(pool, options = {}) {
     ? allConfirmedPairs.filter((pair) => requestedKeys.has(`${pair.prepaymentReceiptId}:${pair.settlementReceiptId}`))
     : allConfirmedPairs;
   const created = { purchases: 0, lifecycleEvents: 0, evidenceLinks: 0, edges: 0, allocations: 0 };
-  await graph.withTransaction(async (tx) => {
-    for (const pair of confirmedPairs) {
+  const scopeKey = options.scopeKey ?? 'default';
+  const lockClient = await pool.connect();
+  let releaseScopeLock = null;
+  let persistablePairs = [];
+  let blockedManualTopupPairs = [];
+  const tx = new BusinessEventGraphRepository({
+    query: lockClient.query.bind(lockClient),
+    connect: async () => lockClient,
+  });
+  try {
+    releaseScopeLock = await lockMatchedPurchaseScope(lockClient, scopeKey);
+    await lockClient.query('BEGIN');
+    try {
+      await lockMatchedPurchaseScopeTransaction(lockClient, scopeKey);
+      const receiptIds = [...new Set(confirmedPairs.flatMap((pair) => [pair.prepaymentReceiptId, pair.settlementReceiptId]).map(Number))];
+      const guardedReceipts = receiptIds.length
+        ? new Set((await tx.pool.query(`SELECT receipt_id FROM manual_troika_topup_receipt_links WHERE receipt_id=ANY($1::bigint[])`, [receiptIds])).rows.map((row) => Number(row.receipt_id)))
+        : new Set();
+      const pairHasManualTopupEvidence = (pair) => guardedReceipts.has(Number(pair.prepaymentReceiptId))
+        || guardedReceipts.has(Number(pair.settlementReceiptId));
+      persistablePairs = confirmedPairs.filter((pair) => !pairHasManualTopupEvidence(pair));
+      blockedManualTopupPairs = confirmedPairs.filter(pairHasManualTopupEvidence);
+      for (const pair of persistablePairs) {
       const base = {
-        scopeKey: options.scopeKey ?? 'default', origin: SYSTEM_DERIVED,
+        scopeKey, origin: SYSTEM_DERIVED,
         graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: PREPAYMENT_SETTLEMENT_RULE,
         ruleVersion: MATCHER_VERSION, resolutionStatus: 'CONFIRMED', amount: pair.purchaseValue,
         currency: null,
@@ -239,7 +263,24 @@ export async function persistPrepaymentSettlementMatches(pool, options = {}) {
       const settleEdge = await tx.createEdge({ ...base, sourceEventId: fulfillment.id, targetEventId: purchase.id, relationType: 'FULFILLS', semanticKey: `fulfills:${pair.prepaymentReceiptId}:${pair.settlementReceiptId}`, explanation: 'Strict PREPAYMENT_SETTLEMENT_V1 evidence' });
       created.edges += Number(preEdge.created) + Number(settleEdge.created);
       if (options.failAfter === 'commit') throw new Error('injected matcher failure before commit');
+      }
+      await lockClient.query('COMMIT');
+    } catch (error) {
+      await lockClient.query('ROLLBACK').catch(() => {});
+      throw error;
     }
-  });
-  return { ...result, writeMode: true, created, confirmedPairs: confirmedPairs.map((pair) => ({ prepaymentReceiptId: pair.prepaymentReceiptId, settlementReceiptId: pair.settlementReceiptId, purchaseValue: pair.purchaseValue })) };
+  } finally {
+    let releaseError;
+    if (releaseScopeLock) {
+      try { await releaseScopeLock(); } catch (error) { releaseError = error; }
+    }
+    lockClient.release(releaseError);
+  }
+  return {
+    ...result,
+    writeMode: true,
+    created,
+    confirmedPairs: persistablePairs.map((pair) => ({ prepaymentReceiptId: Number(pair.prepaymentReceiptId), settlementReceiptId: Number(pair.settlementReceiptId), purchaseValue: pair.purchaseValue })),
+    blockedManualTopupPairs: blockedManualTopupPairs.map((pair) => ({ prepaymentReceiptId: Number(pair.prepaymentReceiptId), settlementReceiptId: Number(pair.settlementReceiptId), reason: 'RECEIPT_ALREADY_RECORDED_AS_MANUAL_TROIKA_EXPENSE' })),
+  };
 }

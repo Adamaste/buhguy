@@ -520,6 +520,23 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     ]])).rows[0].count);
     assert.equal(sequenceReadCount, 0, 'writer migration must grant only sequence USAGE');
 
+    await admin.query(`GRANT SELECT (id, scope_id, bank_source_id, bank_transaction_id, business_event_id,
+        ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code,
+        amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key)
+      ON public.manual_troika_topup_expenses TO receipt_collector`);
+    const manualTopupLookupPrivileges = (await admin.query(`SELECT
+      has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','scope_id','SELECT') AS scope_id,
+      has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','bank_transaction_id','SELECT') AS bank_transaction_id,
+      has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','reason','SELECT') AS reason,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_expenses','SELECT') AS table_select,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_expenses','INSERT') AS insert_allowed,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_expenses','UPDATE') AS update_allowed,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_expenses','DELETE') AS delete_allowed`)).rows[0];
+    assert.deepEqual(manualTopupLookupPrivileges, {
+      scope_id: true, bank_transaction_id: true, reason: true,
+      table_select: false, insert_allowed: false, update_allowed: false, delete_allowed: false,
+    });
+
     fixture = await createFixture(admin, 'restricted-writer');
     const runtimeUrl = new URL(databaseUrl);
     runtimeUrl.username = 'receipt_collector';

@@ -197,6 +197,9 @@ async function assertAutomaticSourceProviderBinding(client, scope, fields, optio
 
 async function lockInputs(client, scope, fields, options = {}) {
   await lockMatchedPurchaseBankTransaction(client, fields.bankTransactionId);
+  const manualTopup = await client.query(`SELECT 1 FROM manual_troika_topup_expenses
+    WHERE scope_id=$1 AND bank_transaction_id=$2`, [scope.id, fields.bankTransactionId]);
+  if (manualTopup.rowCount) fail('BANK_TRANSACTION_ALREADY_MANUALLY_ACCOUNTED');
   const tx = await client.query('SELECT id,observation_id,occurred_at,amount,currency FROM bank_transactions WHERE id=$1', [fields.bankTransactionId]);
   const receipt = await client.query('SELECT id,date_time,total_sum,currency FROM receipts WHERE id=$1', [fields.receiptId]);
   if (!tx.rowCount || !receipt.rowCount) fail('AUTHORITATIVE_INPUT_MISSING');

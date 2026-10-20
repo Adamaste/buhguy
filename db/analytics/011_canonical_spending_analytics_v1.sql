@@ -103,10 +103,20 @@ WITH v1_taxonomy AS (
       AND successor.subject_event_id=a.subject_event_id
       AND successor.supersedes_allocation_id=a.id
   )
+), manual_topups AS (
+  SELECT p.scope_id,p.certification_run_id,p.source_state_key,p.purchase_id AS subject_event_id,
+         p.currency,p.amount,m.person_id,m.category_code
+  FROM canonical_spending_purchases_v1 p
+  JOIN manual_troika_topup_expenses m
+    ON m.scope_id=p.scope_id AND m.business_event_id=p.purchase_id
+   AND m.amount=p.amount AND m.currency=p.currency
+  WHERE p.rule_code='MANUAL_TROIKA_TOPUP_EXPENSE_V1'
+    AND m.category_code='PUBLIC_TRANSPORT'
 ), purchase_stats AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency, p.amount,
-         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
+         (COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)
+           + COALESCE(mt.amount,0))::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.taxonomy_id <> (SELECT taxonomy_id FROM v1_taxonomy)
            OR a.currency <> p.currency
@@ -117,14 +127,18 @@ WITH v1_taxonomy AS (
                WHERE x.scope_id=p.scope_id AND x.certification_run_id=p.certification_run_id
                  AND x.source_state_key=p.source_state_key AND x.allocation_kind='PURCHASE'
                  AND x.subject_event_id=p.purchase_id) > 1), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
-         COUNT(a.id) > 0 AS has_rows
+           OR (COUNT(a.id) > 0 AND mt.amount IS NOT NULL)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) + COALESCE(mt.amount,0) > p.amount AS conflict,
+         COUNT(a.id) > 0 OR mt.amount IS NOT NULL AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN active_category_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key
    AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
-  GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount
+  LEFT JOIN manual_topups mt
+    ON mt.scope_id=p.scope_id AND mt.certification_run_id=p.certification_run_id
+   AND mt.source_state_key=p.source_state_key AND mt.subject_event_id=p.purchase_id
+  GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount, mt.amount
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id AS subject_event_id, r.currency, r.return_amount,
@@ -164,6 +178,20 @@ WITH v1_taxonomy AS (
    AND NOT ps.conflict
   JOIN spending_categories c ON c.taxonomy_id=a.taxonomy_id AND c.id=a.category_id
   JOIN spending_taxonomies t ON t.id=a.taxonomy_id
+  UNION ALL
+  SELECT p.scope_id,p.certification_run_id,p.source_state_key,p.purchase_id,p.currency,
+         vt.taxonomy_id,vt.taxonomy_version,c.category_code,mt.amount,
+         0::NUMERIC(18,2),'ALLOCATED'
+  FROM canonical_spending_purchases_v1 p
+  JOIN manual_topups mt
+    ON mt.scope_id=p.scope_id AND mt.certification_run_id=p.certification_run_id
+   AND mt.source_state_key=p.source_state_key AND mt.subject_event_id=p.purchase_id
+  JOIN purchase_stats ps
+    ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
+   AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id
+   AND NOT ps.conflict
+  CROSS JOIN v1_taxonomy vt
+  JOIN spending_categories c ON c.taxonomy_id=vt.taxonomy_id AND c.category_code=mt.category_code
   UNION ALL
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id, r.currency, a.taxonomy_id, t.taxonomy_version, c.category_code,
@@ -219,23 +247,37 @@ WITH active_person_allocations AS (
       AND successor.subject_event_id=a.subject_event_id
       AND successor.supersedes_allocation_id=a.id
   )
+), manual_topups AS (
+  SELECT p.scope_id,p.certification_run_id,p.source_state_key,p.purchase_id AS subject_event_id,
+         p.currency,p.amount,m.person_id
+  FROM canonical_spending_purchases_v1 p
+  JOIN manual_troika_topup_expenses m
+    ON m.scope_id=p.scope_id AND m.business_event_id=p.purchase_id
+   AND m.amount=p.amount AND m.currency=p.currency
+  WHERE p.rule_code='MANUAL_TROIKA_TOPUP_EXPENSE_V1'
+    AND m.category_code='PUBLIC_TRANSPORT'
 ), purchase_stats AS (
   SELECT p.scope_id, p.certification_run_id, p.source_state_key,
          p.purchase_id AS subject_event_id, p.currency, p.amount,
-         COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)::NUMERIC(18,2) AS allocated,
+         (COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0)
+           + COALESCE(mt.amount,0))::NUMERIC(18,2) AS allocated,
          COALESCE(BOOL_OR(a.allocation_status <> 'ALLOCATED'
            OR a.currency <> p.currency
            OR a.scope_id <> p.scope_id
            OR a.certification_run_id <> p.certification_run_id
            OR a.source_state_key <> p.source_state_key), FALSE)
-           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) > p.amount AS conflict,
-         COUNT(a.id) > 0 AS has_rows
+           OR (COUNT(a.id) > 0 AND mt.amount IS NOT NULL)
+           OR COALESCE(SUM(a.amount) FILTER (WHERE a.allocation_status='ALLOCATED'), 0) + COALESCE(mt.amount,0) > p.amount AS conflict,
+         COUNT(a.id) > 0 OR mt.amount IS NOT NULL AS has_rows
   FROM canonical_spending_purchases_v1 p
   LEFT JOIN active_person_allocations a
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key
    AND a.subject_event_id=p.purchase_id AND a.allocation_kind='PURCHASE'
-  GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount
+  LEFT JOIN manual_topups mt
+    ON mt.scope_id=p.scope_id AND mt.certification_run_id=p.certification_run_id
+   AND mt.source_state_key=p.source_state_key AND mt.subject_event_id=p.purchase_id
+  GROUP BY p.scope_id, p.certification_run_id, p.source_state_key, p.purchase_id, p.currency, p.amount, mt.amount
 ), return_stats AS (
   SELECT r.scope_id, r.certification_run_id, r.source_state_key,
          r.return_id AS subject_event_id, r.currency, r.return_amount,
@@ -262,6 +304,17 @@ WITH active_person_allocations AS (
     ON a.scope_id=p.scope_id AND a.certification_run_id=p.certification_run_id
    AND a.source_state_key=p.source_state_key AND a.allocation_kind='PURCHASE'
    AND a.subject_event_id=p.purchase_id AND a.allocation_status='ALLOCATED'
+  JOIN purchase_stats ps
+    ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
+   AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id
+   AND NOT ps.conflict
+  UNION ALL
+  SELECT p.scope_id,p.certification_run_id,p.source_state_key,p.purchase_id,mt.person_id,p.currency,
+         mt.amount,0::NUMERIC(18,2),'ALLOCATED'
+  FROM canonical_spending_purchases_v1 p
+  JOIN manual_topups mt
+    ON mt.scope_id=p.scope_id AND mt.certification_run_id=p.certification_run_id
+   AND mt.source_state_key=p.source_state_key AND mt.subject_event_id=p.purchase_id
   JOIN purchase_stats ps
     ON ps.scope_id=p.scope_id AND ps.certification_run_id=p.certification_run_id
    AND ps.source_state_key=p.source_state_key AND ps.subject_event_id=p.purchase_id

@@ -9,6 +9,7 @@ test('replay uses a stable standalone semantic key', () => assert.equal(standalo
 test('prepayment and advance are excluded', () => {
   assert.equal(standaloneEligibility(row({ paymentStage: 'PREPAYMENT_ONLY' })).category, 'EXCLUDED_PREPAYMENT');
   assert.equal(standaloneEligibility(row({ paymentStage: 'ADVANCE_ONLY' })).category, 'EXCLUDED_ADVANCE');
+  assert.equal(standaloneEligibility(row({ paymentStage: 'PREPAYMENT_ONLY', totalSum: '21.00' })).reason, 'PREPAYMENT_STAGE');
 });
 test('mixed payment type is excluded', () => assert.equal(standaloneEligibility(row({ paymentStage: 'MIXED' })).category, 'EXCLUDED_MIXED'));
 test('prepaid, credit and provision components fail closed', () => {

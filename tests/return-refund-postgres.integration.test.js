@@ -5,8 +5,10 @@ import { backfillNormalization } from '../src/fiscal-normalization.js';
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, MANUAL, validateBusinessEventGraph } from '../src/business-event-graph.js';
 import { dryRunPrepaymentSettlements, persistPrepaymentSettlementMatches } from '../src/prepayment-settlement-matcher.js';
 import { dryRunReturnRefundMatches, persistReturnRefundMatches, rebuildReturnRefundMatches } from '../src/return-refund-matcher.js';
+import { assertDisposableLocalTestDatabase } from '../scripts/assert-disposable-local-test-database.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
+if (connectionString) assertDisposableLocalTestDatabase(connectionString);
 if (!connectionString) {
   test('RETURN_REFUND_V1 PostgreSQL integration environment is required', { skip: 'TEST_DATABASE_URL is not set' }, () => {});
 } else {

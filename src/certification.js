@@ -1,9 +1,13 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
+import { GRAPH_MODEL_VERSION } from './business-event-graph.js';
 import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 
 export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
 export const CERTIFICATION_SOURCE_STATE_OVERRIDE = 'CERTIFICATION_SOURCE_STATE_OVERRIDE';
+const MANUAL_TROIKA_TOPUP_RULE = 'MANUAL_TROIKA_TOPUP_EXPENSE_V1';
+const MANUAL_TROIKA_TOPUP_CATEGORY = 'PUBLIC_TRANSPORT';
+const MANUAL_TROIKA_TOPUP_PROVIDER = 'ru.alfabank.mobile.android';
 
 const MONEY_PATTERN = /^-?\d+(?:\.\d{1,2})?$/;
 
@@ -42,8 +46,8 @@ async function sourceState(pool, scopeId) {
       AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
     ORDER BY e.id`, [scopeId])).rows;
   const postings = (await pool.query(`SELECT p.ledger_entry_id,p.account_id,p.currency,p.debit,p.credit,
-      p.source_allocation_id,p.source_receipt_id
-    FROM ledger_postings p
+      p.source_allocation_id,p.source_receipt_id,a.account_type,a.financial_account_id
+    FROM ledger_postings p JOIN ledger_accounts a ON a.id=p.account_id
     JOIN ledger_entries e ON e.id=p.ledger_entry_id
     WHERE e.scope_id=$1
       AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
@@ -60,6 +64,10 @@ async function sourceState(pool, scopeId) {
     FROM ledger_entry_supersessions
     WHERE scope_id=$1
     ORDER BY id`, [scopeId])).rows;
+  const manualTroikaTopups = (await pool.query(`SELECT id,scope_id,bank_source_id,bank_transaction_id,business_event_id,ledger_entry_id,
+      financial_account_id,payment_instrument_id,person_id,provider,category_code,amount,currency,occurred_at,
+      provenance,evidence_basis,reason,semantic_key
+    FROM manual_troika_topup_expenses WHERE scope_id=$1 ORDER BY id`, [scopeId])).rows;
   return fiscalContentFingerprint({
     scopeId: Number(scopeId),
     certificationModelVersion: CERTIFICATION_MODEL_VERSION,
@@ -68,6 +76,7 @@ async function sourceState(pool, scopeId) {
     activePostings: postings,
     activeLinks: links,
     supersessions,
+    manualTroikaTopups,
   });
 }
 
@@ -82,11 +91,17 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
   const params = eventIds?.length ? [scope.id, eventIds] : [scope.id];
   const entries = (await pool.query(`SELECT e.id,e.scope_id,e.source_event_id,e.currency,e.event_at,e.semantic_key,
       e.derivation_rule,e.derivation_version,e.derivation_status,e.certification_status,e.origin,e.reason_code,e.description,
-      b.event_type,b.rule_code,b.rule_version,b.amount AS event_amount
+      b.event_type,b.resolution_status AS event_resolution_status,b.origin AS event_origin,
+      b.graph_model_version AS event_graph_model_version,b.rule_code AS event_rule_code,b.rule_version AS event_rule_version,
+      b.amount AS event_amount,m.id AS manual_troika_topup_id,m.financial_account_id AS manual_troika_financial_account_id,
+      m.person_id AS manual_troika_person_id,m.provider AS manual_troika_provider,m.category_code AS manual_troika_category_code,
+      m.amount AS manual_troika_amount,m.currency AS manual_troika_currency,m.provenance AS manual_troika_provenance
     FROM ledger_entries e JOIN business_events b ON b.id=e.source_event_id
+    LEFT JOIN manual_troika_topup_expenses m ON m.scope_id=e.scope_id AND m.ledger_entry_id=e.id
     WHERE e.scope_id=$1
       AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY e.id`, params)).rows;
-  const postings = (await pool.query(`SELECT p.id,p.ledger_entry_id,p.account_id,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id,a.account_code
+  const postings = (await pool.query(`SELECT p.id,p.ledger_entry_id,p.account_id,p.currency,p.debit,p.credit,p.source_allocation_id,p.source_receipt_id,
+      a.account_code,a.account_type,a.financial_account_id
     FROM ledger_postings p JOIN ledger_entries e ON e.id=p.ledger_entry_id JOIN ledger_accounts a ON a.id=p.account_id
     WHERE e.scope_id=$1 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY p.id`, params)).rows;
   const links = (await pool.query(`SELECT l.id,l.ledger_entry_id,l.business_event_id,l.graph_evidence_id,l.graph_allocation_id,l.receipt_id,
@@ -250,7 +265,10 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
   for (const link of links) linkByEntry.set(Number(link.ledger_entry_id), [...(linkByEntry.get(Number(link.ledger_entry_id)) ?? []), link]);
   const add = (entry, metricCode, dimension, status, amount, reasonCode, subjectType = 'LEDGER_ENTRY') => {
     if (!inPeriod(entry.event_at, from, to)) return;
-    const link = (linkByEntry.get(Number(entry.id)) ?? [])[0];
+    const entryLinks = linkByEntry.get(Number(entry.id)) ?? [];
+    const link = entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE
+      ? entryLinks.find((item) => item.link_role === 'MANUAL_TROIKA_TOPUP_RECEIPT' && item.graph_evidence_id != null) ?? null
+      : entryLinks[0];
     facts.push({
       scopeId: Number(entry.scope_id), subjectType, subjectId: Number(entry.id), metricCode, dimension, status,
       amount: money(amount), currency: entry.currency, eventAt: entry.event_at, reasonCode,
@@ -268,7 +286,36 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
       continue;
     }
     if (entry.derivation_status !== 'READY') continue;
-    if (entry.derivation_rule === 'LEDGER_PREPAYMENT_V1') {
+    if (entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE) {
+      const expectedAmount = moneyMinorUnits(entry.event_amount);
+      const accountId = Number(entry.manual_troika_financial_account_id);
+      const validPostings = entryPostings.length === 2
+        && entryPostings.some((posting) => posting.account_code === `EXPENSE:${MANUAL_TROIKA_TOPUP_CATEGORY}`
+          && posting.account_type === 'EXPENSE' && posting.financial_account_id == null
+          && posting.currency === 'RUB' && moneyMinorUnits(posting.debit) === expectedAmount && moneyMinorUnits(posting.credit) === 0n)
+        && entryPostings.some((posting) => posting.account_code === `FINANCIAL_ACCOUNT:${accountId}`
+          && posting.account_type === 'ASSET' && Number(posting.financial_account_id) === accountId
+          && posting.currency === 'RUB' && moneyMinorUnits(posting.debit) === 0n && moneyMinorUnits(posting.credit) === expectedAmount);
+      const validEvidence = entry.origin === 'MANUAL' && entry.event_origin === 'MANUAL'
+        && entry.event_type === 'PURCHASE' && entry.event_resolution_status === 'CONFIRMED'
+        && entry.event_graph_model_version === GRAPH_MODEL_VERSION
+        && entry.event_rule_code === MANUAL_TROIKA_TOPUP_RULE && entry.event_rule_version === 'v1'
+        && entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE && entry.derivation_version === 'v1'
+        && entry.reason_code === 'USER_CONFIRMED_TROIKA_TOPUP'
+        && entry.currency === 'RUB' && entry.manual_troika_topup_id != null
+        && entry.manual_troika_provider === MANUAL_TROIKA_TOPUP_PROVIDER
+        && entry.manual_troika_category_code === MANUAL_TROIKA_TOPUP_CATEGORY
+        && entry.manual_troika_provenance === 'USER_CONFIRMED'
+        && entry.manual_troika_currency === 'RUB'
+        && Number.isSafeInteger(accountId) && accountId > 0
+        && moneyMinorUnits(entry.manual_troika_amount) === expectedAmount;
+      if (!validEvidence || !validPostings) {
+        add(entry, 'BLOCKED_EXPOSURE', 'BUSINESS_CERTIFICATION', 'BLOCKED', expectedAmount, 'MANUAL_TROIKA_TOPUP_PROOF_INVALID');
+        continue;
+      }
+      add(entry, 'CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', expectedAmount, 'USER_CONFIRMED_TROIKA_TOPUP');
+      add(entry, 'ACQUISITION_CLASSIFICATION', 'CLASSIFICATION_CERTIFICATION', 'CERTIFIED', expectedAmount, MANUAL_TROIKA_TOPUP_CATEGORY);
+    } else if (entry.derivation_rule === 'LEDGER_PREPAYMENT_V1') {
       add(entry, 'FISCAL_NEW_MONEY', 'FUNDING_CERTIFICATION', 'PROVISIONAL', credit('FISCAL_PAYMENT_CLEARING'), 'FUNDING_UNRECONCILED');
     } else if (entry.derivation_rule === 'LEDGER_FULFILLMENT_V1') {
       add(entry, 'CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', debit('UNCLASSIFIED_ACQUISITION'), 'BUSINESS_GRAPH_CONFIRMED');
