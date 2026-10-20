@@ -299,6 +299,8 @@ jobs:
         run: rm -f "$RUNNER_TEMP/buhguy-bank-collector.jks"
 
   validate-alfa-apk-pair-request:
+    outputs:
+      signing_allowed: ${{ steps.gate.outputs.signing_allowed }}
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
           (inputs.prepare_alfa_apk_pair == true ||
@@ -307,8 +309,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Both values deliberately fail closed. Set only after the exact diagnostic
+    # commit is reviewed and the private Environment's required reviewers are verified.
+    env:
+      APPROVED_DIAGNOSTIC_SHA: ''
+      SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
     steps:
-      - name: Validate pair request
+      - name: Validate pair request and signing gate
+        id: gate
         shell: bash
         env:
           PREPARE_PAIR: ${{ inputs.prepare_alfa_apk_pair }}
@@ -317,6 +325,7 @@ jobs:
           BUILD_SIGNED_APK: ${{ inputs.build_signed_apk }}
         run: |
           set -euo pipefail
+          echo "signing_allowed=false" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
             echo "::error::The temporary APK pair workflow may only run from master."
             exit 1
@@ -336,6 +345,21 @@ jobs:
             echo "::error::diagnostic_commit_sha must be an exact lowercase 40-character commit SHA."
             exit 1
           fi
+          if [[ "$CONFIRM_SIGNING" == "true" ]]; then
+            if [[ ! "$APPROVED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Signing blocked: no exact diagnostic commit is approved in workflow code."
+              exit 1
+            fi
+            if [[ "$DIAGNOSTIC_SHA" != "$APPROVED_DIAGNOSTIC_SHA" ]]; then
+              echo "::error::Signing blocked: diagnostic_commit_sha is not the independently approved commit."
+              exit 1
+            fi
+            if [[ "$SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED" != "true" ]]; then
+              echo "::error::Signing blocked: required reviewers for the private Environment have not been verified."
+              exit 1
+            fi
+            echo "signing_allowed=true" >> "$GITHUB_OUTPUT"
+          fi
 
   build-unsigned-alfa-apk-pair:
     needs: validate-alfa-apk-pair-request
@@ -345,7 +369,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout exact diagnostic source commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.diagnostic_commit_sha }}
           path: source/diagnostic
@@ -353,7 +377,7 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout clean restore source from this master run
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
           path: source/restore
@@ -374,18 +398,18 @@ jobs:
           printf 'Diagnostic source SHA: %s\nRestore source SHA: %s\n' "$diagnostic_sha" "$restore_sha"
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 cmdline-tools;latest'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
         with:
           gradle-version: '8.9'
           cache-disabled: true
@@ -530,12 +554,13 @@ jobs:
             "diagnosticApkSha256": "$diagnostic_sha256",
             "restoreApkSha256": "$restore_sha256",
             "manifestEqualExceptVersionCode": true,
-            "signatureState": "unsigned"
+            "signatureState": "unsigned",
+            "buildReportTrust": "self_reported_not_independent_provenance"
           }
           EOF
 
       - name: Upload short-lived unsigned handoff artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: alfa-apk-pair-unsigned-${{ github.run_id }}
           path: unsigned-pair/
@@ -558,30 +583,37 @@ jobs:
               f.write(f"| Diagnostic APK | `{report['diagnosticSourceSha']}` | 3 | `{report['diagnosticApkSha256']}` |\n")
               f.write(f"| Clean restore APK | `{report['restoreSourceSha']}` | 4 | `{report['restoreApkSha256']}` |\n")
               f.write("\nManifest comparison: identical except versionCode; both non-debuggable, minSdk 26, targetSdk 35.\n")
+              f.write("The report and APK are produced by the same untrusted build job; hashes verify handoff integrity only, not independent APK provenance.\n")
           PY
 
   sign-alfa-apk-pair:
-    needs: build-unsigned-alfa-apk-pair
+    needs: [build-unsigned-alfa-apk-pair, validate-alfa-apk-pair-request]
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
           github.ref == 'refs/heads/master' &&
           inputs.prepare_alfa_apk_pair == true &&
-          inputs.confirm_pair_signing == true }}
+          inputs.confirm_pair_signing == true &&
+          needs.validate-alfa-apk-pair-request.outputs.signing_allowed == 'true' }}
     runs-on: ubuntu-latest
     # Configure this GitHub Environment with required reviewers before any signing run.
     environment:
       name: android-release-signing
+    # Keep signer disabled until a fixed source SHA and the private Environment
+    # reviewer protection are independently confirmed.
+    env:
+      APPROVED_DIAGNOSTIC_SHA: ''
+      SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
     permissions:
       actions: read
       contents: read
     steps:
       - name: Setup Android SDK signing tools
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 cmdline-tools;latest'
 
       - name: Download unsigned handoff artifact from this run
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: alfa-apk-pair-unsigned-${{ github.run_id }}
           path: unsigned-pair
@@ -593,6 +625,15 @@ jobs:
           EXPECTED_RESTORE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          if [[ ! "$APPROVED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ||
+                "$EXPECTED_DIAGNOSTIC_SHA" != "$APPROVED_DIAGNOSTIC_SHA" ]]; then
+            echo "::error::Signing blocked: diagnostic SHA is not the fixed approved commit."
+            exit 1
+          fi
+          if [[ "$SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED" != "true" ]]; then
+            echo "::error::Signing blocked: private Environment reviewer protection is unverified."
+            exit 1
+          fi
           python3 - unsigned-pair/build-report.json <<'PY'
           import json
           import os
@@ -611,6 +652,8 @@ jobs:
               raise SystemExit("Version code mismatch")
           if report.get("versionName") != "1.1" or report.get("signatureState") != "unsigned":
               raise SystemExit("Unexpected build metadata")
+          if report.get("buildReportTrust") != "self_reported_not_independent_provenance":
+              raise SystemExit("Unexpected provenance claim")
           if report.get("manifestEqualExceptVersionCode") is not True:
               raise SystemExit("Manifest comparison was not passed")
           for key in ("diagnosticApkSha256", "restoreApkSha256"):
@@ -773,13 +816,14 @@ jobs:
             "restoreVersionCode": 4,
             "versionName": "1.1",
             "certificateSha256": "$expected_cert",
+            "buildReportTrust": "self_reported_not_independent_provenance",
             "diagnosticApkSha256": "$diagnostic_sha256",
             "restoreApkSha256": "$restore_sha256"
           }
           EOF
 
       - name: Upload only signed APKs and safe report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: alfa-apk-pair-signed-${{ github.run_id }}
           path: |
