@@ -312,7 +312,7 @@ jobs:
     # Both values deliberately fail closed. Set only after the exact diagnostic
     # commit is reviewed and the private Environment's required reviewers are verified.
     env:
-      APPROVED_DIAGNOSTIC_SHA: ''
+      APPROVED_DIAGNOSTIC_SHA: '36ff71f6289e5e852c29177a4b1fe9719aa8d3f4'
       SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
     steps:
       - name: Validate pair request and signing gate
@@ -601,7 +601,7 @@ jobs:
     # Keep signer disabled until a fixed source SHA and the private Environment
     # reviewer protection are independently confirmed.
     env:
-      APPROVED_DIAGNOSTIC_SHA: ''
+      APPROVED_DIAGNOSTIC_SHA: '36ff71f6289e5e852c29177a4b1fe9719aa8d3f4'
       SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
     permissions:
       actions: read
