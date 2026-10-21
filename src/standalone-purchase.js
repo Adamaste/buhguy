@@ -8,7 +8,7 @@ export const STANDALONE_PURCHASE_VERSION = 'standalone-purchase-v1';
 
 const money = (value) => Number(value ?? 0);
 const amount = (value) => money(value).toFixed(2);
-const CATEGORY_ORDER = ['ELIGIBLE_STANDALONE', 'EXCLUDED_ALREADY_MULTI_RECEIPT', 'EXCLUDED_PREPAYMENT', 'EXCLUDED_ADVANCE', 'EXCLUDED_MIXED', 'EXCLUDED_CREDIT', 'EXCLUDED_PREPAID_COMPONENT', 'EXCLUDED_ALREADY_PURCHASE', 'OTHER_UNSUPPORTED'];
+const CATEGORY_ORDER = ['ELIGIBLE_STANDALONE', 'EXCLUDED_ALREADY_MULTI_RECEIPT', 'EXCLUDED_MANUAL_TROIKA_TOPUP', 'EXCLUDED_PREPAYMENT', 'EXCLUDED_ADVANCE', 'EXCLUDED_MIXED', 'EXCLUDED_CREDIT', 'EXCLUDED_PREPAID_COMPONENT', 'EXCLUDED_ALREADY_PURCHASE', 'OTHER_UNSUPPORTED'];
 export const standaloneSemanticKey = (receiptId) => `standalone-purchase:${receiptId}`;
 
 export const STANDALONE_RECEIPTS_SQL = `
@@ -45,8 +45,9 @@ ORDER BY r.id`;
 function zeroComponent(value, state) { return Number(value) === 0 && ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(state); }
 function newMoneyReconciles(row) { return ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(row.cashTotalState) && ['PRESENT_VALUE', 'EXPLICIT_ZERO'].includes(row.ecashTotalState) && Math.abs(money(row.cashTotalSum) + money(row.ecashTotalSum) - money(row.totalSum)) < 0.005; }
 
-export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), purchaseReceiptIds = new Set() } = {}) {
+export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), purchaseReceiptIds = new Set(), manualTroikaReceiptIds = new Set() } = {}) {
   if (lifecycleReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_MULTI_RECEIPT', reason: 'CONFIRMED_MULTI_RECEIPT_LIFECYCLE' };
+  if (manualTroikaReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_MANUAL_TROIKA_TOPUP', reason: 'RECEIPT_ALREADY_LINKED_TO_MANUAL_TROIKA_EXPENSE' };
   if (purchaseReceiptIds.has(String(row.id))) return { category: 'EXCLUDED_ALREADY_PURCHASE', reason: 'PURCHASE_EVIDENCE_ALREADY_EXISTS' };
   const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
   if (row.normalizationStatus !== 'READY' || row.operationType !== 1 || row.fiscalOperationType !== 1 || currencyResolution.status !== 'RESOLVED') return { category: 'OTHER_UNSUPPORTED', reason: 'NORMALIZATION_OPERATION_OR_CURRENCY_NOT_SUPPORTED' };
@@ -61,7 +62,7 @@ export function standaloneEligibility(row, { lifecycleReceiptIds = new Set(), pu
 }
 
 async function graphReceiptSets(pool, scopeKey) {
-  const [lifecycle, purchases] = await Promise.all([
+  const [lifecycle, purchases, manualTroika] = await Promise.all([
     pool.query(`SELECT DISTINCT ev.receipt_id
       FROM business_event_evidence ev
       JOIN business_events evidence_event ON evidence_event.id=ev.event_id
@@ -83,8 +84,16 @@ async function graphReceiptSets(pool, scopeKey) {
       JOIN accounting_scopes scope ON scope.id=event.scope_id
       WHERE scope.scope_key=$1 AND event.event_type='PURCHASE'
         AND event.resolution_status='CONFIRMED'`, [scopeKey]),
+    pool.query(`SELECT DISTINCT link.receipt_id
+      FROM manual_troika_topup_receipt_links link
+      JOIN accounting_scopes scope ON scope.id=link.scope_id
+      WHERE scope.scope_key=$1`, [scopeKey]),
   ]);
-  return { lifecycleReceiptIds: new Set(lifecycle.rows.map((row) => String(row.receipt_id))), purchaseReceiptIds: new Set(purchases.rows.map((row) => String(row.receipt_id))) };
+  return {
+    lifecycleReceiptIds: new Set(lifecycle.rows.map((row) => String(row.receipt_id))),
+    purchaseReceiptIds: new Set(purchases.rows.map((row) => String(row.receipt_id))),
+    manualTroikaReceiptIds: new Set(manualTroika.rows.map((row) => String(row.receipt_id))),
+  };
 }
 
 export async function standalonePurchaseCensus(pool, { scopeKey = 'default', from = null, to = null } = {}) {
@@ -103,6 +112,9 @@ export async function standalonePurchaseCensus(pool, { scopeKey = 'default', fro
 
 async function persistCandidate(tx, row, scopeKey) {
   await tx.pool.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${STANDALONE_PURCHASE_RULE}:${scopeKey}:${row.id}`]);
+  if ((await tx.pool.query('SELECT 1 FROM manual_troika_topup_receipt_links WHERE receipt_id=$1', [row.id])).rowCount) {
+    return { receiptId: Number(row.id), created: false, reused: false, blockedManualTroikaTopup: true };
+  }
   const existing = await tx.pool.query(`SELECT event.id,event.resolution_status FROM business_event_evidence ev JOIN business_events event ON event.id=ev.event_id JOIN accounting_scopes scope ON scope.id=event.scope_id WHERE scope.scope_key=$1 AND ev.receipt_id=$2 AND event.event_type='PURCHASE' AND event.resolution_status='CONFIRMED' LIMIT 1`, [scopeKey, row.id]);
   if (existing.rowCount) return { receiptId: Number(row.id), eventId: Number(existing.rows[0].id), created: false, reused: true };
   const currencyResolution = resolveFnsReceiptCurrency({ explicitCurrency: row.currency, fnsSourceProven: row.fnsSourceProven === true });
@@ -133,5 +145,5 @@ export async function persistStandalonePurchases(pool, { scopeKey = 'default', r
       propagation.certification += Number(ledger?.certification?.facts ?? 0);
     }
   }
-  return { model: STANDALONE_PURCHASE_RULE, candidates: eligible.length, created: created.length, reused: persisted.filter((row) => row.reused).length, purchases: persisted, propagation };
+  return { model: STANDALONE_PURCHASE_RULE, candidates: eligible.length, created: created.length, reused: persisted.filter((row) => row.reused).length, blockedManualTroikaTopups: persisted.filter((row) => row.blockedManualTroikaTopup).length, purchases: persisted, propagation };
 }

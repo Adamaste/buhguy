@@ -9,6 +9,7 @@ test('replay uses a stable standalone semantic key', () => assert.equal(standalo
 test('prepayment and advance are excluded', () => {
   assert.equal(standaloneEligibility(row({ paymentStage: 'PREPAYMENT_ONLY' })).category, 'EXCLUDED_PREPAYMENT');
   assert.equal(standaloneEligibility(row({ paymentStage: 'ADVANCE_ONLY' })).category, 'EXCLUDED_ADVANCE');
+  assert.equal(standaloneEligibility(row({ paymentStage: 'PREPAYMENT_ONLY', totalSum: '21.00' })).reason, 'PREPAYMENT_STAGE');
 });
 test('mixed payment type is excluded', () => assert.equal(standaloneEligibility(row({ paymentStage: 'MIXED' })).category, 'EXCLUDED_MIXED'));
 test('prepaid, credit and provision components fail closed', () => {
@@ -19,6 +20,11 @@ test('prepaid, credit and provision components fail closed', () => {
 test('missing components are not treated as zero', () => assert.notEqual(standaloneEligibility(row({ prepaidSum: null, prepaidState: 'FIELD_MISSING' })).category, 'ELIGIBLE_STANDALONE'));
 test('existing multi-receipt lifecycle is excluded before ordinary predicates', () => assert.equal(standaloneEligibility(row(), { lifecycleReceiptIds: new Set(['1']) }).category, 'EXCLUDED_ALREADY_MULTI_RECEIPT'));
 test('existing purchase evidence is reused, not duplicated', () => assert.equal(standaloneEligibility(row(), { purchaseReceiptIds: new Set(['1']) }).category, 'EXCLUDED_ALREADY_PURCHASE'));
+test('a manually attached Troika settlement receipt is excluded even when ordinary standalone criteria pass', () => {
+  assert.deepEqual(standaloneEligibility(row(), { manualTroikaReceiptIds: new Set(['1']) }), {
+    category: 'EXCLUDED_MANUAL_TROIKA_TOPUP', reason: 'RECEIPT_ALREADY_LINKED_TO_MANUAL_TROIKA_EXPENSE',
+  });
+});
 test('return target can converge through existing purchase evidence', () => assert.equal(standaloneEligibility(row(), { purchaseReceiptIds: new Set(['1']) }).reason, 'PURCHASE_EVIDENCE_ALREADY_EXISTS'));
 test('identity and operation guards fail closed', () => {
   assert.equal(standaloneEligibility(row({ operationType: 2 })).category, 'OTHER_UNSUPPORTED');

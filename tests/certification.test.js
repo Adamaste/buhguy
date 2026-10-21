@@ -44,6 +44,56 @@ test('facts preserve scope and never claim bank certification from clearing', ()
   assert.equal(facts.some((fact) => /BANK|CARD|CASH_ACCOUNT/.test(fact.metricCode) && fact.status === 'CERTIFIED'), false);
 });
 
+test('confirmed manual Troika top-ups certify one transport acquisition without fiscal-new-money facts', () => {
+  const entry = {
+    ...base(31, 'MANUAL_TROIKA_TOPUP_EXPENSE_V1', 'READY', '21.00'),
+    origin: 'MANUAL',
+    derivation_version: 'v1',
+    certification_status: 'BUSINESS_CONFIRMED',
+    reason_code: 'USER_CONFIRMED_TROIKA_TOPUP',
+    event_type: 'PURCHASE',
+    event_resolution_status: 'CONFIRMED',
+    event_origin: 'MANUAL',
+    event_graph_model_version: 'business-graph-v1',
+    event_rule_code: 'MANUAL_TROIKA_TOPUP_EXPENSE_V1',
+    event_rule_version: 'v1',
+    manual_troika_topup_id: 5,
+    manual_troika_financial_account_id: 2,
+    manual_troika_person_id: 1,
+    manual_troika_provider: 'ru.alfabank.mobile.android',
+    manual_troika_category_code: 'PUBLIC_TRANSPORT',
+    manual_troika_amount: '21.00',
+    manual_troika_currency: 'RUB',
+    manual_troika_provenance: 'USER_CONFIRMED',
+  };
+  const postings = [
+    { ...posting(31, 'EXPENSE:PUBLIC_TRANSPORT', '21.00', '0.00'), currency: 'RUB', account_type: 'EXPENSE', financial_account_id: null },
+    { ...posting(31, 'FINANCIAL_ACCOUNT:2', '0.00', '21.00'), currency: 'RUB', account_type: 'ASSET', financial_account_id: 2 },
+  ];
+  const facts = deriveCertificationFacts({ sourceStateKey: 't'.repeat(64), entries: [entry], postings, links: [] });
+  assert.deepEqual(facts.map(({ metricCode, dimension, status, amount, reasonCode }) => [metricCode, dimension, status, amount, reasonCode]), [
+    ['CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', '21.00', 'USER_CONFIRMED_TROIKA_TOPUP'],
+    ['ACQUISITION_CLASSIFICATION', 'CLASSIFICATION_CERTIFICATION', 'CERTIFIED', '21.00', 'PUBLIC_TRANSPORT'],
+  ]);
+  assert.equal(facts.some((fact) => fact.metricCode === 'FISCAL_NEW_MONEY'), false);
+});
+
+test('manual Troika certification fails closed when the ledger account or category proof conflicts', () => {
+  const entry = {
+    ...base(32, 'MANUAL_TROIKA_TOPUP_EXPENSE_V1', 'READY', '34.00'),
+    origin: 'MANUAL', derivation_version: 'v1', certification_status: 'BUSINESS_CONFIRMED', reason_code: 'USER_CONFIRMED_TROIKA_TOPUP',
+    event_type: 'PURCHASE', event_resolution_status: 'CONFIRMED', event_origin: 'MANUAL', event_graph_model_version: 'business-graph-v1',
+    event_rule_code: 'MANUAL_TROIKA_TOPUP_EXPENSE_V1', event_rule_version: 'v1', manual_troika_topup_id: 6,
+    manual_troika_financial_account_id: 2, manual_troika_person_id: 1, manual_troika_provider: 'ru.alfabank.mobile.android',
+    manual_troika_category_code: 'PUBLIC_TRANSPORT', manual_troika_amount: '34.00', manual_troika_currency: 'RUB', manual_troika_provenance: 'USER_CONFIRMED',
+  };
+  const facts = deriveCertificationFacts({ sourceStateKey: 'u'.repeat(64), entries: [entry], postings: [
+    { ...posting(32, 'EXPENSE:OTHER', '34.00', '0.00'), currency: 'RUB', account_type: 'EXPENSE', financial_account_id: null },
+    { ...posting(32, 'FINANCIAL_ACCOUNT:3', '0.00', '34.00'), currency: 'RUB', account_type: 'ASSET', financial_account_id: 3 },
+  ], links: [] });
+  assert.deepEqual(facts.map(({ metricCode, status, reasonCode }) => [metricCode, status, reasonCode]), [['BLOCKED_EXPOSURE', 'BLOCKED', 'MANUAL_TROIKA_TOPUP_PROOF_INVALID']]);
+});
+
 test('certification aggregates keep currencies separate and preserve result identity inputs', () => {
   const results = aggregateCertificationFacts([
     { metricCode: 'CONFIRMED_ACQUISITION_VALUE', status: 'CERTIFIED', reasonCode: 'BUSINESS_GRAPH_CONFIRMED', amount: '10.00', currency: 'RUB' },

@@ -36,6 +36,9 @@ test('canonical spending foundation is additive, snapshot-qualified, and exact-d
   assert.match(analytics, /NOT EXISTS \(\s*SELECT 1\s*FROM spending_.*successor/s);
   assert.match(analytics, /active_category_allocations/);
   assert.match(analytics, /active_person_allocations/);
+  assert.match(analytics, /manual_troika_topup_expenses/);
+  assert.match(analytics, /MANUAL_TROIKA_TOPUP_EXPENSE_V1/);
+  assert.match(analytics, /PUBLIC_TRANSPORT/);
   assert.match(analytics, /proof\.id=p\.graph_evidence_id/);
   assert.match(analytics, /REVIEW_REQUIRED/);
   assert.match(analytics, /Never SUM chatgpt_accounting\.user_receipts as spending/i);

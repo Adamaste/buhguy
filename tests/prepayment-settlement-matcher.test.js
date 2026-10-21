@@ -102,6 +102,37 @@ test('manual/external graph assertions are outside pure matcher output', () => {
   assert.equal(Object.hasOwn(result, 'ledger'), false);
 });
 
+test('only an explicitly linked receipt is excluded from lifecycle matching', () => {
+  const [ordinaryPrepayment, ordinarySettlement] = pair();
+  const ordinary = matchPrepaymentSettlements([ordinaryPrepayment, ordinarySettlement]);
+  assert.equal(ordinary.summary.confirmedSettlements, 1);
+
+  const linked = matchPrepaymentSettlements([
+    { ...ordinaryPrepayment, manualTroikaTopupAlreadyExpensed: true },
+    ordinarySettlement,
+  ]);
+  assert.equal(linked.summary.confirmedSettlements, 0);
+  assert.equal(linked.candidates[0].strict, false);
+  assert.equal(linked.candidates[0].firstExclusionReason, 'prepayment_not_already_expensed');
+
+  const unrelated = matchPrepaymentSettlements([
+    { ...ordinaryPrepayment, id: 31, manualTroikaTopupAlreadyExpensed: false },
+    { ...ordinarySettlement, id: 32 },
+  ]);
+  assert.equal(unrelated.summary.confirmedSettlements, 1);
+});
+
+test('an explicitly linked manual transport receipt on the settlement side blocks lifecycle matching', () => {
+  const [ordinaryPrepayment, ordinarySettlement] = pair();
+  const result = matchPrepaymentSettlements([
+    ordinaryPrepayment,
+    { ...ordinarySettlement, manualTroikaTopupAlreadyExpensed: true },
+  ]);
+  assert.equal(result.summary.confirmedSettlements, 0);
+  assert.equal(result.candidates[0].strict, false);
+  assert.equal(result.candidates[0].firstExclusionReason, 'settlement_not_already_expensed');
+});
+
 test('persistence mode does not retain forensic predicate payloads for large candidate sets', () => {
   const rows = [];
   for (let index = 0; index < 120; index += 1) {

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { assertDisposableLocalTestDatabase } from './assert-disposable-local-test-database.js';
 
 const unitFiles = [
   'tests/client.test.js',
@@ -23,6 +24,8 @@ const unitFiles = [
   'tests/purchase-details-analytics.test.js',
   'tests/accounting-coverage.test.js',
   'tests/standalone-purchase.test.js',
+  'tests/manual-troika-topup-expense.test.js',
+  'tests/disposable-local-test-database.test.js',
   'tests/multi-user-fns.test.js',
   'tests/fns-user-onboarding.test.js',
   'tests/accounting-pipeline.test.js',
@@ -84,6 +87,7 @@ const postgresFiles = [
   'tests/canonical-spending-analytics-postgres.integration.test.js',
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
   'tests/certification-materialization-postgres.integration.test.js',
+  'tests/manual-troika-topup-expense-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(
@@ -97,6 +101,8 @@ if (process.argv.includes('--unit-only')) process.exit(run(unitFiles));
 if (!process.env.TEST_DATABASE_URL) {
   process.exit(run([...unitFiles, ...postgresFiles]));
 }
+
+assertDisposableLocalTestDatabase(process.env.TEST_DATABASE_URL);
 
 if (run(unitFiles) !== 0) process.exit(1);
 

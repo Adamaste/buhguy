@@ -16,6 +16,7 @@ import { persistStandalonePurchases } from '../src/standalone-purchase.js';
 import { syncReceipts } from '../src/sync.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
 import { MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
+import { assertDisposableLocalTestDatabase } from '../scripts/assert-disposable-local-test-database.js';
 import { persistMatchedPurchaseForTest } from '../src/matched-purchase-persistence.js';
 import {
   matchedPurchaseReconciliationWindow,
@@ -24,6 +25,7 @@ import {
 } from '../src/matched-purchase-reconciliation.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
+if (databaseUrl) assertDisposableLocalTestDatabase(databaseUrl);
 const integration = databaseUrl ? test : test.skip;
 const quietLogger = { info() {}, warn() {}, error() {} };
 let pool;

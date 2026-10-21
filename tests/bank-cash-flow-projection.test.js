@@ -58,6 +58,13 @@ test('unknown event or direction never promotes', () => {
   }
 });
 
+test('a user-confirmed Troika top-up cannot be projected as a second bank purchase', () => {
+  const result = projectBankCashFlowTransaction(base({ manualTroikaTopupAlreadyAccounted: true }));
+  assert.equal(result.projectionStatus, 'UNRESOLVED');
+  assert.equal(result.movementType, 'UNRESOLVED');
+  assert.equal(result.reasonCode, 'MANUAL_TROIKA_TOPUP_ALREADY_ACCOUNTED');
+});
+
 test('not-ready, non-exact and incomplete facts fail closed', () => {
   assert.equal(projectBankCashFlowTransaction(base({ normalizationStatus: 'PARTIAL' })).reasonCode, 'NORMALIZATION_NOT_READY');
   assert.equal(projectBankCashFlowTransaction(base({ evidenceQuality: 'PARTIAL' })).reasonCode, 'EVIDENCE_NOT_EXACT');

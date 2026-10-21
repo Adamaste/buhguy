@@ -102,6 +102,7 @@ function accountIdentity(row, sourceScopeKeys, requestedScopeKey) {
 }
 
 function unresolvedReason(row, sourceScopeKeys, requestedScopeKey, account) {
+  if (row.manualTroikaTopupAlreadyAccounted === true) return 'MANUAL_TROIKA_TOPUP_ALREADY_ACCOUNTED';
   if (sourceScopeKeys.length !== 1) return 'SOURCE_SCOPE_AMBIGUOUS';
   if (requestedScopeKey != null && sourceScopeKeys[0] !== requestedScopeKey) return 'SOURCE_SCOPE_OUT_OF_SCOPE';
   if (account.scopeConflict) return 'ACCOUNT_SCOPE_CONFLICT';
@@ -266,6 +267,14 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
                AND binding.provenance='USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT'
                AND eo.ingestion_metadata->>'provider' IS DISTINCT FROM 'com.idamob.tinkoff.android'
            ) AS "sourceProviderBindingVerified",
+           EXISTS (
+             SELECT 1 FROM manual_troika_topup_expenses manual_topup
+             WHERE manual_topup.scope_id=ANY(
+               SELECT p.scope_id FROM bank_source_person bsp JOIN persons p ON p.id=bsp.person_id
+               WHERE bsp.bank_source_id=eo.bank_source_id AND bsp.relation_type='OWNER'
+             )
+               AND manual_topup.bank_transaction_id=bt.id
+           ) AS "manualTroikaTopupAlreadyAccounted",
            ss.source_scope_keys AS "sourceScopeKeys"
     FROM bank_transactions bt
     JOIN bank_event_observations eo ON eo.id = bt.observation_id
