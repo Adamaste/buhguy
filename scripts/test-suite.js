@@ -25,6 +25,7 @@ const unitFiles = [
   'tests/accounting-coverage.test.js',
   'tests/standalone-purchase.test.js',
   'tests/manual-troika-topup-expense.test.js',
+  'tests/migrate-prod-troika-024.test.js',
   'tests/disposable-local-test-database.test.js',
   'tests/multi-user-fns.test.js',
   'tests/fns-user-onboarding.test.js',

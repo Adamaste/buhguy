@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmTroikaTopupExpense, attachTroikaTopupReceipt } from '../src/manual-troika-topup-expense.js';
+import { confirmTroikaTopupExpense, attachTroikaTopupReceipt, confirmTroikaTopupExpenseAgainstExistingStandalone } from '../src/manual-troika-topup-expense.js';
 
 const unavailablePool = { connect() { throw new Error('validation must finish before opening a database connection'); } };
 
@@ -21,5 +21,11 @@ test('manual Troika expense requires an explicit amount, account, card, owner, a
   await assert.rejects(() => attachTroikaTopupReceipt(unavailablePool, { bankTransactionId: 9001, receiptId: 0, reason: 'Synthetic user confirmation' }), (error) => error.code === 'RECEIPT_ID_INVALID');
   await assert.rejects(() => attachTroikaTopupReceipt(unavailablePool, {
     bankTransactionId: 9001, receiptId: 9002, reason: 'Synthetic user confirmation',
+  }), (error) => error.code === 'TOPUP_RECEIPT_USER_CONFIRMATION_REQUIRED');
+  await assert.rejects(() => confirmTroikaTopupExpenseAgainstExistingStandalone(unavailablePool, {
+    bankTransactionId: 9001, receiptId: 9002, businessEventId: 9003, standaloneLedgerEntryId: 9004,
+    financialAccountId: 2, paymentInstrumentId: 2, personId: 1, scopeKey: 'default', amount: '34.00',
+    evidenceBasis: 'USER_CONFIRMATION', reason: 'Synthetic explicit receipt-to-top-up confirmation',
+    userConfirmedReceiptForTopup: false,
   }), (error) => error.code === 'TOPUP_RECEIPT_USER_CONFIRMATION_REQUIRED');
 });

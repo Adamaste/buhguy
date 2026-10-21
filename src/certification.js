@@ -1,6 +1,7 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { GRAPH_MODEL_VERSION } from './business-event-graph.js';
 import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
+import { STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION } from './standalone-purchase.js';
 
 export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
@@ -68,6 +69,9 @@ async function sourceState(pool, scopeId) {
       financial_account_id,payment_instrument_id,person_id,provider,category_code,amount,currency,occurred_at,
       provenance,evidence_basis,reason,semantic_key
     FROM manual_troika_topup_expenses WHERE scope_id=$1 ORDER BY id`, [scopeId])).rows;
+  const manualTroikaReceiptLinks = (await pool.query(`SELECT id,scope_id,manual_troika_topup_expense_id,receipt_id,
+      business_event_evidence_id,provenance,payment_stage,confirmation_basis,reason,semantic_key
+    FROM manual_troika_topup_receipt_links WHERE scope_id=$1 ORDER BY id`, [scopeId])).rows;
   return fiscalContentFingerprint({
     scopeId: Number(scopeId),
     certificationModelVersion: CERTIFICATION_MODEL_VERSION,
@@ -77,6 +81,7 @@ async function sourceState(pool, scopeId) {
     activeLinks: links,
     supersessions,
     manualTroikaTopups,
+    manualTroikaReceiptLinks,
   });
 }
 
@@ -95,7 +100,16 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
       b.graph_model_version AS event_graph_model_version,b.rule_code AS event_rule_code,b.rule_version AS event_rule_version,
       b.amount AS event_amount,m.id AS manual_troika_topup_id,m.financial_account_id AS manual_troika_financial_account_id,
       m.person_id AS manual_troika_person_id,m.provider AS manual_troika_provider,m.category_code AS manual_troika_category_code,
-      m.amount AS manual_troika_amount,m.currency AS manual_troika_currency,m.provenance AS manual_troika_provenance
+      m.amount AS manual_troika_amount,m.currency AS manual_troika_currency,m.provenance AS manual_troika_provenance,
+      EXISTS (SELECT 1 FROM manual_troika_topup_receipt_links ml
+        JOIN business_event_evidence ev ON ev.id=ml.business_event_evidence_id
+        WHERE ml.scope_id=e.scope_id AND ml.manual_troika_topup_expense_id=m.id
+          AND ml.provenance='USER_CONFIRMED'
+          AND ml.confirmation_basis IN ('USER_CONFIRMED_PREPAYMENT_TOPUP_RECEIPT','USER_CONFIRMED_SETTLEMENT_TOPUP_RECEIPT')
+          AND ev.event_id=e.source_event_id AND ev.receipt_id=ml.receipt_id
+          AND ev.evidence_role='MANUAL_TROIKA_TOPUP_RECEIPT' AND ev.origin='MANUAL'
+          AND ev.rule_code='MANUAL_TROIKA_TOPUP_EXPENSE_V1' AND ev.rule_version='v1'
+      ) AS manual_troika_receipt_confirmed
     FROM ledger_entries e JOIN business_events b ON b.id=e.source_event_id
     LEFT JOIN manual_troika_topup_expenses m ON m.scope_id=e.scope_id AND m.ledger_entry_id=e.id
     WHERE e.scope_id=$1
@@ -296,10 +310,14 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
         && entryPostings.some((posting) => posting.account_code === `FINANCIAL_ACCOUNT:${accountId}`
           && posting.account_type === 'ASSET' && Number(posting.financial_account_id) === accountId
           && posting.currency === 'RUB' && moneyMinorUnits(posting.debit) === 0n && moneyMinorUnits(posting.credit) === expectedAmount);
-      const validEvidence = entry.origin === 'MANUAL' && entry.event_origin === 'MANUAL'
+      const manualEventProof = entry.event_origin === 'MANUAL'
+        && entry.event_rule_code === MANUAL_TROIKA_TOPUP_RULE && entry.event_rule_version === 'v1';
+      const adoptedStandaloneEventProof = entry.event_origin === 'SYSTEM_DERIVED'
+        && entry.event_rule_code === STANDALONE_PURCHASE_RULE && entry.event_rule_version === STANDALONE_PURCHASE_VERSION
+        && entry.manual_troika_receipt_confirmed === true;
+      const validEvidence = entry.origin === 'MANUAL' && (manualEventProof || adoptedStandaloneEventProof)
         && entry.event_type === 'PURCHASE' && entry.event_resolution_status === 'CONFIRMED'
         && entry.event_graph_model_version === GRAPH_MODEL_VERSION
-        && entry.event_rule_code === MANUAL_TROIKA_TOPUP_RULE && entry.event_rule_version === 'v1'
         && entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE && entry.derivation_version === 'v1'
         && entry.reason_code === 'USER_CONFIRMED_TROIKA_TOPUP'
         && entry.currency === 'RUB' && entry.manual_troika_topup_id != null

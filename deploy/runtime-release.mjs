@@ -11,8 +11,9 @@ const SHA_RE = /^[a-f0-9]{40}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const CODE_ROOTS = ['bin/', 'src/', 'db/migrations/'];
 const SOURCE_CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.sql']);
-const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'node_modules']);
-const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs']);
+const TROIKA_024_RUNNER = 'scripts/migrate-prod-troika-024.mjs';
+const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'scripts', 'node_modules']);
+const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER]);
 const SENSITIVE = /(^|[._-])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|auth|session|sessions|profile|profiles|state|backup|backups|dump|dumps|log|logs|cache|browser-profile)([._-]|$)/i;
 const NEVER_RELEASE_COMPONENTS = new Set([
   '.env', '.receipt-collector', '.local-browsers', 'ms-playwright',
@@ -212,7 +213,7 @@ function validateManifestLists(manifest) {
   const ordered = [...paths].sort(comparePaths);
   const actual = [...manifest.files.map(x => x.path), ...manifest.directories.map(x => x.path)].sort(comparePaths);
   if (actual.some((value, index) => value !== ordered[index])) fail('MANIFEST_ORDER_OR_PATH_INVALID');
-  for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs']) {
+  for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER]) {
     if (!manifest.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
   }
   return trustedSourcePaths;
@@ -265,7 +266,7 @@ function git(sourceRoot, args, options = {}) {
 }
 
 function gitPathList(sourceRoot, sha) {
-  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', 'package.json', 'package-lock.json']);
+  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, 'package.json', 'package-lock.json']);
   return output.toString('utf8').split('\0').filter(Boolean).sort(comparePaths);
 }
 

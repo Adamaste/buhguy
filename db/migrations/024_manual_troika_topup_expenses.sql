@@ -108,6 +108,7 @@ BEGIN
     EXECUTE 'GRANT SELECT (financial_account_id, person_id, relation_type, provenance) ON public.financial_account_person_relations TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, bank_transaction_id, receipt_id) ON public.bank_receipt_matches TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, ledger_entry_id, business_event_id, graph_evidence_id, receipt_id, link_role, bank_transaction_id) ON public.ledger_source_links TO receipt_collector';
+    EXECUTE 'GRANT SELECT (source_event_id, target_event_id, resolution_status) ON public.business_event_edges TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, scope_id, bank_source_id, bank_transaction_id, business_event_id, ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code, amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key) ON public.manual_troika_topup_expenses TO receipt_collector';
     EXECUTE 'GRANT INSERT (scope_id, bank_source_id, bank_transaction_id, business_event_id, ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code, amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key) ON public.manual_troika_topup_expenses TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, scope_id, manual_troika_topup_expense_id, receipt_id, business_event_evidence_id, provenance, payment_stage, confirmation_basis, reason, semantic_key) ON public.manual_troika_topup_receipt_links TO receipt_collector';

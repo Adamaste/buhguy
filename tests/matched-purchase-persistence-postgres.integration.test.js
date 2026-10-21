@@ -524,7 +524,9 @@ integration('matched purchase writer is idempotent under the restricted runtime 
         ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code,
         amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key)
       ON public.manual_troika_topup_expenses TO receipt_collector`);
-    await admin.query('GRANT SELECT (receipt_id) ON public.manual_troika_topup_receipt_links TO receipt_collector');
+    await admin.query(`GRANT SELECT (id, scope_id, manual_troika_topup_expense_id, receipt_id,
+        business_event_evidence_id, provenance, payment_stage, confirmation_basis, reason, semantic_key)
+      ON public.manual_troika_topup_receipt_links TO receipt_collector`);
     const manualTopupLookupPrivileges = (await admin.query(`SELECT
       has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','scope_id','SELECT') AS scope_id,
       has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','bank_transaction_id','SELECT') AS bank_transaction_id,
