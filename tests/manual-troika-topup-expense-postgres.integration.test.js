@@ -3,10 +3,10 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from 'pg';
-import { attachTroikaTopupReceipt, confirmTroikaTopupExpense, ALFA_PROVIDER } from '../src/manual-troika-topup-expense.js';
-import { loadBankCashFlowProjection } from '../src/bank-cash-flow-projection.js';
+import { attachTroikaTopupReceipt, confirmTroikaTopupExpense, confirmTroikaTopupExpenseAgainstExistingStandalone, ALFA_PROVIDER } from '../src/manual-troika-topup-expense.js';
 import { createBankAccountReference, createFinancialAccount, createPaymentInstrument, relateFinancialAccountPerson, relatePaymentInstrumentPerson } from '../src/bank-account-resolution.js';
 import { createBankSource, ingestBankEvent, linkBankSourcePerson } from '../src/bank-ingestion.js';
+import { refreshLedgerForReceipt } from '../src/ledger.js';
 import { FNS_RECEIPT_CURRENCY_MODEL_VERSION } from '../src/fns-receipt-currency.js';
 import { persistMatchedPurchaseForTest } from '../src/matched-purchase-persistence.js';
 import { dryRunPrepaymentSettlements, persistPrepaymentSettlementMatches } from '../src/prepayment-settlement-matcher.js';
@@ -19,9 +19,9 @@ const integration = databaseUrl ? test : test.skip;
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const TEST_ROLE = 'receipt_collector';
 
-async function createPrepaymentReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt }) {
+async function createPrepaymentReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt, sellerInn = '7700000000' }) {
   const receipt = (await admin.query(`INSERT INTO receipts(fns_id,date_time,seller,seller_inn,total_sum,currency,operation_type)
-    VALUES($1,$2,'Synthetic transit wallet','7700000000',$3,'RUB',1) RETURNING id`, [fnsId, occurredAt, amount])).rows[0];
+    VALUES($1,$2,'Synthetic transit wallet',$3,$4,'RUB',1) RETURNING id`, [fnsId, occurredAt, sellerInn, amount])).rows[0];
   const receiptId = Number(receipt.id);
   await admin.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
     VALUES($1,$2,$3)`, [receiptId, fnsSourceId, `source-${fnsId}`]);
@@ -40,9 +40,9 @@ async function createPrepaymentReceipt(admin, { fnsSourceId, fnsId, amount, occu
   return receiptId;
 }
 
-async function createSettlementReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt }) {
+async function createSettlementReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt, sellerInn = '7700000000' }) {
   const receipt = (await admin.query(`INSERT INTO receipts(fns_id,date_time,seller,seller_inn,total_sum,currency,operation_type)
-    VALUES($1,$2,'Synthetic transit wallet','7700000000',$3,'RUB',1) RETURNING id`, [fnsId, occurredAt, amount])).rows[0];
+    VALUES($1,$2,'Synthetic transit wallet',$3,$4,'RUB',1) RETURNING id`, [fnsId, occurredAt, sellerInn, amount])).rows[0];
   const receiptId = Number(receipt.id);
   await admin.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
     VALUES($1,$2,$3)`, [receiptId, fnsSourceId, `source-${fnsId}`]);
@@ -61,14 +61,14 @@ async function createSettlementReceipt(admin, { fnsSourceId, fnsId, amount, occu
   return receiptId;
 }
 
-async function createStandaloneEligibleSettlementReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt }) {
+async function createStandaloneEligibleSettlementReceipt(admin, { fnsSourceId, fnsId, amount, occurredAt, sellerInn = '7700000001' }) {
   const receipt = (await admin.query(`INSERT INTO receipts(fns_id,date_time,seller,seller_inn,total_sum,currency,operation_type)
-    VALUES($1,$2,'Synthetic ordinary merchant','7700000001',$3,'RUB',1) RETURNING id`, [fnsId, occurredAt, amount])).rows[0];
+    VALUES($1,$2,'Synthetic ordinary merchant',$3,$4,'RUB',1) RETURNING id`, [fnsId, occurredAt, sellerInn, amount])).rows[0];
   const receiptId = Number(receipt.id);
   await admin.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
     VALUES($1,$2,$3)`, [receiptId, fnsSourceId, `source-${fnsId}`]);
   const item = (await admin.query(`INSERT INTO receipt_items(receipt_id,position,name,quantity,price,item_sum)
-    VALUES($1,0,'Synthetic ordinary service',1,$2,$2) RETURNING id`, [receiptId, amount])).rows[0];
+    VALUES($1,0,'Synthetic transit wallet top-up',1,$2,$2) RETURNING id`, [receiptId, amount])).rows[0];
   await admin.query(`INSERT INTO receipt_item_fiscal_facts(receipt_item_id,normalization_version,payment_type_code,normalized_content_sha256)
     VALUES($1,'fiscal-normalizer-v1',1,$2)`, [item.id, digest(`item:${fnsId}`)]);
   await admin.query(`INSERT INTO receipt_fiscal_facts(
@@ -122,7 +122,7 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
     });
     await createBankAccountReference(admin, {
       paymentInstrumentId: Number(instrument.id), provider: ALFA_PROVIDER,
-      referenceKind: 'MASKED_CARD', referenceValue: '****5580',
+      referenceKind: 'MASKED_CARD', referenceValue: '5580',
     });
     await createBankSource(admin, { sourceKey, sourceType: 'ANDROID_NOTIFICATION', displayName: 'Synthetic Alfa source' });
     await linkBankSourcePerson(admin, { sourceKey, personId: Number(person.id) });
@@ -141,31 +141,50 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
       assert.equal(event.normalization.eventType, 'UNKNOWN');
       assert.equal(event.normalization.direction, 'UNKNOWN');
       assert.equal(event.normalization.amount, null);
+      assert.equal(event.normalization.currency, null);
+      assert.equal(event.normalization.normalizationStatus, 'PARTIAL');
+      assert.equal(event.normalization.evidenceQuality, 'PARTIAL');
       transactions.push({ id: event.transactionId, amount, occurredAt: eventTimes[index] });
     }
 
     const fnsSourceId = Number((await admin.query(`SELECT f.id FROM fns_sources f JOIN accounting_scopes s ON s.id=f.scope_id
       WHERE s.scope_key='default' AND f.source_key='legacy-default'`)).rows[0].id);
     const lifecyclePrepaymentId = await createPrepaymentReceipt(admin, {
-      fnsSourceId, fnsId: `synthetic-lifecycle-prepayment-${suffix}`, amount: '21.00', occurredAt: eventTimes[0],
+      fnsSourceId, fnsId: `synthetic-lifecycle-prepayment-${suffix}`, amount: '21.00', occurredAt: eventTimes[0], sellerInn: '7710000001',
     });
     const lifecycleSettlementId = await createSettlementReceipt(admin, {
       fnsSourceId, fnsId: `synthetic-lifecycle-settlement-${suffix}`, amount: '21.00',
-      occurredAt: new Date(Date.parse(eventTimes[0]) + 60_000).toISOString(),
+      occurredAt: new Date(Date.parse(eventTimes[0]) + 60_000).toISOString(), sellerInn: '7710000001',
     });
-    const lifecyclePrepayment34Id = await createPrepaymentReceipt(admin, {
-      fnsSourceId, fnsId: `synthetic-lifecycle-prepayment-34-${suffix}`, amount: '34.00', occurredAt: eventTimes[1],
+    const receipt34Id = await createStandaloneEligibleSettlementReceipt(admin, {
+      fnsSourceId, fnsId: `synthetic-standalone-settlement-34-${suffix}`, amount: '34.00', occurredAt: eventTimes[1],
+      sellerInn: '7710000002',
     });
-    const lifecycleSettlement34Id = await createSettlementReceipt(admin, {
-      fnsSourceId, fnsId: `synthetic-lifecycle-settlement-34-${suffix}`, amount: '34.00',
-      occurredAt: new Date(Date.parse(eventTimes[1]) + 60_000).toISOString(),
+    const existingStandalone34 = await persistStandalonePurchases(admin, {
+      scopeKey: 'default', receiptIds: [receipt34Id],
+      ledgerRefresher: (id) => refreshLedgerForReceipt(admin, { scopeKey: 'default', receiptId: id }),
     });
+    assert.equal(existingStandalone34.created, 1, 'the 34 RUB receipt starts as an existing FNS standalone purchase');
+    assert.equal(existingStandalone34.propagation.ledger, 1);
+    const standalone34 = (await admin.query(`SELECT ev.event_id AS business_event_id,le.id AS ledger_entry_id,
+        ev.origin,ev.rule_code,ev.rule_version,le.origin AS ledger_origin,le.derivation_rule,le.derivation_status
+      FROM business_event_evidence ev JOIN business_events be ON be.id=ev.event_id
+      JOIN ledger_entries le ON le.source_event_id=be.id
+      WHERE ev.receipt_id=$1 AND ev.evidence_role='PURCHASE_EVIDENCE'`, [receipt34Id])).rows[0];
+    assert.ok(standalone34);
+    assert.equal(standalone34.origin, 'SYSTEM_DERIVED');
+    assert.equal(standalone34.rule_code, 'STANDALONE_PURCHASE_V1');
+    assert.equal(standalone34.rule_version, 'standalone-purchase-v1');
+    assert.equal(standalone34.ledger_origin, 'SYSTEM_DERIVED');
+    assert.equal(standalone34.derivation_rule, 'LEDGER_STANDALONE_PURCHASE_V1');
+    assert.equal(standalone34.derivation_status, 'READY');
     const lifecycleDryRunBeforeManualExpense = await dryRunPrepaymentSettlements(admin, { scopeKey: 'default' });
-    for (const [prepaymentReceiptId, settlementReceiptId] of [[lifecyclePrepaymentId, lifecycleSettlementId], [lifecyclePrepayment34Id, lifecycleSettlement34Id]]) {
-      const staleLifecycleCandidate = lifecycleDryRunBeforeManualExpense.candidates.find((pair) =>
-        Number(pair.prepaymentReceiptId) === prepaymentReceiptId && Number(pair.settlementReceiptId) === settlementReceiptId);
-      assert.equal(staleLifecycleCandidate?.confirmed, true, 'synthetic pair is eligible before the manual top-up is recorded');
-    }
+    const staleLifecycleCandidate = lifecycleDryRunBeforeManualExpense.candidates.find((pair) =>
+      Number(pair.prepaymentReceiptId) === lifecyclePrepaymentId && Number(pair.settlementReceiptId) === lifecycleSettlementId);
+    assert.equal(staleLifecycleCandidate?.confirmed, true, 'the separate strict lifecycle pair is eligible before manual expense is recorded');
+    assert.equal(lifecycleDryRunBeforeManualExpense.candidates.some((pair) =>
+      Number(pair.settlementReceiptId) === receipt34Id && pair.confirmed === true), false,
+    'the ordinary standalone SETTLEMENT_ONLY receipt is not guessed to be a top-up from amount and time alone');
 
     const optionsFor = (tx, evidenceBasis) => ({
       bankTransactionId: Number(tx.id), financialAccountId: Number(account.id),
@@ -207,41 +226,41 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
     assert.equal(receiptLink.paymentStage, 'PREPAYMENT_ONLY');
     assert.equal(receiptLinkReplay.ledgerEntryId, receiptLink.ledgerEntryId);
 
+    const receipt34Reason = 'Synthetic explicit confirmation that this exact FNS receipt is the confirmed Troika top-up';
+    const adoption34Options = {
+      ...optionsFor(transactions[1], 'USER_CONFIRMATION'), receiptId: receipt34Id, reason: receipt34Reason,
+      businessEventId: Number(standalone34.business_event_id),
+      standaloneLedgerEntryId: Number(standalone34.ledger_entry_id),
+      userConfirmedReceiptForTopup: true,
+      settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP', belongsToSpecificTopup: true },
+    };
+    await assert.rejects(() => confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, {
+      ...adoption34Options, userConfirmedReceiptForTopup: false,
+    }), (error) => error.code === 'TOPUP_RECEIPT_USER_CONFIRMATION_REQUIRED');
+    await assert.rejects(() => confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, {
+      ...adoption34Options, settlementOnlyConfirmation: undefined,
+    }), (error) => error.code === 'SETTLEMENT_PURPOSE_CONFIRMATION_REQUIRED');
+    await assert.rejects(() => confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, {
+      ...adoption34Options, settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP' },
+    }), (error) => error.code === 'SETTLEMENT_TOPUP_LINK_CONFIRMATION_REQUIRED');
     const [confirmed34, replay34] = await Promise.all([
-      confirmTroikaTopupExpense(runtime, optionsFor(transactions[1], 'USER_CONFIRMATION')),
-      confirmTroikaTopupExpense(runtime, optionsFor(transactions[1], 'USER_CONFIRMATION')),
+      confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, adoption34Options),
+      confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, adoption34Options),
     ]);
     assert.equal([confirmed34.created, replay34.created].filter(Boolean).length, 1);
     assert.equal([confirmed34.reused, replay34.reused].filter(Boolean).length, 1);
     assert.equal(confirmed34.ledgerEntryId, replay34.ledgerEntryId);
+    assert.equal(confirmed34.businessEventId, Number(standalone34.business_event_id), 'adoption reuses the existing FNS event');
+    assert.equal(confirmed34.supersededLedgerEntryId, Number(standalone34.ledger_entry_id));
 
-    const receipt34Id = lifecycleSettlement34Id;
-    const receipt34Reason = 'Synthetic explicit confirmation of settlement purpose and exact top-up relationship';
-    const receipt34Options = {
-      bankTransactionId: Number(transactions[1].id), receiptId: receipt34Id,
-      scopeKey: 'default', reason: receipt34Reason, userConfirmedReceiptForTopup: true,
-    };
-    await assert.rejects(() => attachTroikaTopupReceipt(runtime, receipt34Options), (error) => error.code === 'SETTLEMENT_PURPOSE_CONFIRMATION_REQUIRED');
-    await assert.rejects(() => attachTroikaTopupReceipt(runtime, {
-      ...receipt34Options, settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP' },
-    }), (error) => error.code === 'SETTLEMENT_TOPUP_LINK_CONFIRMATION_REQUIRED');
-    const receipt34Link = await attachTroikaTopupReceipt(runtime, {
-      ...receipt34Options,
-      settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP', belongsToSpecificTopup: true },
-    });
-    assert.equal(receipt34Link.created, true);
-    assert.equal(receipt34Link.paymentStage, 'SETTLEMENT_ONLY');
-
-    await assert.rejects(() => attachTroikaTopupReceipt(runtime, {
-      ...receipt34Options, receiptId: receipt21Id,
-      settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP', belongsToSpecificTopup: true },
-    }), (error) => error.code === 'RECEIPT_ALREADY_MANUALLY_LINKED');
+    await assert.rejects(() => confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, {
+      ...adoption34Options, receiptId: receipt21Id,
+    }), (error) => error.code === 'RECEIPT_NOT_EXACT_CONFIRMED_TOPUP');
 
     const staleLifecyclePersist = await persistPrepaymentSettlementMatches(admin, { scopeKey: 'default', result: lifecycleDryRunBeforeManualExpense });
     assert.equal(staleLifecyclePersist.created.purchases, 0);
     assert.deepEqual(staleLifecyclePersist.blockedManualTopupPairs.map((pair) => [pair.prepaymentReceiptId, pair.settlementReceiptId]).sort((a, b) => a[0] - b[0]), [
       [lifecyclePrepaymentId, lifecycleSettlementId],
-      [lifecyclePrepayment34Id, lifecycleSettlement34Id],
     ].sort((a, b) => a[0] - b[0]));
 
     const confirmations = (await admin.query(`SELECT bank_transaction_id,amount::text,financial_account_id,payment_instrument_id,
@@ -281,16 +300,17 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
       scopeKey: 'default', reason: receipt21Reason, userConfirmedReceiptForTopup: true,
     });
     assert.equal(replayReceiptLink.reused, true);
-    const replaySettlementLink = await attachTroikaTopupReceipt(runtime, {
-      ...receipt34Options,
-      settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP', belongsToSpecificTopup: true },
-    });
+    const replaySettlementLink = await confirmTroikaTopupExpenseAgainstExistingStandalone(runtime, adoption34Options);
     assert.equal(replaySettlementLink.reused, true);
-    assert.equal(replaySettlementLink.paymentStage, 'SETTLEMENT_ONLY');
+    await assert.rejects(() => attachTroikaTopupReceipt(runtime, {
+      bankTransactionId: Number(transactions[0].id), receiptId: receipt34Id,
+      scopeKey: 'default', reason: 'Attempt to reuse the exact receipt on a second top-up', userConfirmedReceiptForTopup: true,
+      settlementOnlyConfirmation: { purpose: 'TROIKA_TOPUP', belongsToSpecificTopup: true },
+    }), (error) => error.code === 'RECEIPT_ALREADY_MANUALLY_LINKED');
     await assert.rejects(() => attachTroikaTopupReceipt(runtime, {
       bankTransactionId: Number(transactions[1].id), receiptId: unrelatedReceiptId,
       scopeKey: 'default', reason: 'Synthetic mismatched receipt must fail closed', userConfirmedReceiptForTopup: true,
-    }), (error) => error.code === 'RECEIPT_NOT_EXACT_CONFIRMED_TOPUP');
+    }), (error) => error.code === 'MANUAL_TOPUP_LEDGER_CONFLICT');
 
     const standalone = await persistStandalonePurchases(admin, { scopeKey: 'default', receiptIds: [receipt21Id, receipt34Id, unrelatedReceiptId] });
     assert.equal(standalone.candidates, 0, 'manually linked receipts and unrelated prepayments must not become standalone expenses');
@@ -306,16 +326,32 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
     assert.equal((await admin.query(`SELECT count(*)::int AS count FROM manual_troika_topup_receipt_links
       WHERE manual_troika_topup_expense_id=(SELECT id FROM manual_troika_topup_expenses WHERE bank_transaction_id=$1)`, [transactions[1].id])).rows[0].count, 1,
     'the SETTLEMENT_ONLY receipt is attached as evidence to the existing 34 RUB expense');
-
-    await admin.query(`UPDATE bank_transactions SET amount=$2,currency='RUB',direction='DEBIT',event_type='PURCHASE',
-        normalization_status='READY',normalization_version='synthetic-alfa-v2',evidence_quality='EXACT'
-      WHERE id=$1`, [transactions[0].id, '21.00']);
-    await admin.query(`UPDATE bank_transactions SET amount=$2,currency='RUB',direction='DEBIT',event_type='PURCHASE',
-        normalization_status='READY',normalization_version='synthetic-alfa-v2',evidence_quality='EXACT'
-      WHERE id=$1`, [transactions[1].id, '34.00']);
-    const projection = await loadBankCashFlowProjection(admin, { scopeKey: 'default' });
-    const projectedById = new Map(projection.projections.map((row) => [Number(row.bankTransactionId), row]));
-    for (const tx of transactions) assert.equal(projectedById.get(Number(tx.id)).reasonCode, 'MANUAL_TROIKA_TOPUP_ALREADY_ACCOUNTED');
+    const primaryNormalization = (await admin.query(`SELECT count(*)::int AS count FROM bank_transactions
+      WHERE id=ANY($1::bigint[]) AND event_type='UNKNOWN' AND direction='UNKNOWN' AND amount IS NULL AND currency IS NULL
+        AND normalization_status='PARTIAL' AND evidence_quality='PARTIAL'`, [transactions.map((tx) => tx.id)])).rows[0].count;
+    assert.equal(primaryNormalization, 2, 'manual accounting preserves the real UNKNOWN/PARTIAL bank records');
+    const reprocessedStandalone = await persistStandalonePurchases(admin, { scopeKey: 'default', receiptIds: [receipt34Id] });
+    assert.equal(reprocessedStandalone.created, 0, 'reimporting the FNS receipt cannot create another purchase event');
+    assert.equal(reprocessedStandalone.candidates, 0);
+    const refreshedStandalone = await refreshLedgerForReceipt(admin, { scopeKey: 'default', receiptId: receipt34Id });
+    assert.equal(refreshedStandalone.changed, false, 'ledger refresh cannot resurrect the superseded FNS standalone posting');
+    assert.equal(refreshedStandalone.created.entries, 0);
+    const ledgerHistory34 = (await admin.query(`SELECT e.id,e.origin,e.derivation_rule,
+        EXISTS(SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id) AS superseded
+      FROM ledger_entries e WHERE e.source_event_id=$1 ORDER BY e.id`, [standalone34.business_event_id])).rows;
+    assert.equal(ledgerHistory34.length, 2, 'the original FNS ledger history is preserved as a superseded predecessor');
+    assert.equal(ledgerHistory34.filter((entry) => entry.superseded).length, 1);
+    assert.equal(ledgerHistory34.filter((entry) => entry.origin === 'MANUAL' && !entry.superseded).length, 1);
+    assert.equal((await admin.query(`SELECT count(*)::int AS count FROM business_events WHERE id=$1`, [standalone34.business_event_id])).rows[0].count, 1,
+      'the FNS standalone business event is reused rather than duplicated');
+    const activeExpenseSummary = (await admin.query(`SELECT count(DISTINCT e.source_event_id)::int AS expense_events,
+        count(DISTINCT e.id)::int AS active_entries,
+        sum(p.debit) FILTER (WHERE a.account_code='EXPENSE:PUBLIC_TRANSPORT')::numeric(18,2)::text AS transport_total
+      FROM ledger_entries e JOIN ledger_postings p ON p.ledger_entry_id=e.id JOIN ledger_accounts a ON a.id=p.account_id
+      WHERE e.id=ANY($1::bigint[])
+        AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`,
+    [[confirmed21.ledgerEntryId, confirmed34.ledgerEntryId]])).rows[0];
+    assert.deepEqual(activeExpenseSummary, { expense_events: 2, active_entries: 2, transport_total: '55.00' });
 
     const match = {
       scopeKey: 'default', matchKey: digest(`match:${suffix}`), amount: '21.00', currency: 'RUB',
@@ -366,10 +402,10 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
     assert.deepEqual(certifiedSpend, { purchases: 2, total: '55.00' });
 
     const untouchedNormalizations = (await admin.query(`SELECT count(*)::int AS count FROM bank_transactions
-      WHERE id=ANY($1::bigint[]) AND event_type='PURCHASE' AND direction='DEBIT'
-        AND normalization_status='READY' AND evidence_quality='EXACT' AND normalization_version='synthetic-alfa-v2'`,
+      WHERE id=ANY($1::bigint[]) AND event_type='UNKNOWN' AND direction='UNKNOWN' AND amount IS NULL AND currency IS NULL
+        AND normalization_status='PARTIAL' AND evidence_quality='PARTIAL'`,
     [transactions.map((tx) => tx.id)])).rows[0].count;
-    assert.equal(Number(untouchedNormalizations), 2, 'the manual confirmation path does not overwrite later bank normalization');
+    assert.equal(Number(untouchedNormalizations), 2, 'the manual confirmation path does not promote uncertain bank normalization to EXACT');
     const writePrivileges = (await admin.query(`SELECT
       has_table_privilege($1,'public.manual_troika_topup_expenses','INSERT') AS expense_table_insert,
       has_any_column_privilege($1,'public.manual_troika_topup_expenses','INSERT') AS expense_column_insert,
@@ -380,11 +416,16 @@ integration('confirmed Troika top-ups create exactly two transport expenses tota
       has_column_privilege($1,'public.manual_troika_topup_receipt_links','payment_stage','INSERT') AS receipt_link_stage_insert,
       has_column_privilege($1,'public.manual_troika_topup_receipt_links','confirmation_basis','INSERT') AS receipt_link_confirmation_insert,
       has_table_privilege($1,'public.manual_troika_topup_receipt_links','UPDATE') OR has_any_column_privilege($1,'public.manual_troika_topup_receipt_links','UPDATE') AS receipt_link_update,
-      has_table_privilege($1,'public.manual_troika_topup_receipt_links','DELETE') AS receipt_link_delete`, [TEST_ROLE])).rows[0];
+      has_table_privilege($1,'public.manual_troika_topup_receipt_links','DELETE') AS receipt_link_delete,
+      has_column_privilege($1,'public.business_event_edges','source_event_id','SELECT') AS edge_source_select,
+      has_column_privilege($1,'public.business_event_edges','target_event_id','SELECT') AS edge_target_select,
+      has_column_privilege($1,'public.business_event_edges','resolution_status','SELECT') AS edge_status_select,
+      has_table_privilege($1,'public.business_event_edges','INSERT') AS edge_insert`, [TEST_ROLE])).rows[0];
     assert.deepEqual(writePrivileges, {
       expense_table_insert: false, expense_column_insert: true, expense_update: false, expense_delete: false,
       receipt_link_table_insert: false, receipt_link_column_insert: true, receipt_link_update: false, receipt_link_delete: false,
       receipt_link_stage_insert: true, receipt_link_confirmation_insert: true,
+      edge_source_select: true, edge_target_select: true, edge_status_select: true, edge_insert: false,
     });
     const ruleLookupPrivileges = (await admin.query(`SELECT
       has_column_privilege($1,'public.business_graph_rules','rule_code','SELECT') AS rule_code,

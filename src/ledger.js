@@ -163,7 +163,11 @@ export function deriveLedgerEntries({ events, evidence, allocations, edges }) {
 export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds = null) {
   const eventFilter = eventIds?.length ? ' AND e.id = ANY($2::bigint[])' : '';
   const eventParams = eventIds?.length ? [scopeKey, eventIds] : [scopeKey];
-  const events = (await pool.query(`SELECT e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1${eventFilter} ORDER BY e.id`, eventParams)).rows;
+  const events = (await pool.query(`SELECT e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id
+    WHERE s.scope_key=$1${eventFilter}
+      AND NOT EXISTS (SELECT 1 FROM manual_troika_topup_expenses m
+        WHERE m.scope_id=e.scope_id AND m.business_event_id=e.id)
+    ORDER BY e.id`, eventParams)).rows;
   const ids = events.map((event) => event.id);
   if (!ids.length) return { events: [], evidence: [], allocations: [], edges: [], entries: [] };
   const evidence = (await pool.query(`SELECT ev.id AS evidence_id,ev.event_id,ev.receipt_id,ev.normalization_version,r.date_time,f.normalization_status,f.cash_total_sum,f.ecash_total_sum,f.prepaid_sum,f.credit_sum,f.provision_sum,f.payment_components_status FROM business_event_evidence ev LEFT JOIN receipts r ON r.id=ev.receipt_id LEFT JOIN receipt_fiscal_facts f ON f.receipt_id=ev.receipt_id AND f.normalization_version=ev.normalization_version WHERE ev.event_id = ANY($1::bigint[]) ORDER BY ev.id`, [ids])).rows;

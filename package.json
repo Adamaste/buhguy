@@ -11,6 +11,7 @@
     "start": "node ./bin/receipt-collector.js",
     "browser-login": "node ./bin/browser-login.js",
     "migrate": "node ./bin/receipt-collector.js migrate",
+    "migrate:prod:troika-024": "node ./scripts/migrate-prod-troika-024.mjs",
     "normalize": "node ./bin/receipt-collector.js normalize",
     "test": "node ./scripts/test-suite.js",
     "test:unit": "node ./scripts/test-suite.js --unit-only",
