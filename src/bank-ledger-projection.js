@@ -367,8 +367,8 @@ export function projectBankLedger(entries, ownershipSnapshot, { maxTimeDeltaMs }
   return { entries: ledgerEntries, sourceStatuses, summary, matchingSummary: matcher.summary };
 }
 
-export async function loadBankLedgerProjection(pool, { scopeKey = null, from = null, to = null, maxTimeDeltaMs } = {}) {
-  const journals = await loadBalancedBankJournalProjection(pool, { scopeKey, from, to });
+export async function loadBankLedgerProjection(pool, options = {}) {
+  const journals = await loadBalancedBankJournalProjection(pool, options);
   const candidates = projectBankBusinessEventCandidates(journals.projections);
   const journalsByTransaction = new Map(journals.projections.map((journal) => [journal.bankTransactionId, journal]));
   const entries = candidates.projections.map((candidate) => ({
@@ -384,5 +384,5 @@ export async function loadBankLedgerProjection(pool, { scopeKey = null, from = n
       && candidate.bankSide?.type === JOURNAL_ACCOUNT_TYPES.FINANCIAL_ACCOUNT)
     .map(({ candidate }) => candidate.bankSide.financialAccountId);
   const ownershipSnapshot = await loadBankInternalTransferOwnershipSnapshot(pool, accountIds);
-  return projectBankLedger(entries, ownershipSnapshot, { maxTimeDeltaMs });
+  return projectBankLedger(entries, ownershipSnapshot, { maxTimeDeltaMs: options.maxTimeDeltaMs });
 }

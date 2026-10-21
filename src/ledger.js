@@ -1,6 +1,7 @@
 import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { refreshCertificationForEvents } from './certification.js';
 import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
+import { BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_EVENT_RULE, BANK_ONLY_PURCHASE_LEDGER_RULE, isValidBankOnlyPurchaseEvidence } from './bank-only-purchase-contract.js';
 
 export const LEDGER_MODEL_VERSION = 'ledger-v1';
 export const LEDGER_ORIGIN = 'SYSTEM_DERIVED';
@@ -12,6 +13,7 @@ export const LEDGER_RULES = Object.freeze({
   STANDALONE_PURCHASE: 'LEDGER_STANDALONE_PURCHASE_V1',
   RETURN: 'LEDGER_RETURN_V1',
   REFUND: 'LEDGER_REFUND_V1',
+  BANK_ONLY_PURCHASE: BANK_ONLY_PURCHASE_LEDGER_RULE,
   UNSUPPORTED: 'LEDGER_UNSUPPORTED_V1',
 });
 
@@ -51,8 +53,10 @@ function factsForEvidence(row) {
   };
 }
 
-export function deriveLedgerEntries({ events, evidence, allocations, edges }) {
+export function deriveLedgerEntries({ events, evidence, allocations, edges, bankEvidence = [] }) {
   const evidenceMap = evidenceByEvent(evidence);
+  const bankEvidenceMap = new Map();
+  for (const row of bankEvidence) bankEvidenceMap.set(Number(row.business_event_id), [...(bankEvidenceMap.get(Number(row.business_event_id)) ?? []), row]);
   const incoming = new Map();
   for (const edge of edges) incoming.set(Number(edge.target_event_id), [...(incoming.get(Number(edge.target_event_id)) ?? []), edge]);
   const outgoing = new Map();
@@ -75,7 +79,11 @@ export function deriveLedgerEntries({ events, evidence, allocations, edges }) {
   for (const event of confirmed) {
     const eventEvidence = (evidenceMap.get(Number(event.id)) ?? []).map(factsForEvidence);
     const firstEvidence = eventEvidence[0] ?? null;
-    const eventAt = firstEvidence?.dateTime ?? event.created_at;
+    const bankProofRows = bankEvidenceMap.get(Number(event.id)) ?? [];
+    const bankProof = bankProofRows.length === 1 ? bankProofRows[0] : null;
+    const eventAt = event.rule_code === BANK_ONLY_PURCHASE_EVENT_RULE
+      ? (bankProof?.evidence_snapshot?.occurredAt ?? event.created_at)
+      : firstEvidence?.dateTime ?? event.created_at;
     const currency = event.currency || LEDGER_CURRENCY;
     let rule;
     let description;
@@ -84,7 +92,23 @@ export function deriveLedgerEntries({ events, evidence, allocations, edges }) {
     let status = 'READY';
     let links = eventEvidence.map((item) => ({ evidenceId: item.evidenceId, receiptId: item.receiptId, normalizationVersion: item.normalizationVersion, role: 'FISCAL_EVIDENCE' }));
 
-    if (event.event_type === 'PREPAYMENT' && event.rule_code === 'PREPAYMENT_SETTLEMENT_V1') {
+    if (event.event_type === 'PURCHASE' && event.rule_code === BANK_ONLY_PURCHASE_EVENT_RULE) {
+      rule = LEDGER_RULES.BANK_ONLY_PURCHASE;
+      description = 'Proof-qualified bank-only purchase';
+      if (!isValidBankOnlyPurchaseEvidence({ ...event, scope_key: event.scope_key }, bankProof)) {
+        status = 'BLOCKED';
+        reasonCode = 'BANK_ONLY_PURCHASE_EVIDENCE_INVALID';
+        postings = [];
+      } else {
+        const snapshot = bankProof.evidence_snapshot;
+        reasonCode = 'PROOF_QUALIFIED_BANK_PURCHASE';
+        postings = [
+          { account: 'UNCLASSIFIED_ACQUISITION', debit: snapshot.amount, credit: '0.00' },
+          { account: `FINANCIAL_ACCOUNT:${Number(bankProof.financial_account_id)}`, debit: '0.00', credit: snapshot.amount },
+        ];
+        links = [{ role: BANK_ONLY_PURCHASE_EVIDENCE_ROLE, bankTransactionId: Number(bankProof.bank_transaction_id) }];
+      }
+    } else if (event.event_type === 'PREPAYMENT' && event.rule_code === 'PREPAYMENT_SETTLEMENT_V1') {
       rule = LEDGER_RULES.PREPAYMENT;
       description = 'Prepayment new-money evidence creates merchant advance';
       postings = [{ account: 'MERCHANT_ADVANCE', debit: amount(event.amount), credit: '0.00' }, { account: 'FISCAL_PAYMENT_CLEARING', debit: '0.00', credit: amount(event.amount) }];
@@ -167,16 +191,31 @@ export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds 
     WHERE s.scope_key=$1${eventFilter}
       AND NOT EXISTS (SELECT 1 FROM manual_troika_topup_expenses m
         WHERE m.scope_id=e.scope_id AND m.business_event_id=e.id)
+      AND NOT EXISTS (SELECT 1
+        FROM business_event_bank_evidence be
+        JOIN ledger_entries bank_entry ON bank_entry.scope_id=be.scope_id
+          AND bank_entry.source_event_id=be.business_event_id
+          AND bank_entry.derivation_rule='LEDGER_BANK_ONLY_PURCHASE_V1'
+        JOIN ledger_entry_supersessions supersession ON supersession.scope_id=bank_entry.scope_id
+          AND supersession.superseded_ledger_entry_id=bank_entry.id
+        WHERE be.scope_id=e.scope_id AND be.business_event_id=e.id
+          AND be.evidence_role='BANK_ONLY_PURCHASE')
     ORDER BY e.id`, eventParams)).rows;
   const ids = events.map((event) => event.id);
   if (!ids.length) return { events: [], evidence: [], allocations: [], edges: [], entries: [] };
   const evidence = (await pool.query(`SELECT ev.id AS evidence_id,ev.event_id,ev.receipt_id,ev.normalization_version,r.date_time,f.normalization_status,f.cash_total_sum,f.ecash_total_sum,f.prepaid_sum,f.credit_sum,f.provision_sum,f.payment_components_status FROM business_event_evidence ev LEFT JOIN receipts r ON r.id=ev.receipt_id LEFT JOIN receipt_fiscal_facts f ON f.receipt_id=ev.receipt_id AND f.normalization_version=ev.normalization_version WHERE ev.event_id = ANY($1::bigint[]) ORDER BY ev.id`, [ids])).rows;
+  const bankEvidence = (await pool.query(`SELECT id,scope_id,business_event_id,bank_receipt_match_id,bank_transaction_id,
+      financial_account_id,enrichment_key,evidence_role,rule_version,semantic_key,evidence_snapshot,evidence_sha256
+    FROM business_event_bank_evidence
+    WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1)
+      AND business_event_id=ANY($2::bigint[]) AND evidence_role=$3
+    ORDER BY id`, [scopeKey, ids, BANK_ONLY_PURCHASE_EVIDENCE_ROLE])).rows;
   const allocations = (await pool.query(`SELECT a.* FROM business_event_allocations a JOIN accounting_scopes s ON s.id=a.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
   const edges = (await pool.query(`SELECT e.* FROM business_event_edges e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
-  return { events, evidence, allocations, edges, entries: deriveLedgerEntries({ events, evidence, allocations, edges }) };
+  return { events, evidence, allocations, edges, bankEvidence, entries: deriveLedgerEntries({ events, evidence, allocations, edges, bankEvidence }) };
 }
 
-async function ensureAccounts(tx, scopeKey) {
+async function ensureAccounts(tx, scopeKey, entries = []) {
   const scope = (await tx.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
   if (!scope) throw new Error(`Accounting scope not found: ${scopeKey}`);
   const accounts = new Map();
@@ -188,6 +227,29 @@ async function ensureAccounts(tx, scopeKey) {
       const error = new Error(`Ledger account catalog conflict: ${code}`);
       error.code = 'LEDGER_ACCOUNT_CATALOG_CONFLICT';
       throw error;
+    }
+    accounts.set(code, Number(row.id));
+  }
+  const financialMappings = new Map();
+  for (const entry of entries) {
+    for (const posting of entry.postings ?? []) {
+      const match = /^FINANCIAL_ACCOUNT:(\d+)$/.exec(posting.account ?? '');
+      if (!match) continue;
+      const id = Number(match[1]);
+      if (!Number.isSafeInteger(id) || id < 1) throw new Error('Ledger financial account mapping is invalid');
+      const prior = financialMappings.get(id);
+      if (prior && prior !== entry.currency) throw new Error('Ledger financial account currency conflict');
+      financialMappings.set(id, entry.currency);
+    }
+  }
+  for (const [financialAccountId, currency] of financialMappings) {
+    const code = `FINANCIAL_ACCOUNT:${financialAccountId}`;
+    await tx.query(`INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency)
+      VALUES($1,$2,'ASSET','Mapped financial account',$3,$4) ON CONFLICT(scope_id,account_code) DO NOTHING`, [scope.id, code, financialAccountId, currency]);
+    const row = (await tx.query('SELECT id,scope_id,account_code,account_type,financial_account_id,account_currency FROM ledger_accounts WHERE scope_id=$1 AND account_code=$2', [scope.id, code])).rows[0];
+    if (!row || Number(row.scope_id) !== Number(scope.id) || row.account_type !== 'ASSET'
+      || Number(row.financial_account_id) !== financialAccountId || row.account_currency !== currency) {
+      throw new Error(`Ledger account catalog conflict: ${code}`);
     }
     accounts.set(code, Number(row.id));
   }
@@ -352,8 +414,10 @@ async function persistEntry(tx, entry, accounts) {
   }
   let linkCount = 0;
   for (const link of entry.links) {
-    const semanticKey = fiscalContentFingerprint({ ledgerEntryId: entryId, businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role });
-    const inserted = await tx.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role,semantic_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [entryId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role, semanticKey]);
+    const semanticMaterial = { ledgerEntryId: entryId, businessEventId: entry.sourceEventId, graphEvidenceId: link.evidenceId ?? null, graphAllocationId: link.allocationId ?? null, receiptId: link.receiptId ?? null, role: link.role,
+      ...(link.bankTransactionId == null ? {} : { bankTransactionId: Number(link.bankTransactionId) }) };
+    const semanticKey = fiscalContentFingerprint(semanticMaterial);
+    const inserted = await tx.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role,semantic_key,bank_transaction_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [entryId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role, semanticKey, link.bankTransactionId ?? null]);
     linkCount += inserted.rowCount;
   }
   return { entryId, created: Boolean(row.created), postings: postingCount, links: linkCount };
@@ -414,7 +478,7 @@ export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false
       await client.query(`DELETE FROM ledger_source_links WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1) AND origin='SYSTEM_DERIVED'${eventClause})`, params);
       await client.query(`DELETE FROM ledger_entries WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1) AND origin='SYSTEM_DERIVED'${eventClause}`, params);
     }
-    const accounts = await ensureAccounts(client, scopeKey);
+    const accounts = await ensureAccounts(client, scopeKey, entriesToPersist ?? projection.entries);
     const created = { entries: 0, postings: 0, links: 0, blocked: 0 };
     for (const entry of entriesToPersist ?? projection.entries) {
       const persisted = await persistEntry(client, entry, accounts);

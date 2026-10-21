@@ -31,6 +31,7 @@ const unitFiles = [
   'tests/fns-user-onboarding.test.js',
   'tests/accounting-pipeline.test.js',
   'tests/bank-ingestion.test.js',
+  'tests/bank-only-purchase.test.js',
   'tests/bank-account-resolution.test.js',
   'tests/historical-bank-account-resolution.test.js',
   'tests/bank-account-resolution-migration.test.js',
@@ -89,6 +90,7 @@ const postgresFiles = [
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
   'tests/certification-materialization-postgres.integration.test.js',
   'tests/manual-troika-topup-expense-postgres.integration.test.js',
+  'tests/bank-only-purchase-postgres.integration.test.js',
 ];
 
 const run = (files, env = process.env) => spawnSync(

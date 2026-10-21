@@ -472,6 +472,10 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     ]) {
       await admin.query(await readFile(new URL(`../db/migrations/${migration}`, import.meta.url), 'utf8'));
     }
+    const bankOnlyMigration = await readFile(new URL('../db/migrations/025_bank_only_purchase_ledger.sql', import.meta.url), 'utf8');
+    const bankOnlyGrantSection = bankOnlyMigration.indexOf('-- Only the existing ingestion runtime receives access');
+    assert.notEqual(bankOnlyGrantSection, -1, 'migration 025 must keep its runtime privilege section identifiable');
+    await admin.query(bankOnlyMigration.slice(bankOnlyGrantSection));
 
     const tableWideSelectCount = Number((await admin.query(`SELECT count(*)::int AS count
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -585,8 +589,9 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     if (runtime) await runtime.end();
     if (fixture) await admin.query('DELETE FROM accounting_scopes WHERE id=$1', [fixture.scopeId]).catch(() => {});
     if (roleCreated) {
-      await admin.query('DROP OWNED BY receipt_collector').catch(() => {});
-      await admin.query('DROP ROLE receipt_collector').catch(() => {});
+      await admin.query('DROP OWNED BY receipt_collector');
+      await admin.query('DROP ROLE receipt_collector');
+      assert.equal((await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'")).rowCount, 0);
     }
     await admin.end();
   }
