@@ -53,9 +53,16 @@ CREATE TABLE manual_troika_topup_receipt_links (
   receipt_id BIGINT NOT NULL UNIQUE REFERENCES receipts(id) ON DELETE RESTRICT,
   business_event_evidence_id BIGINT NOT NULL UNIQUE REFERENCES business_event_evidence(id) ON DELETE RESTRICT,
   provenance TEXT NOT NULL CHECK (provenance = 'USER_CONFIRMED'),
+  payment_stage TEXT NOT NULL CHECK (payment_stage IN ('PREPAYMENT_ONLY', 'SETTLEMENT_ONLY')),
+  confirmation_basis TEXT NOT NULL CHECK (confirmation_basis IN (
+    'USER_CONFIRMED_PREPAYMENT_TOPUP_RECEIPT',
+    'USER_CONFIRMED_SETTLEMENT_TOPUP_RECEIPT'
+  )),
   reason TEXT NOT NULL CHECK (length(btrim(reason)) BETWEEN 1 AND 1000),
   semantic_key CHAR(64) NOT NULL UNIQUE CHECK (semantic_key ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK ((payment_stage = 'PREPAYMENT_ONLY' AND confirmation_basis = 'USER_CONFIRMED_PREPAYMENT_TOPUP_RECEIPT')
+      OR (payment_stage = 'SETTLEMENT_ONLY' AND confirmation_basis = 'USER_CONFIRMED_SETTLEMENT_TOPUP_RECEIPT')),
   FOREIGN KEY (scope_id, manual_troika_topup_expense_id)
     REFERENCES manual_troika_topup_expenses(scope_id, id) ON DELETE RESTRICT
 );
@@ -103,8 +110,8 @@ BEGIN
     EXECUTE 'GRANT SELECT (id, ledger_entry_id, business_event_id, graph_evidence_id, receipt_id, link_role, bank_transaction_id) ON public.ledger_source_links TO receipt_collector';
     EXECUTE 'GRANT SELECT (id, scope_id, bank_source_id, bank_transaction_id, business_event_id, ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code, amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key) ON public.manual_troika_topup_expenses TO receipt_collector';
     EXECUTE 'GRANT INSERT (scope_id, bank_source_id, bank_transaction_id, business_event_id, ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code, amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key) ON public.manual_troika_topup_expenses TO receipt_collector';
-    EXECUTE 'GRANT SELECT (id, scope_id, manual_troika_topup_expense_id, receipt_id, business_event_evidence_id, provenance, reason, semantic_key) ON public.manual_troika_topup_receipt_links TO receipt_collector';
-    EXECUTE 'GRANT INSERT (scope_id, manual_troika_topup_expense_id, receipt_id, business_event_evidence_id, provenance, reason, semantic_key) ON public.manual_troika_topup_receipt_links TO receipt_collector';
+    EXECUTE 'GRANT SELECT (id, scope_id, manual_troika_topup_expense_id, receipt_id, business_event_evidence_id, provenance, payment_stage, confirmation_basis, reason, semantic_key) ON public.manual_troika_topup_receipt_links TO receipt_collector';
+    EXECUTE 'GRANT INSERT (scope_id, manual_troika_topup_expense_id, receipt_id, business_event_evidence_id, provenance, payment_stage, confirmation_basis, reason, semantic_key) ON public.manual_troika_topup_receipt_links TO receipt_collector';
     EXECUTE 'GRANT USAGE ON SEQUENCE public.manual_troika_topup_expenses_id_seq TO receipt_collector';
     EXECUTE 'GRANT USAGE ON SEQUENCE public.manual_troika_topup_receipt_links_id_seq TO receipt_collector';
   END IF;

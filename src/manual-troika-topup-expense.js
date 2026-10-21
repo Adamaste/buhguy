@@ -283,6 +283,8 @@ export async function attachTroikaTopupReceipt(pool, options = {}) {
   const receiptId = positiveId(options.receiptId, 'RECEIPT_ID');
   const reason = requiredText(options.reason, 'REASON');
   const scopeKey = requiredText(options.scopeKey ?? 'default', 'SCOPE_KEY', 128);
+  if (options.userConfirmedReceiptForTopup !== true) fail('TOPUP_RECEIPT_USER_CONFIRMATION_REQUIRED');
+  const settlementConfirmation = options.settlementOnlyConfirmation;
   const client = await pool.connect();
   let releaseScopeLock = null;
   try {
@@ -292,24 +294,33 @@ export async function attachTroikaTopupReceipt(pool, options = {}) {
     await lockMatchedPurchaseBankTransaction(client, bankTransactionId);
     const scope = (await client.query('SELECT id FROM accounting_scopes WHERE scope_key=$1', [scopeKey])).rows[0];
     if (!scope) fail('ACCOUNTING_SCOPE_NOT_FOUND');
-    const confirmation = (await client.query(`SELECT id,scope_id,business_event_id,ledger_entry_id,amount::text,currency,occurred_at
+    const confirmation = (await client.query(`SELECT id,scope_id,bank_source_id,bank_transaction_id,business_event_id,ledger_entry_id,
+        financial_account_id,payment_instrument_id,person_id,amount::text,currency,occurred_at,provenance,evidence_basis,reason
       FROM manual_troika_topup_expenses WHERE bank_transaction_id=$1`, [bankTransactionId])).rows[0];
     if (!confirmation || Number(confirmation.scope_id) !== Number(scope.id)) fail('MANUAL_TOPUP_CONFIRMATION_NOT_FOUND');
-    const existing = (await client.query(`SELECT id,scope_id,manual_troika_topup_expense_id,receipt_id,business_event_evidence_id,provenance,reason,semantic_key
-      FROM manual_troika_topup_receipt_links WHERE manual_troika_topup_expense_id=$1`, [confirmation.id])).rows[0];
-    if (existing) {
-      if (Number(existing.receipt_id) !== receiptId || existing.reason !== reason) fail('MANUAL_TOPUP_RECEIPT_CONFLICT');
-      const evidenceExists = (await client.query(`SELECT 1 FROM business_event_evidence
-        WHERE id=$1 AND event_id=$2 AND receipt_id=$3 AND evidence_role='MANUAL_TROIKA_TOPUP_RECEIPT'
-          AND origin='MANUAL' AND rule_code=$4 AND rule_version=$5`, [existing.business_event_evidence_id, confirmation.business_event_id, receiptId, MANUAL_TROIKA_TOPUP_RULE, MANUAL_TROIKA_TOPUP_VERSION])).rowCount;
-      const linkExists = (await client.query(`SELECT 1 FROM ledger_source_links
-        WHERE ledger_entry_id=$1 AND business_event_id=$2 AND graph_evidence_id=$3 AND receipt_id=$4
-          AND link_role='MANUAL_TROIKA_TOPUP_RECEIPT'`, [confirmation.ledger_entry_id, confirmation.business_event_id, existing.business_event_evidence_id, receiptId])).rowCount;
-      if (Number(existing.scope_id) !== Number(scope.id) || Number(existing.manual_troika_topup_expense_id) !== Number(confirmation.id)
-        || existing.provenance !== 'USER_CONFIRMED' || !evidenceExists || !linkExists) fail('MANUAL_TOPUP_RECEIPT_CONFLICT');
-      await client.query('COMMIT');
-      return { created: false, reused: true, confirmationId: Number(confirmation.id), receiptId, businessEventId: Number(confirmation.business_event_id), ledgerEntryId: Number(confirmation.ledger_entry_id) };
+    const receiptOwner = (await client.query(`SELECT manual_troika_topup_expense_id
+      FROM manual_troika_topup_receipt_links WHERE receipt_id=$1`, [receiptId])).rows[0];
+    if (receiptOwner && Number(receiptOwner.manual_troika_topup_expense_id) !== Number(confirmation.id)) {
+      fail('RECEIPT_ALREADY_MANUALLY_LINKED');
     }
+
+    const source = await transactionContext(client, bankTransactionId);
+    if (Number(source.bank_source_id) !== Number(confirmation.bank_source_id)
+      || source.amount !== null && String(source.amount) !== String(confirmation.amount)
+      || source.currency !== null && source.currency !== confirmation.currency
+      || !sameTimestamp(source.occurredAt, confirmation.occurred_at)
+      || confirmation.currency !== 'RUB' || confirmation.provenance !== 'USER_CONFIRMED') fail('MANUAL_TOPUP_CONFIRMATION_CONFLICT');
+    const expected = {
+      scopeId: Number(scope.id), bankSourceId: Number(confirmation.bank_source_id),
+      financialAccountId: Number(confirmation.financial_account_id), paymentInstrumentId: Number(confirmation.payment_instrument_id),
+      personId: Number(confirmation.person_id), amount: String(confirmation.amount), currency: 'RUB',
+      occurredAt: source.occurredAt, evidenceBasis: confirmation.evidence_basis, reason: confirmation.reason,
+    };
+    await assertSourceOwner(client, Number(source.bank_source_id), expected.personId, expected.scopeId);
+    await assertCardAndAccount(client, expected);
+    await assertNoConflictingResolution(client, bankTransactionId, expected.financialAccountId, expected.paymentInstrumentId);
+    await validateExistingExpense(client, confirmation, expected, bankTransactionId);
+
     const receipt = (await client.query(`SELECT r.id,r.date_time,r.operation_type,r.total_sum::text AS total_sum,r.currency,
         f.normalization_version,f.normalization_status,f.fiscal_operation_type,f.payment_stage,
         EXISTS(SELECT 1 FROM receipt_source_observations rso WHERE rso.receipt_id=r.id) AS fns_source_proven,
@@ -318,12 +329,46 @@ export async function attachTroikaTopupReceipt(pool, options = {}) {
       FROM receipts r JOIN receipt_fiscal_facts f ON f.receipt_id=r.id AND f.normalization_version=$2
       WHERE r.id=$1`, [receiptId, NORMALIZED_FACT_VERSION])).rows[0];
     if (!receipt) fail('RECEIPT_NOT_FOUND_OR_NOT_NORMALIZED');
+    if (!['PREPAYMENT_ONLY', 'SETTLEMENT_ONLY'].includes(receipt.payment_stage)) fail('RECEIPT_PAYMENT_STAGE_UNSUPPORTED');
+    const confirmationBasis = receipt.payment_stage === 'PREPAYMENT_ONLY'
+      ? 'USER_CONFIRMED_PREPAYMENT_TOPUP_RECEIPT'
+      : 'USER_CONFIRMED_SETTLEMENT_TOPUP_RECEIPT';
+    if (receipt.payment_stage === 'SETTLEMENT_ONLY') {
+      if (!settlementConfirmation || settlementConfirmation.purpose !== 'TROIKA_TOPUP') fail('SETTLEMENT_PURPOSE_CONFIRMATION_REQUIRED');
+      if (settlementConfirmation.belongsToSpecificTopup !== true) fail('SETTLEMENT_TOPUP_LINK_CONFIRMATION_REQUIRED');
+    }
     const currency = resolveFnsReceiptCurrency({ explicitCurrency: receipt.currency, fnsSourceProven: receipt.fns_source_proven === true });
     if (Number(receipt.operation_type) !== 1 || Number(receipt.fiscal_operation_type) !== 1
-      || receipt.normalization_status !== 'READY' || receipt.payment_stage !== 'PREPAYMENT_ONLY'
+      || receipt.normalization_status !== 'READY'
       || String(receipt.total_sum) !== String(confirmation.amount) || currency.status !== 'RESOLVED' || currency.currency !== 'RUB'
       || receipt.scope_ids.length !== 1 || Number(receipt.scope_ids[0]) !== Number(scope.id)
-      || !receipt.date_time || Math.abs(new Date(receipt.date_time).getTime() - new Date(confirmation.occurred_at).getTime()) > RECEIPT_WINDOW_MS) fail('RECEIPT_NOT_EXACT_CONFIRMED_PREPAYMENT');
+      || !receipt.date_time || Math.abs(new Date(receipt.date_time).getTime() - new Date(confirmation.occurred_at).getTime()) > RECEIPT_WINDOW_MS) fail('RECEIPT_NOT_EXACT_CONFIRMED_TOPUP');
+
+    const existing = (await client.query(`SELECT id,scope_id,manual_troika_topup_expense_id,receipt_id,business_event_evidence_id,provenance,payment_stage,confirmation_basis,reason,semantic_key
+      FROM manual_troika_topup_receipt_links WHERE manual_troika_topup_expense_id=$1`, [confirmation.id])).rows[0];
+    if (existing) {
+      if (Number(existing.receipt_id) !== receiptId || existing.reason !== reason
+        || existing.payment_stage !== receipt.payment_stage || existing.confirmation_basis !== confirmationBasis) fail('MANUAL_TOPUP_RECEIPT_CONFLICT');
+      const evidenceExists = (await client.query(`SELECT 1 FROM business_event_evidence
+        WHERE id=$1 AND event_id=$2 AND receipt_id=$3 AND evidence_role='MANUAL_TROIKA_TOPUP_RECEIPT'
+          AND origin='MANUAL' AND rule_code=$4 AND rule_version=$5`, [existing.business_event_evidence_id, confirmation.business_event_id, receiptId, MANUAL_TROIKA_TOPUP_RULE, MANUAL_TROIKA_TOPUP_VERSION])).rowCount;
+      const linkExists = (await client.query(`SELECT 1 FROM ledger_source_links
+        WHERE ledger_entry_id=$1 AND business_event_id=$2 AND graph_evidence_id=$3 AND receipt_id=$4
+          AND link_role='MANUAL_TROIKA_TOPUP_RECEIPT'`, [confirmation.ledger_entry_id, confirmation.business_event_id, existing.business_event_evidence_id, receiptId])).rowCount;
+      if (Number(existing.scope_id) !== Number(scope.id) || Number(existing.manual_troika_topup_expense_id) !== Number(confirmation.id)
+        || existing.provenance !== 'USER_CONFIRMED' || !evidenceExists || !linkExists) fail('MANUAL_TOPUP_RECEIPT_CONFLICT');
+      if ((await client.query(`SELECT 1 FROM bank_receipt_matches WHERE receipt_id=$1
+        UNION ALL SELECT 1 FROM business_event_evidence WHERE receipt_id=$1 AND id<>$2
+        UNION ALL SELECT 1 FROM ledger_source_links
+          WHERE receipt_id=$1 AND NOT (ledger_entry_id=$3 AND business_event_id=$4 AND graph_evidence_id=$2
+            AND link_role='MANUAL_TROIKA_TOPUP_RECEIPT')
+        LIMIT 1`, [receiptId, existing.business_event_evidence_id, confirmation.ledger_entry_id, confirmation.business_event_id])).rowCount) {
+        fail('RECEIPT_ALREADY_ACCOUNTED');
+      }
+      await client.query('COMMIT');
+      return { created: false, reused: true, confirmationId: Number(confirmation.id), receiptId, paymentStage: existing.payment_stage, businessEventId: Number(confirmation.business_event_id), ledgerEntryId: Number(confirmation.ledger_entry_id) };
+    }
+    if ((await client.query('SELECT 1 FROM manual_troika_topup_receipt_links WHERE receipt_id=$1', [receiptId])).rowCount) fail('RECEIPT_ALREADY_MANUALLY_LINKED');
     if ((await client.query(`SELECT 1 FROM bank_receipt_matches WHERE receipt_id=$1
       UNION ALL SELECT 1 FROM business_event_evidence WHERE receipt_id=$1
       UNION ALL SELECT 1 FROM ledger_source_links WHERE receipt_id=$1 LIMIT 1`, [receiptId])).rowCount) fail('RECEIPT_ALREADY_ACCOUNTED');
@@ -333,12 +378,12 @@ export async function attachTroikaTopupReceipt(pool, options = {}) {
     const linkKey = stable({ model: MANUAL_TROIKA_TOPUP_RULE, version: MANUAL_TROIKA_TOPUP_VERSION, ledgerEntryId: Number(confirmation.ledger_entry_id), eventId: Number(confirmation.business_event_id), receiptId, evidenceId: Number(evidence.id), role: 'MANUAL_TROIKA_TOPUP_RECEIPT' });
     await client.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,receipt_id,normalization_version,link_role,semantic_key)
       VALUES($1,$2,$3,$4,$5,'MANUAL_TROIKA_TOPUP_RECEIPT',$6)`, [confirmation.ledger_entry_id, confirmation.business_event_id, evidence.id, receiptId, receipt.normalization_version, linkKey]);
-    const receiptLinkKey = stable({ model: MANUAL_TROIKA_TOPUP_RULE, version: MANUAL_TROIKA_TOPUP_VERSION, confirmationId: Number(confirmation.id), receiptId, evidenceId: Number(evidence.id), provenance: 'USER_CONFIRMED', reason });
-    await client.query(`INSERT INTO manual_troika_topup_receipt_links(scope_id,manual_troika_topup_expense_id,receipt_id,business_event_evidence_id,provenance,reason,semantic_key)
-      VALUES($1,$2,$3,$4,'USER_CONFIRMED',$5,$6)`, [scope.id, confirmation.id, receiptId, evidence.id, reason, receiptLinkKey]);
+    const receiptLinkKey = stable({ model: MANUAL_TROIKA_TOPUP_RULE, version: MANUAL_TROIKA_TOPUP_VERSION, confirmationId: Number(confirmation.id), receiptId, evidenceId: Number(evidence.id), provenance: 'USER_CONFIRMED', paymentStage: receipt.payment_stage, confirmationBasis, reason });
+    await client.query(`INSERT INTO manual_troika_topup_receipt_links(scope_id,manual_troika_topup_expense_id,receipt_id,business_event_evidence_id,provenance,payment_stage,confirmation_basis,reason,semantic_key)
+      VALUES($1,$2,$3,$4,'USER_CONFIRMED',$5,$6,$7,$8)`, [scope.id, confirmation.id, receiptId, evidence.id, receipt.payment_stage, confirmationBasis, reason, receiptLinkKey]);
     await refreshCertificationForEvents(client, { scopeKey, eventIds: [Number(confirmation.business_event_id)], client });
     await client.query('COMMIT');
-    return { created: true, reused: false, confirmationId: Number(confirmation.id), receiptId, businessEventId: Number(confirmation.business_event_id), ledgerEntryId: Number(confirmation.ledger_entry_id) };
+    return { created: true, reused: false, confirmationId: Number(confirmation.id), receiptId, paymentStage: receipt.payment_stage, businessEventId: Number(confirmation.business_event_id), ledgerEntryId: Number(confirmation.ledger_entry_id) };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

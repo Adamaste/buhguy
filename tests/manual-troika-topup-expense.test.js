@@ -19,4 +19,7 @@ test('manual Troika expense requires an explicit amount, account, card, owner, a
   await assert.rejects(() => confirmTroikaTopupExpense(unavailablePool, { ...base, paymentInstrumentId: 0 }), (error) => error.code === 'PAYMENT_INSTRUMENT_ID_INVALID');
   await assert.rejects(() => confirmTroikaTopupExpense(unavailablePool, { ...base, evidenceBasis: 'OBSERVED_EXACT' }), (error) => error.code === 'EVIDENCE_BASIS_INVALID');
   await assert.rejects(() => attachTroikaTopupReceipt(unavailablePool, { bankTransactionId: 9001, receiptId: 0, reason: 'Synthetic user confirmation' }), (error) => error.code === 'RECEIPT_ID_INVALID');
+  await assert.rejects(() => attachTroikaTopupReceipt(unavailablePool, {
+    bankTransactionId: 9001, receiptId: 9002, reason: 'Synthetic user confirmation',
+  }), (error) => error.code === 'TOPUP_RECEIPT_USER_CONFIRMATION_REQUIRED');
 });

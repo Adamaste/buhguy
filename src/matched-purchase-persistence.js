@@ -203,6 +203,9 @@ async function lockInputs(client, scope, fields, options = {}) {
   const tx = await client.query('SELECT id,observation_id,occurred_at,amount,currency FROM bank_transactions WHERE id=$1', [fields.bankTransactionId]);
   const receipt = await client.query('SELECT id,date_time,total_sum,currency FROM receipts WHERE id=$1', [fields.receiptId]);
   if (!tx.rowCount || !receipt.rowCount) fail('AUTHORITATIVE_INPUT_MISSING');
+  if ((await client.query('SELECT 1 FROM manual_troika_topup_receipt_links WHERE receipt_id=$1', [fields.receiptId])).rowCount) {
+    fail('RECEIPT_ALREADY_MANUALLY_LINKED_TO_TROIKA_TOPUP');
+  }
   const account = await client.query('SELECT id,scope_id,currency FROM financial_accounts WHERE id=$1', [fields.financialAccountId]);
   if (!account.rowCount || Number(account.rows[0].scope_id) !== Number(scope.id) || account.rows[0].currency !== fields.currency) fail('ACCOUNT_SCOPE_OR_CURRENCY_CONFLICT');
   const fnsSource = await client.query(`SELECT EXISTS (

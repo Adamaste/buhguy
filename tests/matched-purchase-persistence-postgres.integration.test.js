@@ -524,6 +524,7 @@ integration('matched purchase writer is idempotent under the restricted runtime 
         ledger_entry_id, financial_account_id, payment_instrument_id, person_id, provider, category_code,
         amount, currency, occurred_at, provenance, evidence_basis, reason, semantic_key)
       ON public.manual_troika_topup_expenses TO receipt_collector`);
+    await admin.query('GRANT SELECT (receipt_id) ON public.manual_troika_topup_receipt_links TO receipt_collector');
     const manualTopupLookupPrivileges = (await admin.query(`SELECT
       has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','scope_id','SELECT') AS scope_id,
       has_column_privilege('receipt_collector','public.manual_troika_topup_expenses','bank_transaction_id','SELECT') AS bank_transaction_id,
@@ -535,6 +536,15 @@ integration('matched purchase writer is idempotent under the restricted runtime 
     assert.deepEqual(manualTopupLookupPrivileges, {
       scope_id: true, bank_transaction_id: true, reason: true,
       table_select: false, insert_allowed: false, update_allowed: false, delete_allowed: false,
+    });
+    const manualTopupReceiptGuardPrivileges = (await admin.query(`SELECT
+      has_column_privilege('receipt_collector','public.manual_troika_topup_receipt_links','receipt_id','SELECT') AS receipt_id,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_receipt_links','SELECT') AS table_select,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_receipt_links','INSERT') AS insert_allowed,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_receipt_links','UPDATE') AS update_allowed,
+      has_table_privilege('receipt_collector','public.manual_troika_topup_receipt_links','DELETE') AS delete_allowed`)).rows[0];
+    assert.deepEqual(manualTopupReceiptGuardPrivileges, {
+      receipt_id: true, table_select: false, insert_allowed: false, update_allowed: false, delete_allowed: false,
     });
 
     fixture = await createFixture(admin, 'restricted-writer');
