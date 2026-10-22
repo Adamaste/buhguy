@@ -12,8 +12,9 @@ const HASH_RE = /^[a-f0-9]{64}$/;
 const CODE_ROOTS = ['bin/', 'src/', 'db/migrations/'];
 const SOURCE_CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.sql']);
 const TROIKA_024_RUNNER = 'scripts/migrate-prod-troika-024.mjs';
+const BANK_ONLY_025_RUNNER = 'scripts/migrate-prod-bank-only-025.mjs';
 const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'scripts', 'node_modules']);
-const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER]);
+const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER]);
 const SENSITIVE = /(^|[._-])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|auth|session|sessions|profile|profiles|state|backup|backups|dump|dumps|log|logs|cache|browser-profile)([._-]|$)/i;
 const NEVER_RELEASE_COMPONENTS = new Set([
   '.env', '.receipt-collector', '.local-browsers', 'ms-playwright',
@@ -266,7 +267,7 @@ function git(sourceRoot, args, options = {}) {
 }
 
 function gitPathList(sourceRoot, sha) {
-  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, 'package.json', 'package-lock.json']);
+  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, 'package.json', 'package-lock.json']);
   return output.toString('utf8').split('\0').filter(Boolean).sort(comparePaths);
 }
 

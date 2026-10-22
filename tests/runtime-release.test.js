@@ -54,6 +54,7 @@ async function makeStage(root, sha, label) {
     ['src/cli.js', `export const cliRelease = '${label}';\n`],
     ['deploy/runtime-release.mjs', 'export const releaseTool = true;\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
+    ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0' } } }) + '\n'],
   ]);
@@ -229,10 +230,12 @@ test('sensitive dependency code and documentation are distinct from secret and r
   }
 });
 
-test('runtime allowlist admits only the pinned Troika migration runner under scripts', () => {
+test('runtime allowlist admits only the pinned production migration runners under scripts', () => {
   assert.equal(validateReleasePath('scripts'), 'scripts');
   assert.equal(validateReleasePath('scripts/migrate-prod-troika-024.mjs'), 'scripts/migrate-prod-troika-024.mjs');
+  assert.equal(validateReleasePath('scripts/migrate-prod-bank-only-025.mjs'), 'scripts/migrate-prod-bank-only-025.mjs');
   assert.throws(() => validateReleasePath('scripts/migrate-prod-only.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
+  assert.throws(() => validateReleasePath('scripts/arbitrary-migration.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
 });
 
 test('seal binds a synthetic release to one exact Git tree and verifies runtime dependencies', async t => {
@@ -249,6 +252,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     ['db/migrations/001_initial.sql', 'SELECT 1;\n'],
     ['db/migrations/011_bank_device_credentials.sql', 'CREATE TABLE device_credentials (id integer PRIMARY KEY);\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
+    ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
     ['deploy/runtime-release.mjs', (await fs.readFile(fileURLToPath(new URL('../deploy/runtime-release.mjs', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n')],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0', engines: { node: '>=22' } } } }) + '\n'],
@@ -261,6 +265,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   execFileSync('git', ['-C', source, 'init', '-q']);
   execFileSync('git', ['-C', source, 'config', 'user.name', 'Synthetic Test']);
   execFileSync('git', ['-C', source, 'config', 'user.email', 'synthetic@example.invalid']);
+  execFileSync('git', ['-C', source, 'config', 'core.autocrlf', 'false']);
   execFileSync('git', ['-C', source, 'add', '.']);
   execFileSync('git', ['-C', source, 'commit', '-qm', 'synthetic exact release']);
   const sha = execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -327,7 +332,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
   const manifest = JSON.parse(await fs.readFile(path.join(stage, 'release-manifest.json'), 'utf8'));
-  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs']) {
+  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
     assert.ok(manifest.files.some(entry => entry.path === relative && entry.gitBlob));
   }
 

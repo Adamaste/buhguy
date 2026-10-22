@@ -35,6 +35,7 @@ const integrationFiles = [
   'tests/certification-materialization-postgres.integration.test.js',
   'tests/certification-freshness-postgres.integration.test.js',
   'tests/migration-production-safety-postgres.integration.test.js',
+  'tests/migrate-prod-bank-only-025-postgres.integration.test.js',
   'tests/manual-troika-topup-expense-postgres.integration.test.js',
   'tests/bank-only-purchase-postgres.integration.test.js',
 ];
