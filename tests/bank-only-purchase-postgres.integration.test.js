@@ -3,12 +3,18 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from 'pg';
+import { runAccountingCatchup } from '../src/accounting-pipeline.js';
 import { loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
-import { runBankOnlyPurchaseCatchup, writeBankOnlyPurchase } from '../src/bank-only-purchase.js';
+import {
+  BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV,
+  readBankOnlyPurchaseLedgerOptIn,
+  runBankOnlyPurchaseCatchup,
+  writeBankOnlyPurchase,
+} from '../src/bank-only-purchase.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -332,6 +338,90 @@ integration('bank-only purchase uses ACTIVE ledger, defers receipt candidates, a
     assert.equal(privilege.can_select_new_source, true);
     assert.equal(privilege.can_insert_new_source, true);
     assert.equal(privilege.can_update_new_source, false);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration('disabling bank-only stops new writes while existing ledger, FNS-only, and matched accounting remain usable', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 6 });
+  try {
+    await pool.query(await readFile(new URL('../db/analytics/011_canonical_spending_analytics_v1.sql', import.meta.url), 'utf8'));
+    const now = new Date();
+    const bank = await createContext(pool, 'bank.example');
+    const occurredAt = new Date(Date.now() - 60000).toISOString();
+    const existingTx = await createTransaction(pool, bank, { amount: '83.41', occurredAt });
+    const existingExpense = await writeBankOnlyPurchase(pool, {
+      bankTransactionId: existingTx.bankTransactionId,
+      optIn: optIn(bank.scopeKey, now),
+    });
+    assert.equal(existingExpense.status, 'PERSISTED');
+
+    const disabled = readBankOnlyPurchaseLedgerOptIn({ [BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV]: 'false' });
+    assert.deepEqual(disabled, { enabled: false, reasonCode: 'DISABLED' });
+    const afterStopTx = await createTransaction(pool, bank, {
+      amount: '19.25', occurredAt: new Date(Date.parse(occurredAt) + 10000).toISOString(),
+    });
+    assert.equal((await writeBankOnlyPurchase(pool, {
+      bankTransactionId: afterStopTx.bankTransactionId, optIn: disabled,
+    })).status, 'DISABLED');
+    const stoppedCatchup = await runAccountingCatchup(pool, {
+      scopeKey: bank.scopeKey, bankOnlyPurchaseOptIn: disabled, now, logger: { info() {} },
+    });
+    assert.equal(stoppedCatchup.bankOnlyPurchases.status, 'DISABLED');
+    assert.equal(await activePurchaseLedgerCount(pool, bank), 1);
+    assert.deepEqual(await latestCanonicalPurchases(pool, bank), [
+      { purchase_id: existingExpense.eventId, amount: '83.41', currency: 'RUB' },
+    ]);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
+      WHERE scope_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [bank.scopeId])).rows[0].count, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_events
+      WHERE scope_id=$1 AND rule_code='BANK_ONLY_PURCHASE_V1'`, [bank.scopeId])).rows[0].count, 1);
+
+    const fnsOnly = await createContext(pool, 'fns-only.example');
+    const fnsReceipt = await createReceipt(pool, fnsOnly, { amount: '7.20', dateTime: occurredAt });
+    const fnsCatchup = await runAccountingCatchup(pool, {
+      scopeKey: fnsOnly.scopeKey, bankOnlyPurchaseOptIn: disabled, now, logger: { info() {} },
+    });
+    assert.equal(fnsCatchup.bankOnlyPurchases.status, 'DISABLED');
+    assert.equal(await activePurchaseLedgerCount(pool, fnsOnly), 1);
+    assert.deepEqual(await latestCanonicalPurchases(pool, fnsOnly), [
+      { purchase_id: Number((await pool.query(`SELECT event_id FROM business_event_evidence
+        WHERE receipt_id=$1 AND evidence_role='PURCHASE_EVIDENCE'`, [fnsReceipt])).rows[0].event_id), amount: '7.20', currency: 'RUB' },
+    ]);
+
+    const lateReceipt = await createReceipt(pool, bank, { amount: '83.41', dateTime: occurredAt, suffix: 'after-stop' });
+    await runAccountingCatchup(pool, {
+      scopeKey: bank.scopeKey, bankOnlyPurchaseOptIn: disabled, now, logger: { info() {} },
+    });
+    const from = new Date(Date.parse(occurredAt) - 300000).toISOString();
+    const to = new Date(Date.parse(occurredAt) + 300001).toISOString();
+    const matching = await loadBankReceiptMatching(pool, {
+      scopeKey: bank.scopeKey, from, to,
+      internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000,
+    });
+    const candidate = matching.matches.find(item => item.bank.bankTransactionId === existingTx.bankTransactionId
+      && item.receipt.receiptId === lateReceipt);
+    assert.ok(candidate);
+
+    await assert.rejects(() => persistMatchedPurchase(pool, {
+      scopeKey: bank.scopeKey, matchKey: candidate.matchKey, from, to,
+      internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000, failAfter: 'ledger',
+    }), error => error.code === 'INJECTED_WRITER_FAILURE');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [bank.scopeId])).rows[0].count, 0);
+    assert.equal(await activePurchaseLedgerCount(pool, bank), 2);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
+      WHERE scope_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [bank.scopeId])).rows[0].count, 1);
+
+    const matched = await persistMatchedPurchase(pool, {
+      scopeKey: bank.scopeKey, matchKey: candidate.matchKey, from, to,
+      internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.ok(['PERSISTED', 'REUSED'].includes(matched.outcome));
+    assert.equal(await activePurchaseLedgerCount(pool, bank), 1);
+    assert.deepEqual((await latestCanonicalPurchases(pool, bank)).map(row => row.amount), ['83.41']);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_entry_supersessions
+      WHERE scope_id=$1 AND reason_code='BANK_ONLY_PURCHASE_MATCHED_REFINEMENT'`, [bank.scopeId])).rows[0].count, 1);
   } finally {
     await pool.end();
   }
