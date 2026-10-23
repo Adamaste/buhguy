@@ -1,0 +1,136 @@
+name: Manual Linux runtime release seal and verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target_sha:
+        description: Type the exact allowlisted release SHA to run this build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  seal-verify:
+    if: >-
+      ${{ github.ref == 'refs/heads/master' &&
+          inputs.confirm_target_sha == 'c0a7959c26cde4b73a4b19efbe66e5e42336a502' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      TARGET_SHA: c0a7959c26cde4b73a4b19efbe66e5e42336a502
+    steps:
+      - name: Checkout the fixed target commit
+        uses: actions/checkout@v4
+        with:
+          ref: c0a7959c26cde4b73a4b19efbe66e5e42336a502
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Archive the exact runtime allowlist and install production dependencies
+        shell: bash
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          release_dir="$RUNNER_TEMP/buhguy-release-$TARGET_SHA"
+          mkdir -m 700 "$release_dir"
+          git archive --format=tar "$TARGET_SHA" \
+            bin src db/migrations \
+            deploy/runtime-release.mjs \
+            scripts/migrate-prod-troika-024.mjs \
+            scripts/migrate-prod-bank-only-025.mjs \
+            package.json package-lock.json \
+            | tar -xf - -C "$release_dir"
+          test -s "$release_dir/scripts/migrate-prod-troika-024.mjs"
+          test -s "$release_dir/scripts/migrate-prod-bank-only-025.mjs"
+          test -s "$release_dir/deploy/runtime-release.mjs"
+          test -s "$release_dir/package-lock.json"
+          cd "$release_dir"
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          printf 'RELEASE_DIR=%s\n' "$release_dir" >> "$GITHUB_ENV"
+
+      - name: Seal and independently verify the release
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          seal_result="$RUNNER_TEMP/buhguy-seal-result.json"
+          node "$RELEASE_DIR/deploy/runtime-release.mjs" seal \
+            --source-root "$GITHUB_WORKSPACE" \
+            --release-dir "$RELEASE_DIR" \
+            --sha "$TARGET_SHA" | tee "$seal_result"
+
+          manifest_sha256="$(sha256sum "$RELEASE_DIR/release-manifest.json" | awk '{print $1}')"
+          seal_manifest_sha256="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).manifestSha256)' "$seal_result")"
+          test "$manifest_sha256" = "$seal_manifest_sha256"
+
+          node --input-type=module - "$RELEASE_DIR/release-manifest.json" <<'NODE'
+          import fs from 'node:fs';
+          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const required = [
+            'scripts/migrate-prod-troika-024.mjs',
+            'scripts/migrate-prod-bank-only-025.mjs',
+          ];
+          for (const path of required) {
+            const entry = manifest.files.find((item) => item.path === path && item.type === 'file');
+            if (!entry || !/^[a-f0-9]{40}$/.test(entry.gitBlob)
+                || !/^[a-f0-9]{64}$/.test(entry.sha256) || entry.size <= 0) {
+              throw new Error(`Required runner missing or not content-verified: ${path}`);
+            }
+          }
+          NODE
+
+          node "$RELEASE_DIR/deploy/runtime-release.mjs" verify \
+            --release-dir "$RELEASE_DIR" \
+            --sha "$TARGET_SHA" \
+            --manifest-sha256 "$manifest_sha256"
+          printf 'manifest_sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Package archive and write verification report
+        id: package
+        shell: bash
+        env:
+          MANIFEST_SHA256: ${{ steps.seal.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/buhguy-runtime-$TARGET_SHA.tar.gz"
+          tar -C "$RELEASE_DIR" -czf "$archive" .
+          tar -tzf "$archive" | grep -Fxq './scripts/migrate-prod-troika-024.mjs'
+          tar -tzf "$archive" | grep -Fxq './scripts/migrate-prod-bank-only-025.mjs'
+          tar -tzf "$archive" | grep -Fxq './release-manifest.json'
+
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          archive_bytes="$(stat -c '%s' "$archive")"
+          report="$RUNNER_TEMP/buhguy-runtime-release-report.txt"
+          {
+            printf 'target_sha=%s\n' "$TARGET_SHA"
+            printf 'manifest_sha256=%s\n' "$MANIFEST_SHA256"
+            printf 'archive_sha256=%s\n' "$archive_sha256"
+            printf 'archive_bytes=%s\n' "$archive_bytes"
+            printf 'runner_024=present-and-manifest-verified\n'
+            printf 'runner_025=present-and-manifest-verified\n'
+            printf 'seal_verify=PASS\n'
+          } > "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          printf 'ARCHIVE_PATH=%s\n' "$archive" >> "$GITHUB_ENV"
+          printf 'REPORT_PATH=%s\n' "$report" >> "$GITHUB_ENV"
+
+      - name: Upload only the sealed release and hash report
+        uses: actions/upload-artifact@v4
+        with:
+          name: buhguy-runtime-sealed-c0a7959c26cde4b73a4b19efbe66e5e42336a502
+          path: |
+            ${{ runner.temp }}/buhguy-runtime-c0a7959c26cde4b73a4b19efbe66e5e42336a502.tar.gz
+            ${{ runner.temp }}/buhguy-runtime-release-report.txt
+          if-no-files-found: error
+          retention-days: 7
