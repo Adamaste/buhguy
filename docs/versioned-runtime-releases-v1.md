@@ -9,7 +9,7 @@
 - `release-manifest.json` binds the full target SHA to the sorted runtime file inventory, Git blob identity for repository files, SHA-256, byte size, and immutable POSIX mode. Every verify/select command also requires the expected manifest SHA-256 from the reviewed artifact record.
 - Sealing checks repository file modes against the exact Git tree as well as file contents; executable flags cannot be introduced or lost during staging.
 - Release files and directories are read-only (`0444`/`0555`); executable bits from Git/runtime dependencies are retained as `0555`. Symlinks must resolve inside the release. Hardlinks, special files, unexpected paths, traversal, sensitive names, writable files, missing files, or hash/mode drift stop the operation.
-- The artifact contains `bin/`, `src/`, `db/migrations/`, `package.json`, `package-lock.json`, `node_modules/`, this verifier, and the single explicitly allowlisted `scripts/migrate-prod-troika-024.mjs` runner. No other `scripts/` content is allowed. It excludes `.receipt-collector`, `.env`, tokens/cookies, browser profiles and binaries, logs, backups, PostgreSQL files, Android, tests, and local caches. Playwright's package is included; browser downloads are not.
+- The artifact contains `bin/`, `src/`, `db/migrations/`, `package.json`, `package-lock.json`, `node_modules/`, this verifier, and the two explicitly allowlisted migration runners: `scripts/migrate-prod-troika-024.mjs` and `scripts/migrate-prod-bank-only-025.mjs`. No other `scripts/` content is allowed. Sealing checks both runner paths against the target Git tree and fails with `RUNTIME_FILE_MISSING` if either is absent from the staged archive; both files are recorded with Git blob and SHA-256 in the manifest. It excludes `.receipt-collector`, `.env`, tokens/cookies, browser profiles and binaries, logs, backups, PostgreSQL files, Android, tests, and local caches. Playwright's package is included; browser downloads are not.
 
 ## Preserve the legacy working directory
 
@@ -28,8 +28,14 @@ SHA=<full-40-character-commit-sha>
 git worktree add --detach "$WORKTREE" "$SHA"
 mkdir -m 0755 "$STAGE"
 git -C "$WORKTREE" archive --format=tar "$SHA" \
-  bin src db/migrations deploy/runtime-release.mjs scripts/migrate-prod-troika-024.mjs package.json package-lock.json \
+  bin src db/migrations deploy/runtime-release.mjs scripts/migrate-prod-troika-024.mjs scripts/migrate-prod-bank-only-025.mjs package.json package-lock.json \
   | tar -xf - -C "$STAGE"
+for required in scripts/migrate-prod-troika-024.mjs scripts/migrate-prod-bank-only-025.mjs; do
+  if [ ! -f "$STAGE/$required" ]; then
+    printf 'required runtime runner missing from git archive: %s\n' "$required" >&2
+    exit 1
+  fi
+done
 (cd "$STAGE" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts)
 node "$STAGE/deploy/runtime-release.mjs" seal \
   --source-root "$WORKTREE" --release-dir "$STAGE" --sha "$SHA"

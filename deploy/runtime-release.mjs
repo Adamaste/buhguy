@@ -345,6 +345,9 @@ export async function sealRelease({ sourceRoot, releaseDir, sha, fsApi = fs }) {
   const expectedCodePaths = gitPathList(sourceRoot, sha);
   const trustedSourcePaths = new Set(expectedCodePaths.filter(relative => CODE_ROOTS.some(prefix => relative.startsWith(prefix)) && SOURCE_CODE_EXTENSIONS.has(path.extname(relative).toLowerCase())));
   const inventory = await walkForSeal(releaseDir, fsApi, trustedSourcePaths);
+  for (const required of [TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER]) {
+    if (!expectedCodePaths.includes(required) || !inventory.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
+  }
   const stageCodePaths = inventory.files.filter(entry => isGitRuntimeFile(entry.path)).map(entry => entry.path).sort((a, b) => a.localeCompare(b, 'en'));
   if (stageCodePaths.length !== expectedCodePaths.length || stageCodePaths.some((p, i) => p !== expectedCodePaths[i])) fail('GIT_TREE_CONTENT_MISMATCH');
   for (const entry of inventory.files.filter(item => isGitRuntimeFile(item.path))) {

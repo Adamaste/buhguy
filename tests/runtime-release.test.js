@@ -276,6 +276,15 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.copyFile(from, to);
   }
+  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
+    const stagedPath = path.join(stage, ...relative.split('/'));
+    await fs.unlink(stagedPath);
+    await assert.rejects(
+      () => sealRelease({ sourceRoot: source, releaseDir: stage, sha }),
+      error => error.code === 'RUNTIME_FILE_MISSING',
+    );
+    await fs.copyFile(path.join(source, ...relative.split('/')), stagedPath);
+  }
   const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
   const npm = spawnSync(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--offline'], { cwd: stage, encoding: 'utf8', stdio: 'ignore', timeout: 60_000 });
   assert.equal(npm.status, 0, `synthetic npm ci failed (${npm.error?.code ?? npm.status})`);
