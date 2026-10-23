@@ -105,9 +105,9 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/buhguy-runtime-$TARGET_SHA.tar.gz"
           tar -C "$RELEASE_DIR" -czf "$archive" .
-          tar -tzf "$archive" | grep -Fxq './scripts/migrate-prod-troika-024.mjs'
-          tar -tzf "$archive" | grep -Fxq './scripts/migrate-prod-bank-only-025.mjs'
-          tar -tzf "$archive" | grep -Fxq './release-manifest.json'
+          tar -tzf "$archive" | grep -Fx './scripts/migrate-prod-troika-024.mjs' >/dev/null
+          tar -tzf "$archive" | grep -Fx './scripts/migrate-prod-bank-only-025.mjs' >/dev/null
+          tar -tzf "$archive" | grep -Fx './release-manifest.json' >/dev/null
 
           archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
           archive_bytes="$(stat -c '%s' "$archive")"
