@@ -38,7 +38,7 @@ test('authenticated connector invocation returns curated 100/20/80 decimal JSON'
       confirmedPurchases: [{ purchase_id: 1, amount: '100.00', currency: 'RUB', purchased_at: '2026-04-10T10:00:00Z', rule_code: 'PURCHASE', rule_version: 'v1', raw: 'drop' }],
       confirmedReturns: [{ return_id: 2, return_amount: '20.00', currency: 'RUB', returned_at: '2026-04-11T10:00:00Z', raw: 'drop' }],
       category: [], person: [], unresolved: { blockedExposure: [{ raw: 'drop' }], unattributedPersonRows: [] },
-      bankOnlyIncomplete: { status: 'EXCLUDED_FROM_CERTIFIED_ACQUISITIONS', reasonCode: 'BANK_ONLY_OR_UNMATCHED_NOT_PROVEN_PURCHASE' },
+      bankOnlyIncomplete: { status: 'PARTIALLY_INCLUDED', reasonCode: 'UNPROVEN_OR_OUT_OF_COHORT_BANK_MOVEMENTS_REMAIN_EXCLUDED' },
       limitations: ['BANK_ONLY_OR_UNMATCHED_PURCHASES_REMAIN_INCOMPLETE'],
       pagination: { limit: 10, offset: 0, purchases: { hasMore: false }, returns: { hasMore: false } },
     },

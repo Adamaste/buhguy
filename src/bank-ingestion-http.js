@@ -2,6 +2,7 @@ import http from 'node:http';
 import { authenticateBankDevice } from './bank-device-auth.js';
 import { createBankIngestionHandler, resolveBankObservationAccountingScope, validateBankEventInput } from './bank-ingestion.js';
 import { matchedPurchaseReconciliationWindow, readMatchedPurchaseReconciliationOptIn, runBoundedMatchedPurchaseReconciliation } from './matched-purchase-reconciliation.js';
+import { readBankOnlyPurchaseLedgerOptIn, writeBankOnlyPurchase } from './bank-only-purchase.js';
 
 const DEFAULT_BODY_LIMIT = 32 * 1024;
 const SAFE_RECONCILIATION_STATUS = new Set(['COMPLETED', 'REVIEW_REQUIRED', 'BLOCKED', 'ERROR', 'DISABLED']);
@@ -11,6 +12,13 @@ function safeReconciliationResult(value) {
   const status = SAFE_RECONCILIATION_STATUS.has(value?.status) ? value.status : 'ERROR';
   const reasonCode = typeof value?.reasonCode === 'string' && SAFE_CODE.test(value.reasonCode) ? value.reasonCode : null;
   return { status, ...(reasonCode ? { reasonCode } : {}) };
+}
+
+function safeBankOnlyPurchaseResult(value) {
+  const status = new Set(['PERSISTED', 'REUSED', 'DISABLED', 'BLOCKED']).has(value?.status) ? value.status : 'ERROR';
+  const reasonCode = typeof value?.reasonCode === 'string' && SAFE_CODE.test(value.reasonCode) ? value.reasonCode : null;
+  const diagnosticCode = typeof value?.diagnosticCode === 'string' && SAFE_CODE.test(value.diagnosticCode) ? value.diagnosticCode : null;
+  return { status, ...(reasonCode ? { reasonCode } : {}), ...(diagnosticCode ? { diagnosticCode } : {}) };
 }
 
 function logSafely(logger, level, event, fields) {
@@ -55,6 +63,8 @@ export function createBankIngestionServer({
   bodyLimit = DEFAULT_BODY_LIMIT,
   matchedPurchaseCanary = readMatchedPurchaseReconciliationOptIn(),
   reconcileMatchedPurchases = runBoundedMatchedPurchaseReconciliation,
+  bankOnlyPurchaseOptIn = readBankOnlyPurchaseLedgerOptIn(),
+  accountBankOnlyPurchase = writeBankOnlyPurchase,
   now = () => new Date(),
 } = {}) {
   const handler = createBankIngestionHandler({ pool });
@@ -107,6 +117,23 @@ export function createBankIngestionServer({
         responseResult = { ...result, reconciliation };
         const level = reconciliation.status === 'ERROR' ? 'error' : reconciliation.status === 'BLOCKED' ? 'warn' : 'info';
         logSafely(logger, level, 'matched_purchase_reconciliation_after_ingestion', reconciliation);
+      }
+      if (bankOnlyPurchaseOptIn?.enabled === true && result.status === 'created') {
+        let bankOnlyPurchase = { status: 'BLOCKED', reasonCode: 'BANK_TRANSACTION_ID_MISSING' };
+        try {
+          bankOnlyPurchase = safeBankOnlyPurchaseResult(await accountBankOnlyPurchase(pool, {
+            bankTransactionId: result.transactionId,
+            optIn: bankOnlyPurchaseOptIn,
+            now: now(),
+          }));
+        } catch (error) {
+          bankOnlyPurchase = {
+            status: 'ERROR',
+            reasonCode: typeof error?.code === 'string' && SAFE_CODE.test(error.code) ? error.code : 'BANK_ONLY_WRITE_FAILED',
+          };
+        }
+        responseResult = { ...responseResult, bankOnlyPurchase };
+        logSafely(logger, bankOnlyPurchase.status === 'ERROR' ? 'error' : 'info', 'bank_only_purchase_after_ingestion', bankOnlyPurchase);
       }
       if (result.status === 'created') return writeJson(response, 201, responseResult);
       if (result.status === 'duplicate') return writeJson(response, 200, responseResult);

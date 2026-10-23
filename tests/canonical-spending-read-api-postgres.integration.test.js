@@ -93,7 +93,7 @@ integration('disposable PostgreSQL query is snapshot-qualified and write-free', 
     }
     assert.equal(new Set(result.data.confirmedPurchases.map((row) => row.purchase_id)).size, result.data.confirmedPurchases.length);
     assert.ok(result.data.confirmedReturns.every((row) => typeof row.return_amount === 'string'));
-    assert.equal(result.data.bankOnlyIncomplete.status, 'EXCLUDED_FROM_CERTIFIED_ACQUISITIONS');
+    assert.equal(result.data.bankOnlyIncomplete.status, 'PARTIALLY_INCLUDED');
     assert.ok(result.data.category.every((row) => row.currency && row.categoryCode !== undefined));
     assert.ok(result.data.person.every((row) => row.currency && 'attributionStatus' in row));
     assert.match(result.snapshot.sourceStateKey, /^[0-9a-f]{64}$/);

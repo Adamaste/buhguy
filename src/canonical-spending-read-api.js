@@ -170,7 +170,7 @@ export async function queryCanonicalSpending(pool, {
         blockedExposureReasonCode: 'PERIOD_FILTERED_BLOCKED_FACT_GRAIN_UNAVAILABLE',
         unattributedPersonRows: person.rows.filter((row) => row.person_id === null).map((row) => ({ currency: row.currency, gross: String(row.gross_spend), returns: String(row.confirmed_returns), net: String(row.net_spend) })),
       },
-      bankOnlyIncomplete: { status: 'EXCLUDED_FROM_CERTIFIED_ACQUISITIONS', reasonCode: 'BANK_ONLY_OR_UNMATCHED_NOT_PROVEN_PURCHASE' },
+      bankOnlyIncomplete: { status: 'PARTIALLY_INCLUDED', reasonCode: 'UNPROVEN_OR_OUT_OF_COHORT_BANK_MOVEMENTS_REMAIN_EXCLUDED' },
       limitations: [...LIMITATIONS],
       pagination: {
         limit: pageSize,

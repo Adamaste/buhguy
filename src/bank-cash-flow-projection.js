@@ -212,9 +212,13 @@ function normalizeBankOccurredAfter(value) {
   return new Date(Date.parse(value)).toISOString();
 }
 
-export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null, bankIngestedAfter = null, bankOccurredAfter = null } = {}) {
+export async function loadBankCashFlowProjection(pool, { scopeKey = null, from = null, to = null, bankIngestedAfter = null, bankOccurredAfter = null, bankTransactionIds = null } = {}) {
   const ingestedAfter = normalizeBankIngestedAfter(bankIngestedAfter);
   const occurredAfter = normalizeBankOccurredAfter(bankOccurredAfter);
+  const transactionIds = bankTransactionIds == null ? null : [...new Set(bankTransactionIds.map(Number))];
+  if (transactionIds?.some((id) => !Number.isSafeInteger(id) || id < 1)) {
+    throw Object.assign(new Error('bank transaction filter is invalid'), { code: 'BANK_TRANSACTION_FILTER_INVALID' });
+  }
   const result = await pool.query(`
     WITH source_scopes AS (
       SELECT bs.id AS bank_source_id,
@@ -290,6 +294,7 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
       AND ($3::timestamptz IS NULL OR bt.occurred_at < $3::timestamptz)
       AND ($4::timestamptz IS NULL OR eo.created_at >= $4::timestamptz)
       AND ($5::timestamptz IS NULL OR bt.occurred_at >= $5::timestamptz)
-    ORDER BY bt.id`, [scopeKey, from, to, ingestedAfter, occurredAfter]);
+      AND ($6::bigint[] IS NULL OR bt.id=ANY($6::bigint[]))
+    ORDER BY bt.id`, [scopeKey, from, to, ingestedAfter, occurredAfter, transactionIds]);
   return projectBankCashFlowTransactions(result.rows, { scopeKey });
 }

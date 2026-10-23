@@ -2,6 +2,7 @@ import { fiscalContentFingerprint } from './fiscal-evidence.js';
 import { GRAPH_MODEL_VERSION } from './business-event-graph.js';
 import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 import { STANDALONE_PURCHASE_RULE, STANDALONE_PURCHASE_VERSION } from './standalone-purchase.js';
+import { BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_RULE, isValidBankOnlyPurchaseEvidence } from './bank-only-purchase-contract.js';
 
 export const CERTIFICATION_MODEL_VERSION = 'reconciliation-certification-v1';
 export const CERTIFICATION_RULE_VERSION = 'certification-rules-v1';
@@ -72,6 +73,10 @@ async function sourceState(pool, scopeId) {
   const manualTroikaReceiptLinks = (await pool.query(`SELECT id,scope_id,manual_troika_topup_expense_id,receipt_id,
       business_event_evidence_id,provenance,payment_stage,confirmation_basis,reason,semantic_key
     FROM manual_troika_topup_receipt_links WHERE scope_id=$1 ORDER BY id`, [scopeId])).rows;
+  const bankOnlyEvidence = (await pool.query(`SELECT id,scope_id,business_event_id,bank_receipt_match_id,
+      bank_transaction_id,financial_account_id,enrichment_key,evidence_role,rule_version,semantic_key,
+      evidence_snapshot,evidence_sha256
+    FROM business_event_bank_evidence WHERE scope_id=$1 AND evidence_role=$2 ORDER BY id`, [scopeId, BANK_ONLY_PURCHASE_EVIDENCE_ROLE])).rows;
   return fiscalContentFingerprint({
     scopeId: Number(scopeId),
     certificationModelVersion: CERTIFICATION_MODEL_VERSION,
@@ -82,6 +87,7 @@ async function sourceState(pool, scopeId) {
     supersessions,
     manualTroikaTopups,
     manualTroikaReceiptLinks,
+    ...(bankOnlyEvidence.length ? { bankOnlyEvidence } : {}),
   });
 }
 
@@ -98,7 +104,15 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
       e.derivation_rule,e.derivation_version,e.derivation_status,e.certification_status,e.origin,e.reason_code,e.description,
       b.event_type,b.resolution_status AS event_resolution_status,b.origin AS event_origin,
       b.graph_model_version AS event_graph_model_version,b.rule_code AS event_rule_code,b.rule_version AS event_rule_version,
-      b.amount AS event_amount,m.id AS manual_troika_topup_id,m.financial_account_id AS manual_troika_financial_account_id,
+      b.amount AS event_amount,event_scope.scope_key AS event_scope_key,
+      bank_only.id AS bank_only_evidence_id,bank_only.scope_id AS bank_only_scope_id,
+      bank_only.business_event_id AS bank_only_business_event_id,bank_only.bank_receipt_match_id AS bank_only_match_id,
+      bank_only.bank_transaction_id AS bank_only_bank_transaction_id,
+      bank_only.financial_account_id AS bank_only_financial_account_id,
+      bank_only.enrichment_key AS bank_only_enrichment_key,bank_only.evidence_role AS bank_only_evidence_role,
+      bank_only.rule_version AS bank_only_rule_version,bank_only.semantic_key AS bank_only_semantic_key,
+      bank_only.evidence_snapshot AS bank_only_evidence_snapshot,bank_only.evidence_sha256 AS bank_only_evidence_sha256,
+      m.id AS manual_troika_topup_id,m.financial_account_id AS manual_troika_financial_account_id,
       m.person_id AS manual_troika_person_id,m.provider AS manual_troika_provider,m.category_code AS manual_troika_category_code,
       m.amount AS manual_troika_amount,m.currency AS manual_troika_currency,m.provenance AS manual_troika_provenance,
       EXISTS (SELECT 1 FROM manual_troika_topup_receipt_links ml
@@ -111,6 +125,9 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
           AND ev.rule_code='MANUAL_TROIKA_TOPUP_EXPENSE_V1' AND ev.rule_version='v1'
       ) AS manual_troika_receipt_confirmed
     FROM ledger_entries e JOIN business_events b ON b.id=e.source_event_id
+    JOIN accounting_scopes event_scope ON event_scope.id=b.scope_id
+    LEFT JOIN business_event_bank_evidence bank_only ON bank_only.scope_id=e.scope_id
+      AND bank_only.business_event_id=e.source_event_id AND bank_only.evidence_role='BANK_ONLY_PURCHASE'
     LEFT JOIN manual_troika_topup_expenses m ON m.scope_id=e.scope_id AND m.ledger_entry_id=e.id
     WHERE e.scope_id=$1
       AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY e.id`, params)).rows;
@@ -122,6 +139,16 @@ async function loadInputs(pool, scopeKey, eventIds = null) {
       l.normalization_version,l.link_role,l.semantic_key,l.bank_receipt_match_id,l.bank_transaction_id,ev.event_id
     FROM ledger_source_links l JOIN ledger_entries e ON e.id=l.ledger_entry_id LEFT JOIN business_event_evidence ev ON ev.id=l.graph_evidence_id
     WHERE e.scope_id=$1 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)${filter} ORDER BY l.id`, params)).rows;
+  for (const entry of entries) {
+    entry.bank_only_evidence = entry.bank_only_evidence_id == null ? null : {
+      id: Number(entry.bank_only_evidence_id), scope_id: Number(entry.bank_only_scope_id),
+      business_event_id: Number(entry.bank_only_business_event_id), bank_receipt_match_id: entry.bank_only_match_id,
+      bank_transaction_id: Number(entry.bank_only_bank_transaction_id), financial_account_id: Number(entry.bank_only_financial_account_id),
+      enrichment_key: entry.bank_only_enrichment_key, evidence_role: entry.bank_only_evidence_role,
+      rule_version: entry.bank_only_rule_version, semantic_key: entry.bank_only_semantic_key,
+      evidence_snapshot: entry.bank_only_evidence_snapshot, evidence_sha256: entry.bank_only_evidence_sha256,
+    };
+  }
   return { scope, entries, postings, links };
 }
 
@@ -300,7 +327,38 @@ export function deriveCertificationFacts({ entries, postings, links, sourceState
       continue;
     }
     if (entry.derivation_status !== 'READY') continue;
-    if (entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE) {
+    if (entry.derivation_rule === BANK_ONLY_PURCHASE_LEDGER_RULE) {
+      const expectedAmount = moneyMinorUnits(entry.event_amount);
+      const evidenceValid = isValidBankOnlyPurchaseEvidence({
+        id: Number(entry.source_event_id), scope_id: Number(entry.scope_id), scope_key: entry.event_scope_key,
+        event_type: entry.event_type, resolution_status: entry.event_resolution_status,
+        origin: entry.event_origin, graph_model_version: entry.event_graph_model_version,
+        rule_code: entry.event_rule_code, rule_version: entry.event_rule_version,
+        amount: entry.event_amount == null ? null : String(entry.event_amount), currency: entry.currency,
+      }, entry.bank_only_evidence);
+      const entryLinks = linkByEntry.get(Number(entry.id)) ?? [];
+      const directLinks = entryLinks.filter((item) => item.link_role === BANK_ONLY_PURCHASE_EVIDENCE_ROLE);
+      const accountId = Number(entry.bank_only_evidence?.financial_account_id);
+      const validPostings = entryPostings.length === 2
+        && entryPostings.some((posting) => posting.account_code === 'UNCLASSIFIED_ACQUISITION'
+          && posting.account_type === 'CONTROL' && posting.financial_account_id == null
+          && posting.currency === 'RUB' && moneyMinorUnits(posting.debit) === expectedAmount && moneyMinorUnits(posting.credit) === 0n)
+        && entryPostings.some((posting) => posting.account_code === `FINANCIAL_ACCOUNT:${accountId}`
+          && posting.account_type === 'ASSET' && Number(posting.financial_account_id) === accountId
+          && posting.currency === 'RUB' && moneyMinorUnits(posting.debit) === 0n && moneyMinorUnits(posting.credit) === expectedAmount);
+      const validLink = directLinks.length === 1
+        && Number(directLinks[0].business_event_id) === Number(entry.source_event_id)
+        && Number(directLinks[0].bank_transaction_id) === Number(entry.bank_only_evidence?.bank_transaction_id)
+        && directLinks[0].bank_receipt_match_id == null
+        && directLinks[0].graph_evidence_id == null && directLinks[0].receipt_id == null;
+      if (!evidenceValid || !validPostings || !validLink || expectedAmount <= 0n || entry.currency !== 'RUB'
+        || entry.origin !== 'SYSTEM_DERIVED' || entry.reason_code !== 'PROOF_QUALIFIED_BANK_PURCHASE') {
+        add(entry, 'BLOCKED_EXPOSURE', 'BUSINESS_CERTIFICATION', 'BLOCKED', expectedAmount, 'BANK_ONLY_PURCHASE_PROOF_INVALID');
+        continue;
+      }
+      add(entry, 'CONFIRMED_ACQUISITION_VALUE', 'BUSINESS_CERTIFICATION', 'CERTIFIED', expectedAmount, 'PROOF_QUALIFIED_BANK_PURCHASE');
+      add(entry, 'ACQUISITION_CLASSIFICATION', 'CLASSIFICATION_CERTIFICATION', 'PROVISIONAL', expectedAmount, 'UNCLASSIFIED_ACQUISITION');
+    } else if (entry.derivation_rule === MANUAL_TROIKA_TOPUP_RULE) {
       const expectedAmount = moneyMinorUnits(entry.event_amount);
       const accountId = Number(entry.manual_troika_financial_account_id);
       const validPostings = entryPostings.length === 2
