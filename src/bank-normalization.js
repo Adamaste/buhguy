@@ -1,5 +1,5 @@
-export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v2';
-export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v6';
+export const YANDEX_BANK_NORMALIZATION_VERSION = 'yandex-bank-normalizer-v3';
+export const SBER_BANK_NORMALIZATION_VERSION = 'sber-bank-normalizer-v7';
 export const TBANK_BANK_NORMALIZATION_VERSION = 'tbank-bank-normalizer-v2';
 export const TBANK_DEBIT_PURCHASE_NORMALIZATION_VERSION = 'tbank-debit-purchase-normalizer-v1';
 export const ALFA_BANK_NORMALIZATION_VERSION = 'alfa-bank-normalizer-v4';
@@ -32,6 +32,12 @@ const ALFA_F5_TRAILING_SECTION = /^\d+\s+[\p{L}\p{M}\d.'-]+\s+\d+:\d+$/u;
 const SBER_PURCHASE_BODY_PATTERN = /^(\d+) ₽ — Баланс: (\d+,\d{2}) ₽ Счёт карты МИР •• (\d{4})$/u;
 const YANDEX_PAY_TITLE_PATTERN = /^Карта [\p{L}\p{M} .'-]+$/u;
 const YANDEX_PAY_BODY_PATTERN = /^Перевод [\p{L}\p{M} .'-]+\.\s+(\d+\.\d{2})\s+RUB\.\s+[\p{L}\p{M} .'-]+\.\s+\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}\.\s+Доступно\s+\d+\.\d{2}\s+RUB$/u;
+const NON_MERCHANT_TITLE_PATTERN = /(?:^|[^\p{L}\p{N}])(?:покупка|оплата|перевод|пополнение|возврат|отмена|отклонено|отказ|недостаточно средств|сч[её]т|карта|баланс|доступно|руб(?:ль|ля|лей)?|RUB)(?=$|[^\p{L}\p{N}])|₽|••/iu;
+const NON_MERCHANT_TITLE_VALUES = new Set([
+  'покупка', 'оплата', 'перевод', 'входящий перевод', 'исходящий перевод',
+  'пополнение', 'возврат', 'сбербанк', 'сбер', 'яндекс банк', 'альфа банк',
+  'альфа-банк', 'т-банк', 'тинькофф', 'банк',
+]);
 
 function normalizeWhitespace(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
@@ -41,6 +47,17 @@ function normalizedAmount(value) {
   const match = normalizeWhitespace(value).match(RUB_AMOUNT);
   if (!match) return null;
   return `${match[1]}.${match[2]}`;
+}
+
+function merchantTitle(value) {
+  if (typeof value !== 'string') return null;
+  const merchant = value.trim();
+  const normalized = normalizeWhitespace(merchant);
+  if (normalized.length < 2 || normalized.length > 120) return null;
+  if (!/[\p{L}\p{N}]/u.test(normalized)) return null;
+  if (NON_MERCHANT_TITLE_VALUES.has(normalized.toLocaleLowerCase('ru-RU'))
+      || NON_MERCHANT_TITLE_PATTERN.test(normalized)) return null;
+  return merchant;
 }
 
 function occurredAt(value) {
@@ -78,6 +95,11 @@ export function normalizeYandexBankEvent(input) {
     || body.startsWith('Покупка на ') || body.startsWith('Пополнение на ');
   const amount = normalizedAmount(body.slice(isPurchase ? 'Покупка на '.length : isIncoming ? 'Пополнение на '.length : 0));
   const hasCurrency = /\bRUB\b/i.test(body);
+  const metadata = input.ingestionMetadata ?? {};
+  const isConfirmedYandexBankNotification = metadata.adapter === ANDROID_NOTIFICATION_ADAPTER
+    && metadata.schemaVersion === '1'
+    && metadata.sourcePackage === YANDEX_PAY_SOURCE_PACKAGE
+    && metadata.notificationChannel === YANDEX_PAY_NOTIFICATION_CHANNEL;
 
   if (!isPurchase && !isIncoming) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker });
   if (!amount || !occurred || !hasCurrency) return incomplete({ occurred, amount, hasCurrency, hasFinancialMarker: true });
@@ -88,7 +110,7 @@ export function normalizeYandexBankEvent(input) {
     amount,
     currency: 'RUB',
     direction: isPurchase ? 'DEBIT' : 'CREDIT',
-    merchant: null,
+    merchant: isPurchase && isConfirmedYandexBankNotification ? merchantTitle(payload.title) : null,
     counterparty: null,
     accountReference: null,
     accountReferenceKind: null,
@@ -366,11 +388,12 @@ export function normalizeSberBankEvent(input) {
     if (!purchaseMatch || !occurred) {
       return incompleteSber({ occurred, hasIncomingMarker: true, hasCurrency: body.includes('₽'), amount: null });
     }
-    return normalizeSberPurchase({
+    const normalized = normalizeSberPurchase({
       occurred,
       amount: `${purchaseMatch[1]}.00`,
       accountReference: purchaseMatch[3],
     });
+    return { ...normalized, merchant: merchantTitle(title.slice('Покупка '.length)) };
   }
 
   const hasIncomingTitle = SBER_INCOMING_TITLE_PATTERN.test(title);

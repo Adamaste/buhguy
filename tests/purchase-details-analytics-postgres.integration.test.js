@@ -26,6 +26,8 @@ test('purchase details views are deterministic, reconciled and read-only in a cl
       WHERE table_schema='public' AND table_name IN ('analytics_purchases','analytics_purchase_items')
       ORDER BY table_name, ordinal_position`)).rows;
     assert.ok(columns.some((row) => row.table_name === 'analytics_purchases' && row.column_name === 'amount'));
+    assert.ok(columns.some((row) => row.table_name === 'analytics_purchases' && row.column_name === 'bank_merchant'));
+    assert.ok(columns.some((row) => row.table_name === 'analytics_purchases' && row.column_name === 'merchant_display_source'));
     assert.ok(columns.some((row) => row.table_name === 'analytics_purchase_items' && row.column_name === 'item_sum'));
     assert.ok(!columns.some((row) => /raw|payload|token|cookie|fiscal_sign|fns_id/i.test(row.column_name)));
 
@@ -51,6 +53,66 @@ test('purchase details views are deterministic, reconciled and read-only in a cl
       GROUP BY p.purchase_id,p.amount`)).rows;
     assert.equal(reconciliation.length, purchases.length);
     assert.equal(reconciliation.filter((row) => row.result === 'MISMATCH').length, 0);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const purchase = (await client.query(`SELECT purchase_id, scope_id, receipt_id,
+          purchased_at, amount, currency
+        FROM analytics_purchases WHERE amount=32380.00 AND status='CERTIFIED'
+        ORDER BY purchase_id LIMIT 1`)).rows[0];
+      assert.ok(purchase?.receipt_id);
+      const account = (await client.query(`INSERT INTO financial_accounts
+        (scope_id, institution, provider, display_name, currency)
+        VALUES ($1,'Synthetic Bank','synthetic.merchant-test','Synthetic bank account',$2)
+        RETURNING id`, [purchase.scope_id, purchase.currency])).rows[0];
+      const source = (await client.query(`INSERT INTO bank_sources
+        (source_key, source_type, display_name)
+        VALUES ('synthetic-merchant-view-source','ANDROID_NOTIFICATION','Synthetic merchant view source')
+        RETURNING id`)).rows[0];
+      const observation = (await client.query(`INSERT INTO bank_event_observations
+        (bank_source_id, source_event_id, dedup_key, observed_at, event_time,
+         payload, payload_sha256, ingestion_metadata)
+        VALUES ($1,'synthetic-merchant-view-event',repeat('c',64),NOW(),$2,
+          '{"title":"Synthetic bank merchant"}'::jsonb,repeat('d',64),
+          '{"adapter":"android-notification","provider":"ru.sberbankmobile","schemaVersion":"1"}'::jsonb)
+        RETURNING id`, [source.id, purchase.purchased_at])).rows[0];
+      const transaction = (await client.query(`INSERT INTO bank_transactions
+        (observation_id, occurred_at, amount, currency, direction, merchant,
+         normalization_status, normalization_version, evidence_quality, event_type)
+        VALUES ($1,$2,$3,$4,'DEBIT','Synthetic bank merchant','READY',
+          'sber-bank-normalizer-v7','EXACT','PURCHASE') RETURNING id`,
+      [observation.id, purchase.purchased_at, purchase.amount, purchase.currency])).rows[0];
+      const match = (await client.query(`INSERT INTO bank_receipt_matches
+        (scope_id, bank_transaction_id, receipt_id, financial_account_id,
+         matcher_version, match_key, bank_ledger_key, bank_candidate_key,
+         bank_journal_key, receipt_candidate_key, receipt_normalization_version,
+         receipt_normalized_content_sha256, amount, currency, bank_occurred_at,
+         receipt_date_time, time_delta_seconds, relationship_type, reason_code)
+        VALUES ($1,$2,$3,$4,'synthetic-matcher-test',repeat('1',64),repeat('2',64),
+          repeat('3',64),repeat('4',64),repeat('5',64),'synthetic-fiscal-v1',
+          repeat('6',64),$5,$6,$7,$7,0,'MATCHED_PURCHASE','SYNTHETIC_TEST')
+        RETURNING id`, [purchase.scope_id, transaction.id, purchase.receipt_id,
+        account.id, purchase.amount, purchase.currency, purchase.purchased_at])).rows[0];
+      await client.query(`INSERT INTO business_event_bank_evidence
+        (scope_id, business_event_id, bank_receipt_match_id, enrichment_key,
+         evidence_role, rule_version, semantic_key)
+        VALUES ($1,$2,$3,repeat('7',64),'BANK_PURCHASE_MATCH',
+          'synthetic-matcher-test',repeat('8',64))`,
+      [purchase.scope_id, purchase.purchase_id, match.id]);
+      const projected = (await client.query(`SELECT seller, bank_merchant,
+          bank_merchant_source, merchant_display, merchant_display_source
+        FROM analytics_purchases WHERE purchase_id=$1`, [purchase.purchase_id])).rows;
+      assert.equal(projected.length, 1);
+      assert.equal(projected[0].seller, 'Synthetic Merchant');
+      assert.equal(projected[0].bank_merchant, 'Synthetic bank merchant');
+      assert.equal(projected[0].bank_merchant_source, 'ANDROID_NOTIFICATION');
+      assert.equal(projected[0].merchant_display, 'Synthetic bank merchant');
+      assert.equal(projected[0].merchant_display_source, 'ANDROID_NOTIFICATION');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
 
     const xiaomi = (await pool.query(`SELECT count(*)::int AS count, COALESCE(sum(amount),0)::numeric AS amount
       FROM analytics_purchases WHERE amount=32380.00`)).rows[0];

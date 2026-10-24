@@ -55,7 +55,7 @@ test('Sber v6 preserves the exact controlled incoming structure', () => {
     assert.equal(result.accountReference, '0000');
     assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
     assert.equal(result.evidenceQuality, 'EXACT');
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v7');
   }
 });
 
@@ -186,7 +186,7 @@ test('Sber v6 promotes only the exact proven outgoing evidence', () => {
   assert.equal(result.currency, 'RUB');
   assert.equal(result.accountReference, '0271');
   assert.equal(result.accountReferenceKind, 'MASKED_ACCOUNT');
-  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
+  assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v7');
   assert.equal(result.merchant, null);
   assert.equal(result.counterparty, null);
 });
@@ -247,8 +247,8 @@ test('Sber v6 accepts only the proven purchase family across independent synthet
     assert.equal(result.currency, 'RUB');
     assert.equal(result.accountReference, payload.description.match(/(\d{4})$/u)[1]);
     assert.equal(result.accountReferenceKind, null);
-    assert.equal(result.merchant, null);
-    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.equal(result.merchant, 'СИНТЕТИЧЕСКИЙ МЕРЧАНТ');
+    assert.equal(result.normalizationVersion, 'sber-bank-normalizer-v7');
   }
 });
 
@@ -289,7 +289,7 @@ test('Sber v6 is provider, adapter, and schema scoped for purchase extraction', 
     const ingestionMetadata = { ...base.ingestionMetadata, ...overrides };
     if (overrides.schemaVersion === undefined) delete ingestionMetadata.schemaVersion;
     const result = normalizeBankEvent({ ...base, ingestionMetadata, payload: purchasePayload() });
-    assert.notEqual(result.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.notEqual(result.normalizationVersion, 'sber-bank-normalizer-v7');
     assert.equal(result.amount, null);
     assert.equal(result.accountReference, null);
     assert.equal(result.eventType, 'UNKNOWN');

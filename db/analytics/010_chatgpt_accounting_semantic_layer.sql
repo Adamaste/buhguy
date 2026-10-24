@@ -150,7 +150,8 @@ FROM public.fns_source_sync_state;
 CREATE OR REPLACE VIEW chatgpt_accounting.analytics_purchases AS
 SELECT purchase_id, scope_id, certification_fact_id, purchased_at, amount,
        currency, status, rule_code, event_type, receipt_id, seller,
-       seller_inn, item_count
+       seller_inn, item_count, bank_merchant, bank_merchant_source,
+       merchant_display, merchant_display_source
 FROM public.analytics_purchases;
 
 CREATE OR REPLACE VIEW chatgpt_accounting.analytics_purchase_items AS
@@ -260,7 +261,20 @@ SELECT bt.id, bt.observation_id, beo.bank_source_id,
        pr.payment_instrument_owner_person_ids,
        pr.payment_instrument_authorized_user_person_ids,
        pc.source_context_person_ids,
-       pc.source_context_relation_types
+       pc.source_context_relation_types,
+       CASE
+         WHEN bt.merchant IS NULL THEN NULL
+         WHEN bs.source_type = 'ANDROID_NOTIFICATION'
+          AND beo.ingestion_metadata->>'adapter' = 'android-notification'
+          AND ((bt.normalization_version = 'yandex-bank-normalizer-v3'
+                AND beo.ingestion_metadata->>'provider' = 'com.yandex.bank'
+                AND beo.ingestion_metadata->>'sourcePackage' = 'com.yandex.bank'
+                AND beo.ingestion_metadata->>'notificationChannel' = 'notification_channel_1')
+            OR (bt.normalization_version = 'sber-bank-normalizer-v7'
+                AND beo.ingestion_metadata->>'provider' = 'ru.sberbankmobile'))
+           THEN 'ANDROID_NOTIFICATION_TITLE'
+         ELSE 'BANK_TRANSACTION_NORMALIZER'
+       END AS merchant_provenance
 FROM public.bank_transactions bt
 JOIN public.bank_event_observations beo ON beo.id = bt.observation_id
 JOIN public.bank_sources bs ON bs.id = beo.bank_source_id
@@ -313,8 +327,15 @@ COMMENT ON COLUMN chatgpt_accounting.certification_facts.status IS 'Accounting c
 COMMENT ON COLUMN chatgpt_accounting.ledger_postings.debit IS 'Debit amount; pair with credit and ledger entry for balance analysis.';
 COMMENT ON COLUMN chatgpt_accounting.ledger_postings.credit IS 'Credit amount; pair with debit and ledger entry for balance analysis.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.amount IS 'Certified acquisition amount at purchase grain.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.seller IS 'Official seller name from the FNS receipt; kept separate from bank_merchant.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.bank_merchant IS 'Merchant from one unambiguous linked bank transaction; it does not replace the official FNS seller.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.bank_merchant_source IS 'Source type of the one unambiguous linked bank transaction: ANDROID_NOTIFICATION, BANK_API, or MANUAL_IMPORT.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.merchant_display IS 'Display name preferring the bank merchant when present, otherwise the official FNS seller.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.merchant_display_source IS 'Bank source type or FNS_RECEIPT, showing which source supplied merchant_display.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchase_items.item_sum IS 'Item-grain amount; do not sum with purchase-grain amounts.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.direction IS 'Explicit bank direction when evidence provides it; UNKNOWN is retained instead of inferred.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.merchant IS 'Bank-normalized merchant metadata; never an FNS seller or standalone proof of purchase.';
+COMMENT ON COLUMN chatgpt_accounting.bank_transactions.merchant_provenance IS 'Normalizer provenance for the merchant value; raw notification text is not exposed.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.evidence_quality IS 'Quality of normalized evidence, not confidence that the event is a purchase.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.source_context_person_ids IS 'Capture/accounting context only; never use this field as account ownership proof.';
 COMMENT ON COLUMN chatgpt_accounting.bank_transactions.account_resolution_state IS 'EXACT, MANUAL, RECONCILED, or UNKNOWN; only the explicit resolution row determines account assignment.';

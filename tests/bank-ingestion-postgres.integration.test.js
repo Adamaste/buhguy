@@ -97,7 +97,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
     assert.equal(sberCreated.normalization.eventType, 'INCOMING_TRANSFER');
     assert.equal(sberCreated.normalization.direction, 'CREDIT');
     assert.equal(sberCreated.normalization.amount, '123.00');
-    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.equal(sberCreated.normalization.normalizationVersion, 'sber-bank-normalizer-v7');
     assert.equal(sberCreated.normalization.accountReference, '0000');
     const sberBefore = (await pool.query(`SELECT id,payload,payload_sha256 FROM bank_event_observations WHERE source_event_id='evt-sber-incoming'`)).rows[0];
     const sberReplay = await ingestBankEvent(pool, sberEvent);
@@ -133,7 +133,7 @@ integration('bank ingestion is immutable, source-scoped, and deterministic', { c
   }
 });
 
-integration('Sber outgoing v6 evidence resolves only the proven account reference', { concurrency: false }, async () => {
+integration('Sber outgoing v7 evidence resolves only the proven account reference', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const sourceKey = `sber-outgoing-v5-${process.pid}-${Date.now()}`;
   let accountId;
@@ -160,7 +160,7 @@ integration('Sber outgoing v6 evidence resolves only the proven account referenc
     });
 
     assert.equal(created.status, 'created');
-    assert.equal(created.normalization.normalizationVersion, 'sber-bank-normalizer-v6');
+    assert.equal(created.normalization.normalizationVersion, 'sber-bank-normalizer-v7');
     assert.equal(created.normalization.normalizationStatus, 'READY');
     assert.equal(created.normalization.evidenceQuality, 'EXACT');
     assert.equal(created.normalization.eventType, 'OUTGOING_TRANSFER');
