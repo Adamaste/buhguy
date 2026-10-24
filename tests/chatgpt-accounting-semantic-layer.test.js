@@ -39,6 +39,22 @@ test('semantic layer never exposes raw payload or auth material', () => {
   assert.match(sql, /REVOKE SELECT ON public\.analytics_purchases, public\.analytics_purchase_items FROM chatgpt_reader/);
 });
 
+test('merchant fields preserve bank and FNS names as separate read-only provenance', () => {
+  assert.match(sql, /seller_inn, item_count, bank_merchant, bank_merchant_source,/);
+  assert.match(sql, /merchant_display, merchant_display_source/);
+  assert.match(sql, /analytics_purchases\.seller IS/);
+  assert.match(sql, /kept separate from bank_merchant/);
+  assert.match(sql, /bank_transactions\.merchant IS/);
+  assert.match(sql, /Bank-normalized merchant metadata/);
+  assert.match(sql, /ANDROID_NOTIFICATION_TITLE/);
+  assert.match(sql, /bs\.source_type = 'ANDROID_NOTIFICATION'/);
+  assert.match(sql, /beo\.ingestion_metadata->>'adapter' = 'android-notification'/);
+  assert.match(sql, /beo\.ingestion_metadata->>'sourcePackage' = 'com\.yandex\.bank'/);
+  assert.match(sql, /beo\.ingestion_metadata->>'provider' = 'ru\.sberbankmobile'/);
+  assert.doesNotMatch(sql, /receipt_raw|bank_event_observations\.payload/i);
+  assert.match(manifest, /`bank_merchant` is the separate name from an/);
+});
+
 test('bank assistant views preserve transaction grain and fail closed', () => {
   assert.match(sql, /CREATE OR REPLACE VIEW chatgpt_accounting\.bank_transaction_account_resolution/);
   assert.match(sql, /COALESCE\(ar\.resolution_state, 'UNKNOWN'\)/);

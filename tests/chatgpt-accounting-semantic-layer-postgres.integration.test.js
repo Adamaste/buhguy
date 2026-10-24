@@ -77,8 +77,26 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     await pool.query("INSERT INTO payment_instrument_person_relations(payment_instrument_id,person_id,relation_type,provenance,reason) VALUES ($1,$2,'OWNER','SYNTHETIC','Synthetic card-only test'),($1,$3,'AUTHORIZED_USER','SYNTHETIC','Synthetic card-only test')", [instrument.id, persons[0].id, persons[1].id]);
     await pool.query("INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic card-only test')", [cardTransaction.id, instrument.id]);
 
-    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, account_resolution_state, financial_account_id, financial_account_owner_person_ids, financial_account_authorized_user_person_ids, payment_instrument_resolution_state, payment_instrument_id, payment_instrument_owner_person_ids, payment_instrument_authorized_user_person_ids, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_display_name='Synthetic Sber semantic source' ORDER BY id")).rows;
-    assert.equal(rows.length, 3);
+    const purchaseObservation = (await pool.query(
+      `INSERT INTO bank_event_observations
+        (bank_source_id, source_event_id, dedup_key, observed_at, event_time, payload, payload_sha256, ingestion_metadata)
+       VALUES ($1, 'semantic-purchase', md5('semantic-purchase') || md5('semantic-purchase'), NOW(), NOW(), '{"title":"Synthetic merchant"}'::jsonb, repeat('c',64), '{"adapter":"android-notification","provider":"ru.sberbankmobile","schemaVersion":"1"}')
+       RETURNING id`, [sourceId],
+    )).rows[0];
+    observationIds.push(purchaseObservation.id);
+    const purchaseTransaction = (await pool.query(
+      `INSERT INTO bank_transactions
+        (observation_id, occurred_at, amount, currency, direction, merchant,
+         normalization_status, normalization_version, evidence_quality, event_type)
+       VALUES ($1, NOW(), 25.00, 'RUB', 'DEBIT', 'Synthetic Sber merchant',
+         'READY', 'sber-bank-normalizer-v7', 'EXACT', 'PURCHASE')
+       RETURNING id`, [purchaseObservation.id],
+    )).rows[0];
+    await pool.query("INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic semantic test')", [purchaseTransaction.id, accountIds[0]]);
+    await pool.query("INSERT INTO bank_transaction_payment_instrument_resolution(bank_transaction_id,payment_instrument_id,resolution_state,provenance,reason) VALUES ($1,$2,'EXACT','OBSERVED_PROVIDER_REFERENCE','Synthetic semantic test')", [purchaseTransaction.id, instrument.id]);
+
+    const rows = (await pool.query("SELECT id, provider, adapter, schema_version, normalization_version, event_type, direction, amount, currency, merchant, merchant_provenance, account_resolution_state, financial_account_id, financial_account_owner_person_ids, financial_account_authorized_user_person_ids, payment_instrument_resolution_state, payment_instrument_id, payment_instrument_owner_person_ids, payment_instrument_authorized_user_person_ids, source_context_person_ids FROM chatgpt_accounting.bank_transactions WHERE source_display_name='Synthetic Sber semantic source' ORDER BY id")).rows;
+    assert.equal(rows.length, 4);
     assert.equal(rows[0].account_resolution_state, 'EXACT');
     assert.ok(rows[0].financial_account_id);
     assert.equal(rows[0].provider, 'ru.sberbankmobile');
@@ -100,6 +118,11 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
     assert.ok(rows[2].payment_instrument_id);
     assert.deepEqual(rows[2].payment_instrument_owner_person_ids.map(String), [String(persons[0].id)]);
     assert.deepEqual(rows[2].payment_instrument_authorized_user_person_ids.map(String), [String(persons[1].id)]);
+    assert.equal(rows[3].event_type, 'PURCHASE');
+    assert.equal(rows[3].direction, 'DEBIT');
+    assert.equal(rows[3].merchant, 'Synthetic Sber merchant');
+    assert.equal(rows[3].merchant_provenance, 'ANDROID_NOTIFICATION_TITLE');
+    assert.equal(rows[3].account_resolution_state, 'EXACT');
 
     const provenIncoming = (await pool.query(`
       SELECT bt.id
@@ -138,7 +161,10 @@ integration('Bank Assistant semantic views are transaction-grain and read-only',
           $1 = ANY(COALESCE(bt.financial_account_owner_person_ids, '{}'::bigint[]))
           OR $1 = ANY(COALESCE(bt.payment_instrument_owner_person_ids, '{}'::bigint[]))
         )`, [persons[0].id])).rows;
-    assert.deepEqual(ownedDebit, [{ id: rows[2].id, account_resolution_state: 'UNKNOWN', financial_account_id: null }]);
+    assert.deepEqual(ownedDebit, [
+      { id: rows[2].id, account_resolution_state: 'UNKNOWN', financial_account_id: null },
+      { id: rows[3].id, account_resolution_state: 'EXACT', financial_account_id: accountIds[0] },
+    ]);
 
     const unresolved = (await pool.query(`
       SELECT bt.id

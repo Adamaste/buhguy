@@ -44,7 +44,7 @@ test('Yandex purchase is normalized from exact title and description markers', (
     accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: 'yandex-bank-normalizer-v2',
+    normalizationVersion: 'yandex-bank-normalizer-v3',
   });
 });
 
@@ -63,6 +63,34 @@ test('Yandex purchase normalizes whitespace and falls back from blank descriptio
   assert.equal(result.eventType, 'PURCHASE');
   assert.equal(result.amount, '12.34');
   assert.equal(result.normalizationStatus, 'READY');
+});
+
+test('Yandex Bank reads merchant only from a confirmed direct-app purchase title', () => {
+  const result = normalizeBankEvent({ ...payBase, payload: {
+    title: 'Овощи и фрукты',
+    description: 'Покупка на 2400.00 RUB',
+    text: 'Покупка на 2400.00 RUB',
+  }});
+  assert.equal(result.eventType, 'PURCHASE');
+  assert.equal(result.direction, 'DEBIT');
+  assert.equal(result.amount, '2400.00');
+  assert.equal(result.currency, 'RUB');
+  assert.equal(result.merchant, 'Овощи и фрукты');
+  assert.equal(result.normalizationStatus, 'READY');
+  assert.equal(result.evidenceQuality, 'EXACT');
+});
+
+test('Yandex Bank keeps generic, bank, and unconfirmed-source titles out of merchant', () => {
+  const purchase = (title, metadata = payBase.ingestionMetadata) => normalizeBankEvent({
+    ...payBase,
+    ingestionMetadata: metadata,
+    payload: { title, description: 'Покупка на 12.00 RUB', text: 'Покупка на 12.00 RUB' },
+  });
+  assert.equal(purchase('Покупка').merchant, null);
+  assert.equal(purchase('Яндекс Банк').merchant, null);
+  assert.equal(purchase('Карта ТЕСТОВАЯ').merchant, null);
+  assert.equal(purchase('ПЕРЕКРЁСТОК', { ...payBase.ingestionMetadata, sourcePackage: 'ru.yandex.taximeter' }).merchant, null);
+  assert.equal(purchase('ПЕРЕКРЁСТОК', { ...payBase.ingestionMetadata, notificationChannel: 'other-channel' }).merchant, null);
 });
 
 test('Yandex incoming transfer is normalized from exact title and body markers', () => {
@@ -168,7 +196,7 @@ test('Yandex Pay outgoing v2 accepts the exact reviewed family and first monetar
     accountReferenceKind: null,
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: 'yandex-bank-normalizer-v2',
+    normalizationVersion: 'yandex-bank-normalizer-v3',
   });
 });
 

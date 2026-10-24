@@ -257,6 +257,6 @@ test('Alfa parser does not infer identity from an extracted reference', () => {
 
 test('Yandex, Sber, and T-Bank dispatch remains unchanged', () => {
   const yandex = normalizeBankEvent({ ...base, ingestionMetadata: { ...base.ingestionMetadata, provider: 'com.yandex.bank' }, payload: { title: 'Покупка', description: 'Покупка на 12.00 RUB ТЕСТОВЫЙ МАГАЗИН' } });
-  assert.equal(yandex.normalizationVersion, 'yandex-bank-normalizer-v2');
+  assert.equal(yandex.normalizationVersion, 'yandex-bank-normalizer-v3');
   assert.equal(yandex.eventType, 'PURCHASE');
 });

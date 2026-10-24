@@ -49,14 +49,14 @@ async function createContext(pool, provider = 'bank.example') {
 async function createTransaction(pool, context, {
   occurredAt = new Date(Date.now() - 60000).toISOString(), observedAt = occurredAt, amount = '83.41', currency = 'RUB',
   eventType = 'PURCHASE', direction = 'DEBIT', normalizationStatus = 'READY', evidenceQuality = 'EXACT',
-  accountReference = null, accountReferenceKind = null, accountResolved = true,
+  merchant = null, accountReference = null, accountReferenceKind = null, accountResolved = true,
   tbankInstrumentId = null, tbankResolutionState = 'EXACT',
 } = {}) {
   const dedupKey = digest(`${context.suffix}:${occurredAt}:${eventType}:${direction}:${accountReference ?? ''}:${fixtureSequence += 1}`);
   const observationId = Number((await pool.query(`INSERT INTO bank_event_observations(bank_source_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
     VALUES($1,$2,$3,$4,'{}'::jsonb,$2,jsonb_build_object('provider',$5::text)) RETURNING id`, [context.sourceId, dedupKey, observedAt, occurredAt, context.provider])).rows[0].id);
-  const transaction = (await pool.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,event_type,normalization_status,normalization_version,evidence_quality,account_reference,account_reference_kind)
-    VALUES($1,$2,$3,$4,$5,$6,$7,'synthetic-bank-only-v1',$8,$9,$10) RETURNING id`, [observationId, occurredAt, amount, currency, direction, eventType, normalizationStatus, evidenceQuality, accountReference, accountReferenceKind])).rows[0];
+  const transaction = (await pool.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,event_type,normalization_status,normalization_version,evidence_quality,account_reference,account_reference_kind)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'synthetic-bank-only-v1',$9,$10,$11) RETURNING id`, [observationId, occurredAt, amount, currency, direction, merchant, eventType, normalizationStatus, evidenceQuality, accountReference, accountReferenceKind])).rows[0];
   const bankTransactionId = Number(transaction.id);
   if (accountResolved) {
     await pool.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
@@ -123,9 +123,20 @@ integration('bank-only purchase uses ACTIVE ledger, defers receipt candidates, a
     const now = new Date();
 
     const bankOnly = await createContext(pool, 'bank.example');
-    const bankOnlyTx = await createTransaction(pool, bankOnly, { amount: '83.41' });
+    const bankOnlyTx = await createTransaction(pool, bankOnly, { amount: '83.41', merchant: 'Synthetic bank merchant' });
     const saved = await writeBankOnlyPurchase(pool, { bankTransactionId: bankOnlyTx.bankTransactionId, optIn: optIn(bankOnly.scopeKey, now) });
     assert.equal(saved.status, 'PERSISTED');
+    const merchantProjection = (await pool.query(`SELECT seller, bank_merchant, bank_merchant_source,
+        merchant_display, merchant_display_source, receipt_id
+      FROM analytics_purchases WHERE purchase_id=$1`, [saved.eventId])).rows;
+    assert.deepEqual(merchantProjection, [{
+      seller: null,
+      bank_merchant: 'Synthetic bank merchant',
+      bank_merchant_source: 'ANDROID_NOTIFICATION',
+      merchant_display: 'Synthetic bank merchant',
+      merchant_display_source: 'ANDROID_NOTIFICATION',
+      receipt_id: null,
+    }]);
     const replay = await writeBankOnlyPurchase(pool, { bankTransactionId: bankOnlyTx.bankTransactionId, optIn: optIn(bankOnly.scopeKey, now) });
     assert.equal(replay.status, 'REUSED');
     const catchupReplay = await runBankOnlyPurchaseCatchup(pool, { scopeKey: bankOnly.scopeKey, optIn: optIn(bankOnly.scopeKey, now), now, logger: { info() {} } });

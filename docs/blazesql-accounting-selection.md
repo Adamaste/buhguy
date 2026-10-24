@@ -12,7 +12,12 @@ For receipt existence, history, provenance, and user-specific questions, use
 `chatgpt_accounting.user_receipts`. It is the canonical household-person
 receipt inventory and excludes observations from disabled historical sources.
 Use `chatgpt_accounting.analytics_purchases` only for certified economic
-acquisitions; it is not a complete receipt inventory.
+acquisitions; it is not a complete receipt inventory. In that view, `seller`
+is the official FNS seller, while `bank_merchant` is the separate name from an
+unambiguous linked bank transaction. `bank_merchant_source` reports its source
+type (`ANDROID_NOTIFICATION`, `BANK_API`, or `MANUAL_IMPORT`).
+`merchant_display` prefers the bank name and reports its source in
+`merchant_display_source`; it never replaces either source-specific field.
 
 ## Required views
 
