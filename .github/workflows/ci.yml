@@ -125,7 +125,10 @@ jobs:
         run: npm run check
 
       - name: Unit tests (no database fixture)
-        run: npm run test:unit
+        # These tests exercise root-owned release gates and runuser checks. Use
+        # the isolated GitHub runner's root account; this job has no secrets and
+        # its repository token is read-only.
+        run: sudo --preserve-env=PATH "$(command -v npm)" run test:unit
 
       - name: PostgreSQL integration suite (once)
         run: npm run test:integration
