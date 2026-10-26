@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile, chmod, readdir } from 'node:fs/promises';
+import { copyFile, link, mkdtemp, mkdir, readFile, rm, symlink, writeFile, chmod, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { platform } from 'node:os';
