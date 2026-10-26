@@ -78,7 +78,10 @@ test('creates a verified code-only snapshot with POSIX modes and explicit non-Gi
   assert.equal(manifest.files.some(file => file.path.includes('state.txt')), false);
   if (platform() !== 'win32') {
     const verifier = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
-    const serviceUserCheck = spawnSync('runuser', ['-u', 'nobody', '--', process.execPath, verifier, 'verify', '--snapshot-root', result.path], { encoding: 'utf8', timeout: 5000 });
+    const accessibleVerifier = path.join(path.dirname(result.path), 'sync-runtime-snapshot.mjs');
+    await copyFile(verifier, accessibleVerifier);
+    await chmod(accessibleVerifier, 0o644);
+    const serviceUserCheck = spawnSync('runuser', ['-u', 'nobody', '--', process.execPath, accessibleVerifier, 'verify', '--snapshot-root', result.path], { encoding: 'utf8', timeout: 5000 });
     assert.equal(serviceUserCheck.status, 0, serviceUserCheck.stderr);
     assert.equal(JSON.parse(serviceUserCheck.stdout).status, 'PASS');
     const streamedTool = await readFile(verifier, 'utf8');
@@ -154,7 +157,9 @@ test('inspect catches an unreadable closure file under an unprivileged POSIX use
   const f = await fixture(t);
   const protectedPath = path.join(f.source, 'src', 'value.js');
   await chmod(protectedPath, 0);
-  const tool = fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url));
+  const tool = path.join(f.base, 'sync-runtime-snapshot.mjs');
+  await copyFile(fileURLToPath(new URL('../scripts/sync-runtime-snapshot.mjs', import.meta.url)), tool);
+  await chmod(tool, 0o644);
   const cli = spawnSync('runuser', ['-u', 'nobody', '--', process.execPath, tool, 'inspect', '--source-root', f.source, '--entrypoint', 'bin/entry.js'], { encoding: 'utf8', timeout: 5000 });
   assert.equal(cli.status, 2, cli.stderr);
   assert.equal(cli.stdout, '');
