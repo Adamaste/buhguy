@@ -54,6 +54,8 @@ class NotificationEventMapper(
     fun deterministicSourceEventId(snapshot: NotificationSnapshot): String {
         val identity = listOf(
             snapshot.packageName,
+            // Preserve pre-lifecycle event IDs for existing providers; only the digest leaves this process.
+            snapshot.notificationKey.orEmpty(),
             snapshot.notificationId.toString(),
             snapshot.notificationTag.orEmpty(),
             snapshot.postTime.toString(),

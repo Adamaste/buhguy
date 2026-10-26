@@ -13,6 +13,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
 import javax.crypto.spec.SecretKeySpec
 
@@ -66,6 +68,12 @@ class NotificationLifecycleStoreTest {
         assertEquals(id, event.ingestionMetadata["notificationLifecycleId"])
         assertFalse(event.payload.values.any { it?.contains(rawKey) == true })
         assertFalse(event.ingestionMetadata.values.any { it?.contains(rawKey) == true })
+        val legacyIdentity = listOf(snapshot.packageName, rawKey, snapshot.notificationId.toString(),
+            snapshot.notificationTag.orEmpty(), snapshot.postTime.toString()).joinToString("\u0000")
+        val legacySourceEventId = MessageDigest.getInstance("SHA-256")
+            .digest(legacyIdentity.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(legacySourceEventId, event.sourceEventId)
         assertEquals(event.sourceEventId, mapper.map(snapshot.copy(notificationLifecycleId = id))!!.sourceEventId)
         assertNotEquals(event.sourceEventId, mapper.map(snapshot.copy(postTime = 2000L))!!.sourceEventId)
     }

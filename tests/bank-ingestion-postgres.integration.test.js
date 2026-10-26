@@ -341,9 +341,10 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(cardEvent.identityResolution.account.resolutionState, 'MANUAL');
     assert.equal(cardEvent.identityResolution.account.financialAccountId, Number(account.id));
     assert.equal(cardEvent.identityResolution.account.provenance, 'USER_CONFIRMED_SOURCE_PROVIDER_ACCOUNT');
-    await assert.rejects(() => createFinancialAccount(runtime, { institution: 'Forbidden', displayName: 'Forbidden account' }), /permission denied/);
-    await assert.rejects(() => createPaymentInstrument(runtime, { scopeKey: 'default', instrumentType: 'CARD', displayName: 'Forbidden card' }), /permission denied/);
-    await assert.rejects(() => createBankAccountReference(runtime, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****9999' }), /permission denied/);
+    const insufficientPrivilege = (error) => error.code === '42501';
+    await assert.rejects(() => createFinancialAccount(runtime, { institution: 'Forbidden', displayName: 'Forbidden account' }), insufficientPrivilege);
+    await assert.rejects(() => createPaymentInstrument(runtime, { scopeKey: 'default', instrumentType: 'CARD', displayName: 'Forbidden card' }), insufficientPrivilege);
+    await assert.rejects(() => createBankAccountReference(runtime, { financialAccountId: account.id, provider: 'runtime.provider', referenceKind: 'MASKED_ACCOUNT', referenceValue: '****9999' }), insufficientPrivilege);
     const conflict = await ingestBankEvent(runtime, { ...event, payload: { ...event.payload, amount: '126.00' } });
     assert.deepEqual(conflict, { status: 'rejected', code: 'SOURCE_EVENT_CONFLICT' });
 

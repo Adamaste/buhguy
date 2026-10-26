@@ -44,7 +44,7 @@ integration('payment instruments preserve standalone card identity and fail clos
     await relatePaymentInstrumentPerson(pool, { paymentInstrumentId: card.id, personId: person.id, relationType: 'OWNER', provenance: 'USER_CONFIRMED', reason: 'Synthetic explicit card owner evidence' });
     await assert.rejects(
       () => relatePaymentInstrumentPerson(pool, { paymentInstrumentId: card.id, personId: secondPerson.id, relationType: 'OWNER', provenance: 'CONFLICTING_TEST', reason: 'Must not overwrite owner' }),
-      /duplicate key|unique/i,
+      (error) => error.code === '23505',
     );
 
     await createBankAccountReference(pool, { paymentInstrumentId: card.id, provider: 'instrument.provider', referenceKind: 'MASKED_CARD', referenceValue: '****8451' });
@@ -52,12 +52,12 @@ integration('payment instruments preserve standalone card identity and fail clos
     await assert.rejects(
       () => pool.query(`INSERT INTO bank_account_references(financial_account_id,provider,reference_kind,reference_value)
         VALUES($1,$2,'MASKED_CARD',$3)`, [account.id, 'instrument.provider', '****0001']),
-      /bank_account_references_reference_target_check|violates check constraint/i,
+      (error) => error.code === '23514' && error.constraint === 'bank_account_references_reference_target_check',
     );
     await assert.rejects(
       () => pool.query(`INSERT INTO bank_account_references(payment_instrument_id,provider,reference_kind,reference_value)
         VALUES($1,$2,'MASKED_ACCOUNT',$3)`, [card.id, 'instrument.provider', '****0002']),
-      /bank_account_references_reference_target_check|violates check constraint/i,
+      (error) => error.code === '23514' && error.constraint === 'bank_account_references_reference_target_check',
     );
 
     const cardEvent = await ingestBankEvent(pool, event('standalone-card', '****8451', 'MASKED_CARD'));

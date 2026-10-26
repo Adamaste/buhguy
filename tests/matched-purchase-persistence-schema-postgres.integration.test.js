@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import pg from 'pg';
+import { STANDALONE_PURCHASE_VERSION } from '../src/standalone-purchase.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -71,7 +72,7 @@ integration('matched purchase persistence schema enforces reviewed contracts', {
     transactionId = Number((await client.query("INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,normalization_status,normalization_version,evidence_quality) VALUES($1,NOW(),12.34,'RUB','DEBIT','READY','fixture','EXACT') RETURNING id", [observationId])).rows[0].id);
     const secondObservationId = Number((await client.query("INSERT INTO bank_event_observations(bank_source_id,dedup_key,observed_at,payload,payload_sha256) VALUES($1,repeat('3',64),NOW(),'{}',repeat('4',64)) RETURNING id", [sourceId])).rows[0].id);
     secondTransactionId = Number((await client.query("INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,normalization_status,normalization_version,evidence_quality) VALUES($1,NOW(),12.34,'RUB','DEBIT','READY','fixture','EXACT') RETURNING id", [secondObservationId])).rows[0].id);
-    eventId = Number((await client.query("INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency) VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','fixture','STANDALONE_PURCHASE_V1','v1',repeat('5',64),12.34,'RUB') RETURNING id", [scopeId])).rows[0].id);
+    eventId = Number((await client.query("INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency) VALUES($1,'PURCHASE','CONFIRMED','SYSTEM_DERIVED','fixture','STANDALONE_PURCHASE_V1',$2,repeat('5',64),12.34,'RUB') RETURNING id", [scopeId, STANDALONE_PURCHASE_VERSION])).rows[0].id);
 
     const accounts = await client.query("INSERT INTO ledger_accounts(scope_id,account_code,account_type,description) VALUES($1,'fixture-legacy','CONTROL','legacy') RETURNING id", [scopeId]);
     const mapped = await client.query("INSERT INTO ledger_accounts(scope_id,account_code,account_type,description,financial_account_id,account_currency) VALUES($1,$2,'ASSET','mapped',$3,'RUB') RETURNING id", [scopeId, `FINANCIAL_ACCOUNT:${accountId}`, accountId]);

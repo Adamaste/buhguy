@@ -393,8 +393,8 @@ if (!connectionString) {
   test('database enforces source and canonical uniqueness, but permits null and distinct tuples', async () => {
     await reset();
     await pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-a','u-fd','u-doc','u-sign')");
-    await assert.rejects(() => pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-a','other-fd','other-doc','other-sign')"), /duplicate key/);
-    await assert.rejects(() => pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-b','u-fd','u-doc','u-sign')"), /duplicate key/);
+    await assert.rejects(() => pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-a','other-fd','other-doc','other-sign')"), (error) => error.code === '23505');
+    await assert.rejects(() => pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-b','u-fd','u-doc','u-sign')"), (error) => error.code === '23505');
     await pool.query("INSERT INTO receipts(fns_id) VALUES ('u-null-a'), ('u-null-b')");
     await pool.query("INSERT INTO receipts(fns_id,fiscal_drive_number,fiscal_document_number,fiscal_sign) VALUES ('u-c','other-fd','other-doc','other-sign')");
   });
