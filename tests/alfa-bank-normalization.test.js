@@ -37,6 +37,63 @@ test('Alfa F5 promotes the exact proven outgoing semantics', () => {
   });
 });
 
+test('Alfa recognizes only the two user-confirmed Troika card-purchase shapes', () => {
+  const lifecycleId = '9d0dc1ec-431a-4eb1-8d72-3b58ebddb346';
+  for (const [integerAmount, decimalAmount] of [['2254', '2254,00'], ['17', '17,00']]) {
+    const normalized = normalizeBankEvent({
+      ...base,
+      ingestionMetadata: { ...base.ingestionMetadata, sourcePackage: 'ru.alfabank.mobile.android', notificationLifecycleId: lifecycleId },
+      payload: {
+        title: `-${integerAmount} ₽. Тройка`,
+        description: `Тройка: ${decimalAmount} ₽; •• 5580`,
+        text: `Тройка: ${decimalAmount} ₽; •• 5580`,
+      },
+    });
+    assert.equal(normalized.eventType, 'PURCHASE');
+    assert.equal(normalized.direction, 'DEBIT');
+    assert.equal(normalized.amount, `${integerAmount}.00`);
+    assert.equal(normalized.currency, 'RUB');
+    assert.equal(normalized.merchant, 'Тройка');
+    assert.equal(normalized.accountReference, '****5580');
+    assert.equal(normalized.accountReferenceKind, 'MASKED_CARD');
+    assert.equal(normalized.normalizationStatus, 'READY');
+    assert.equal(normalized.evidenceQuality, 'EXACT');
+    assert.equal(normalized.normalizationVersion, 'alfa-troika-card-purchase-v1');
+  }
+});
+
+test('Alfa Troika word or debit sign alone never proves a purchase', () => {
+  const lifecycleId = '9d0dc1ec-431a-4eb1-8d72-3b58ebddb346';
+  const metadata = { ...base.ingestionMetadata, sourcePackage: 'ru.alfabank.mobile.android', notificationLifecycleId: lifecycleId };
+  const confirmedTitle = '-17 ₽. Тройка';
+  const confirmedBody = 'Тройка: 17,00 ₽; •• 5580';
+  const unsupported = [
+    { title: confirmedTitle, description: confirmedBody.replace('5580', '5581'), text: confirmedBody.replace('5580', '5581') },
+    { title: confirmedTitle, description: confirmedBody.replace('17,00', '18,00'), text: confirmedBody.replace('17,00', '18,00') },
+    { title: '-17 ₽', description: confirmedBody, text: confirmedBody },
+    { title: confirmedTitle, description: 'Перевод на получателя 17,00 RUB', text: 'Перевод на получателя 17,00 RUB' },
+  ];
+  for (const payload of unsupported) {
+    const normalized = normalizeBankEvent({ ...base, ingestionMetadata: metadata, payload });
+    assert.notEqual(normalized.eventType, 'PURCHASE');
+    assert.notEqual(normalized.normalizationStatus, 'READY');
+  }
+
+  for (const ingestionMetadata of [
+    { ...metadata, notificationLifecycleId: undefined },
+    { ...metadata, sourcePackage: 'com.example.other' },
+    { ...metadata, adapter: 'other-adapter' },
+    { ...metadata, schemaVersion: '2' },
+  ]) {
+    const normalized = normalizeBankEvent({
+      ...base, ingestionMetadata,
+      payload: { title: confirmedTitle, description: confirmedBody, text: confirmedBody },
+    });
+    assert.notEqual(normalized.eventType, 'PURCHASE');
+    assert.notEqual(normalized.normalizationStatus, 'READY');
+  }
+});
+
 test('Alfa F5 accepts a second sanitized sample only when title and body agree', () => {
   const normalized = result({ title: secondTitle, description: secondBody });
   assert.equal(normalized.amount, '9753.00');

@@ -25,6 +25,9 @@ const TBANK_MASKED_7268_PATTERN = /(?<![\p{L}\p{N}])\*{1,4}\s*7268(?!\d)/giu;
 const TBANK_BALANCE_MARKER_PATTERN = /(?:баланс|остаток|доступно)/giu;
 const TBANK_MONEY_PATTERN = /(?<![\p{L}\p{N}])(\d+(?:[ \u00a0\u202f]\d{3})*(?:[,.]\d{1,2})?)[ \u00a0\u202f]*(RUB(?![\p{L}])|₽|руб(?:ль|ля|лей)?\.?(?![\p{L}]))/giu;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
+const ALFA_TROIKA_PURCHASE_TITLE_PATTERN = /^-\s*(\d+)\s+₽\.\s+Тройка$/iu;
+const ALFA_TROIKA_PURCHASE_BODY_PATTERN = /^Тройка:\s+(\d+),(\d{2})\s+₽;\s+••\s*(\d{4})$/iu;
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALFA_F5_ACCOUNT_SECTION = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})$/u;
 const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB$/u;
 const ALFA_F5_RECIPIENT_SECTION = /^Получатель:\s+\d+\s*\*\s*\d{4}$/u;
@@ -296,11 +299,48 @@ function exactAlfa({ occurred, amount, accountReference }) {
   };
 }
 
+function exactAlfaTroikaPurchase({ occurred, amount }) {
+  return {
+    eventType: 'PURCHASE',
+    occurredAt: occurred,
+    amount,
+    currency: 'RUB',
+    direction: 'DEBIT',
+    merchant: 'Тройка',
+    counterparty: null,
+    accountReference: '****5580',
+    accountReferenceKind: 'MASKED_CARD',
+    normalizationStatus: 'READY',
+    evidenceQuality: 'EXACT',
+    normalizationVersion: 'alfa-troika-card-purchase-v1',
+  };
+}
+
+function normalizeAlfaTroikaPurchase(input, occurred) {
+  const metadata = input.ingestionMetadata ?? {};
+  if (metadata.sourcePackage !== ALFA_PROVIDER
+    || !OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(metadata.notificationLifecycleId ?? '')) return null;
+  const payload = input.payload ?? {};
+  const title = normalizeWhitespace(payload.title);
+  const description = normalizeWhitespace(payload.description);
+  const text = normalizeWhitespace(payload.text);
+  if (!occurred || !description || description !== text) return null;
+  const titleMatch = title.match(ALFA_TROIKA_PURCHASE_TITLE_PATTERN);
+  const bodyMatch = description.match(ALFA_TROIKA_PURCHASE_BODY_PATTERN);
+  if (!titleMatch || !bodyMatch || bodyMatch[3] !== '5580') return null;
+  const titleAmount = `${titleMatch[1].replace(/^0+(?=\d)/u, '')}.00`;
+  const bodyAmount = `${bodyMatch[1].replace(/^0+(?=\d)/u, '')}.${bodyMatch[2]}`;
+  if (titleAmount !== bodyAmount || titleAmount === '0.00') return null;
+  return exactAlfaTroikaPurchase({ occurred, amount: titleAmount });
+}
+
 export function normalizeAlfaBankEvent(input) {
   const payload = input.payload ?? {};
   const title = normalizeWhitespace(payload.title);
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
+  const troikaPurchase = normalizeAlfaTroikaPurchase(input, occurred);
+  if (troikaPurchase) return troikaPurchase;
   const titleMatch = title.match(ALFA_TITLE_PATTERN);
   const sections = body.split(';').map((section) => section.trim());
   const accountMatch = sections.length === 4 ? sections[0].match(ALFA_F5_ACCOUNT_SECTION) : null;

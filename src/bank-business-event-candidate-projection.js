@@ -22,6 +22,8 @@ export const BUSINESS_EVENT_CANDIDATE_KINDS = Object.freeze({
 export const TRANSFER_DIRECTIONS = Object.freeze({ OUTGOING: 'OUTGOING', INCOMING: 'INCOMING' });
 
 const HEX_SHA256 = /^[0-9a-f]{64}$/i;
+const ALFA_ANDROID_PROVIDER = 'ru.alfabank.mobile.android';
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MONEY = /^(\d+)(?:\.(\d{1,2}))?$/;
 const CURRENCY = /^[A-Z]{3}$/;
 const SIDES = new Set(['DEBIT', 'CREDIT']);
@@ -126,6 +128,10 @@ function safeProvenance(journal) {
       ? { sourceProviderBindingVerified: source.sourceProviderBindingVerified === true }
       : {}),
     ...(typeof source.provider === 'string' ? { provider: source.provider } : {}),
+    ...(source.provider === ALFA_ANDROID_PROVIDER
+      && OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(source.notificationLifecycleId ?? '')
+      ? { notificationLifecycleId: source.notificationLifecycleId }
+      : {}),
     ...(source.tbankCardSpecificAccountProofVerified !== undefined
       ? { tbankCardSpecificAccountProofVerified: source.tbankCardSpecificAccountProofVerified === true }
       : {}),

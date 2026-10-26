@@ -13,6 +13,7 @@ import {
   BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV,
   BANK_ONLY_PURCHASE_LEDGER_SCOPE_ENV,
   BANK_ONLY_PURCHASE_LEDGER_START_AT_ENV,
+  BANK_ONLY_PURCHASE_ALFA_START_AT_ENV,
   readBankOnlyPurchaseLedgerOptIn,
 } from '../src/bank-only-purchase.js';
 
@@ -106,7 +107,16 @@ test('bank-only purchase opt-in is disabled by default and requires an explicit 
   });
   assert.equal(enabled.enabled, true);
   assert.equal(enabled.scopeKey, 'default');
+  assert.equal(enabled.alfaStartAt, null);
   assert.equal(enabled.maxWrites, 25);
+
+  const alfaEnabled = readBankOnlyPurchaseLedgerOptIn({
+    [BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV]: 'true',
+    [BANK_ONLY_PURCHASE_LEDGER_SCOPE_ENV]: 'default',
+    [BANK_ONLY_PURCHASE_LEDGER_START_AT_ENV]: '2026-10-20T00:00:00.000Z',
+    [BANK_ONLY_PURCHASE_ALFA_START_AT_ENV]: '2026-10-26T12:00:00.000Z',
+  });
+  assert.equal(alfaEnabled.alfaStartAt, '2026-10-26T12:00:00.000Z');
 });
 
 test('evidence contract accepts exact source/provider binding and T-Bank card-specific proof', () => {

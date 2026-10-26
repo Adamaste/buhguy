@@ -26,6 +26,8 @@ const MONEY = /^(?:0|[1-9]\d*)\.\d{2}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 const SHA256 = /^[0-9a-f]{64}$/i;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const ALFA_ANDROID_PROVIDER = 'ru.alfabank.mobile.android';
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -44,6 +46,40 @@ function canonicalTime(value) {
   if (Number.isNaN(date.getTime())) return null;
   const result = date.toISOString();
   return ISO_TIME.test(result) ? result : null;
+}
+
+function resolveAlfaNotificationLifecycles(banks) {
+  const groups = new Map();
+  for (const bank of banks) {
+    if (bank.provider !== ALFA_ANDROID_PROVIDER
+      || !OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(bank.notificationLifecycleId ?? '')) continue;
+    const key = `${bank.provider}:${bank.notificationLifecycleId}`;
+    const group = groups.get(key) ?? [];
+    group.push(bank);
+    groups.set(key, group);
+  }
+  const excluded = new Map();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const first = group[0];
+    const samePurchase = group.every((bank) => bank.scopeKey === first.scopeKey
+      && bank.financialAccountId === first.financialAccountId
+      && bank.amount === first.amount && bank.currency === first.currency);
+    if (!samePurchase) {
+      for (const bank of group) excluded.set(bank.candidateKey, {
+        status: BANK_RECEIPT_MATCHING_STATUSES.AMBIGUOUS,
+        reasonCode: 'ALFA_NOTIFICATION_LIFECYCLE_CONFLICT',
+      });
+      continue;
+    }
+    const ordered = group.slice().sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt)
+      || Number(left.bankTransactionId) - Number(right.bankTransactionId));
+    for (const duplicate of ordered.slice(1)) excluded.set(duplicate.candidateKey, {
+      status: BANK_RECEIPT_MATCHING_STATUSES.INELIGIBLE,
+      reasonCode: 'DUPLICATE_ALFA_NOTIFICATION_LIFECYCLE',
+    });
+  }
+  return { matchable: banks.filter((bank) => !excluded.has(bank.candidateKey)), excluded };
 }
 
 function explicitZero(value, state) { return value === '0.00' && state === 'EXPLICIT_ZERO'; }
@@ -113,6 +149,10 @@ function projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSource
       bankTransactionId: source.bankTransactionId,
       financialAccountId: credit.account.financialAccountId,
       ...(typeof proofSource.provider === 'string' ? { provider: proofSource.provider } : {}),
+      ...(proofSource.provider === ALFA_ANDROID_PROVIDER
+        && OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(proofSource.notificationLifecycleId ?? '')
+        ? { notificationLifecycleId: proofSource.notificationLifecycleId }
+        : {}),
       ...(proofSource.sourceProviderBindingVerified === true ? { sourceProviderBindingVerified: true } : {}),
       ...(proofSource.tbankCardSpecificAccountProofVerified === true ? { tbankCardSpecificAccountProofVerified: true } : {}),
       scopeKey: entry.scopeKey,
@@ -255,7 +295,9 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   validateReceiptInputs(receiptRows);
   const ledger = projectBankLedger(bankEntries, ownershipSnapshot, { maxTimeDeltaMs: internalTransferMaxTimeDeltaMs });
   const bankCandidates = ledger.entries.map((entry) => ({ entry, eligibility: projectBankReceiptEligibility(entry, ownershipSnapshot, { requireSourceProviderBinding }) }));
-  const eligibleBanks = bankCandidates.filter((row) => row.eligibility.bank).map((row) => row.eligibility.bank);
+  const allEligibleBanks = bankCandidates.filter((row) => row.eligibility.bank).map((row) => row.eligibility.bank);
+  const lifecycleResolution = resolveAlfaNotificationLifecycles(allEligibleBanks);
+  const eligibleBanks = lifecycleResolution.matchable;
   const receiptCandidates = receiptRows.map((row) => projectBankReceiptCandidate(row));
   const eligibleReceipts = receiptCandidates.filter((row) => row.receipt).map((row) => row.receipt);
   const bankByKey = new Map(eligibleBanks.map((bank) => [bank.candidateKey, bank]));
@@ -274,7 +316,11 @@ export function matchBankReceipts(bankEntries, ownershipSnapshot, receiptRows, {
   const visitedBanks = new Set();
   const visitedReceipts = new Set();
   const statusReasons = new Map();
-  for (const bank of eligibleBanks) statuses.set(`bank:${bank.candidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+  for (const bank of allEligibleBanks) {
+    const lifecycleStatus = lifecycleResolution.excluded.get(bank.candidateKey);
+    statuses.set(`bank:${bank.candidateKey}`, lifecycleStatus?.status ?? BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
+    if (lifecycleStatus) statusReasons.set(`bank:${bank.candidateKey}`, lifecycleStatus.reasonCode);
+  }
   for (const receipt of eligibleReceipts) statuses.set(`receipt:${receipt.receiptCandidateKey}`, BANK_RECEIPT_MATCHING_STATUSES.UNMATCHED);
   const addMatchedPair = (bank, receipt, selectedPolicy = null) => {
     const timeDeltaMs = Math.abs(Date.parse(bank.occurredAt) - Date.parse(receipt.dateTime));

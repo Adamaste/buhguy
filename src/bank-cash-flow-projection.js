@@ -12,6 +12,8 @@ export const MOVEMENT_TYPES = Object.freeze({
 
 export const PROJECTION_STATUSES = Object.freeze({ PROJECTED: 'PROJECTED', UNRESOLVED: 'UNRESOLVED' });
 
+const ALFA_ANDROID_PROVIDER = 'ru.alfabank.mobile.android';
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACCOUNT_RESOLVED_STATES = new Set(['EXACT', 'MANUAL', 'RECONCILED']);
 const SUPPORTED_EVENT_TYPES = new Set(['PURCHASE', 'OUTGOING_TRANSFER', 'INCOMING_TRANSFER']);
 
@@ -169,6 +171,10 @@ export function projectBankCashFlowTransaction(row, { scopeKey = null } = {}) {
       ? { sourceProviderBindingVerified: row.sourceProviderBindingVerified === true }
       : {}),
     ...(typeof row.provider === 'string' ? { provider: row.provider } : {}),
+    ...(row.provider === ALFA_ANDROID_PROVIDER
+      && OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(row.notificationLifecycleId ?? '')
+      ? { notificationLifecycleId: row.notificationLifecycleId }
+      : {}),
     ...(row.provider === TBANK_ANDROID_PROVIDER
       ? { tbankCardSpecificAccountProofVerified: isTbankCardSpecificAccountProof(row, { scopeKey }) }
       : {}),
@@ -233,6 +239,7 @@ export async function loadBankCashFlowProjection(pool, { scopeKey = null, from =
            bt.event_type AS "sourceEventType", bt.direction,
            bt.normalization_status AS "normalizationStatus", bt.evidence_quality AS "evidenceQuality",
            eo.ingestion_metadata->>'provider' AS provider,
+           eo.ingestion_metadata->>'notificationLifecycleId' AS "notificationLifecycleId",
            bt.account_reference AS "accountReference", bt.account_reference_kind AS "accountReferenceKind",
            r.financial_account_id AS "financialAccountId", r.resolution_state AS "accountResolutionState",
            r.provenance AS "accountResolutionProvenance", a_scope.scope_key AS "financialAccountScopeKey",

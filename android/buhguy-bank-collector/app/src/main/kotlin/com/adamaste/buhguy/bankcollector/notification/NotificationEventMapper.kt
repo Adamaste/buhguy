@@ -17,6 +17,7 @@ data class NotificationSnapshot(
     val bigText: String?,
     val subText: String?,
     val channelId: String? = null,
+    val notificationLifecycleId: String? = null,
 )
 
 class NotificationEventMapper(
@@ -38,6 +39,7 @@ class NotificationEventMapper(
             put("schemaVersion", "1")
             put("sourcePackage", snapshot.packageName)
             snapshot.channelId?.takeIf { it.isNotBlank() }?.let { put("notificationChannel", it) }
+            snapshot.notificationLifecycleId?.takeIf { it.isNotBlank() }?.let { put("notificationLifecycleId", it) }
         }
         return BankNotificationEvent(
             sourceKey = sourceKey,
@@ -52,7 +54,6 @@ class NotificationEventMapper(
     fun deterministicSourceEventId(snapshot: NotificationSnapshot): String {
         val identity = listOf(
             snapshot.packageName,
-            snapshot.notificationKey.orEmpty(),
             snapshot.notificationId.toString(),
             snapshot.notificationTag.orEmpty(),
             snapshot.postTime.toString(),
