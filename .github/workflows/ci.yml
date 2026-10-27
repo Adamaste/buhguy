@@ -13,6 +13,21 @@ on:
         required: false
         type: boolean
         default: false
+      prepare_alfa_apk_pair:
+        description: Build unsigned diagnostic v3 and clean restore v4 APKs (future normal versionCode must be 5+)
+        required: false
+        type: boolean
+        default: false
+      diagnostic_commit_sha:
+        description: Exact reviewed diagnostic source commit SHA (40 hex characters)
+        required: false
+        type: string
+        default: ''
+      confirm_pair_signing:
+        description: Explicitly request signing after protected-environment approval
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -81,7 +96,7 @@ jobs:
 
   test:
     needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' }}
+    if: ${{ needs.changes.outputs.backend == 'true' && inputs.prepare_alfa_apk_pair != true }}
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgresql://postgres:ci-only-password@127.0.0.1:5432/finance_receipt_collector_test_ci
@@ -135,7 +150,7 @@ jobs:
 
   android:
     needs: changes
-    if: ${{ needs.changes.outputs.android == 'true' }}
+    if: ${{ needs.changes.outputs.android == 'true' && inputs.prepare_alfa_apk_pair != true }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -190,7 +205,7 @@ jobs:
   android-signed:
     needs: changes
     if: >-
-      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.build_signed_apk == true }}
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.build_signed_apk == true && inputs.prepare_alfa_apk_pair != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -285,3 +300,543 @@ jobs:
         if: always()
         shell: bash
         run: rm -f "$RUNNER_TEMP/buhguy-bank-collector.jks"
+
+  validate-alfa-apk-pair-request:
+    outputs:
+      signing_allowed: ${{ steps.gate.outputs.signing_allowed }}
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          (inputs.prepare_alfa_apk_pair == true ||
+           inputs.confirm_pair_signing == true ||
+           inputs.diagnostic_commit_sha != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Both values deliberately fail closed. Set only after the exact diagnostic
+    # commit is reviewed and the private Environment's required reviewers are verified.
+    env:
+      APPROVED_DIAGNOSTIC_SHA: '36ff71f6289e5e852c29177a4b1fe9719aa8d3f4'
+      SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
+    steps:
+      - name: Validate pair request and signing gate
+        id: gate
+        shell: bash
+        env:
+          PREPARE_PAIR: ${{ inputs.prepare_alfa_apk_pair }}
+          CONFIRM_SIGNING: ${{ inputs.confirm_pair_signing }}
+          DIAGNOSTIC_SHA: ${{ inputs.diagnostic_commit_sha }}
+          BUILD_SIGNED_APK: ${{ inputs.build_signed_apk }}
+        run: |
+          set -euo pipefail
+          echo "signing_allowed=false" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+            echo "::error::The temporary APK pair workflow may only run from master."
+            exit 1
+          fi
+          if [[ "$PREPARE_PAIR" != "true" ]]; then
+            if [[ "$CONFIRM_SIGNING" == "true" || -n "$DIAGNOSTIC_SHA" ]]; then
+              echo "::error::Pair signing and diagnostic SHA require prepare_alfa_apk_pair=true."
+              exit 1
+            fi
+            exit 0
+          fi
+          if [[ "$BUILD_SIGNED_APK" == "true" ]]; then
+            echo "::error::Choose either the existing single APK job or the temporary pair, not both."
+            exit 1
+          fi
+          if [[ ! "$DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::diagnostic_commit_sha must be an exact lowercase 40-character commit SHA."
+            exit 1
+          fi
+          if [[ "$CONFIRM_SIGNING" == "true" ]]; then
+            if [[ ! "$APPROVED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Signing blocked: no exact diagnostic commit is approved in workflow code."
+              exit 1
+            fi
+            if [[ "$DIAGNOSTIC_SHA" != "$APPROVED_DIAGNOSTIC_SHA" ]]; then
+              echo "::error::Signing blocked: diagnostic_commit_sha is not the independently approved commit."
+              exit 1
+            fi
+            if [[ "$SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED" != "true" ]]; then
+              echo "::error::Signing blocked: required reviewers for the private Environment have not been verified."
+              exit 1
+            fi
+            echo "signing_allowed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-unsigned-alfa-apk-pair:
+    needs: validate-alfa-apk-pair-request
+    if: ${{ inputs.prepare_alfa_apk_pair == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact diagnostic source commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.diagnostic_commit_sha }}
+          path: source/diagnostic
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Checkout clean restore source from this master run
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: source/restore
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Confirm checked out source SHAs
+        shell: bash
+        env:
+          EXPECTED_DIAGNOSTIC_SHA: ${{ inputs.diagnostic_commit_sha }}
+          EXPECTED_RESTORE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          diagnostic_sha="$(git -C source/diagnostic rev-parse HEAD)"
+          restore_sha="$(git -C source/restore rev-parse HEAD)"
+          test "$diagnostic_sha" = "$EXPECTED_DIAGNOSTIC_SHA"
+          test "$restore_sha" = "$EXPECTED_RESTORE_SHA"
+          printf 'Diagnostic source SHA: %s\nRestore source SHA: %s\n' "$diagnostic_sha" "$restore_sha"
+
+      - name: Setup Java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 cmdline-tools;latest'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+
+      - name: Temporarily enable unsigned release builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_gradle_file() {
+            python3 - "$1" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          if source.count('val releaseSigningReady = releaseSigningValues.values.all { !it.isNullOrBlank() }') != 1:
+              raise SystemExit(f"Unexpected signing guard shape in {path}")
+          source = source.replace(
+              'val releaseSigningReady = releaseSigningValues.values.all { !it.isNullOrBlank() }',
+              'val releaseSigningReady = releaseSigningValues.values.all { !it.isNullOrBlank() }\n' +
+              'val allowUnsignedRelease = providers.gradleProperty("allowUnsignedRelease").orNull == "true"',
+          )
+          old_guard = 'if (!releaseSigningReady && allTasks.any {'
+          if source.count(old_guard) != 1:
+              raise SystemExit(f"Unexpected release guard shape in {path}")
+          source = source.replace(old_guard, 'if (!releaseSigningReady && !allowUnsignedRelease && allTasks.any {')
+          matches = list(re.finditer(r'(?m)^(\s*)versionCode\s*=\s*\d+\s*$', source))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one literal versionCode in {path}")
+          match = matches[0]
+          replacement = match.group(1) + 'versionCode = providers.gradleProperty("apkVersionCode").orNull?.toIntOrNull() ?: 2'
+          source = source[:match.start()] + replacement + source[match.end():]
+          if source.count('applicationId = "com.adamaste.buhguy.bankcollector"') != 1:
+              raise SystemExit(f"Unexpected Android applicationId in {path}")
+          path.write_text(source, encoding="utf-8", newline="\n")
+          PY
+          }
+          patch_gradle_file source/diagnostic/android/buhguy-bank-collector/app/build.gradle.kts
+          patch_gradle_file source/restore/android/buhguy-bank-collector/app/build.gradle.kts
+
+      - name: Run diagnostic tests and build unsigned diagnostic APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source/diagnostic/android/buhguy-bank-collector
+          gradle --no-daemon -PallowUnsignedRelease=true -PapkVersionCode=3 testDebugUnitTest assembleRelease
+
+      - name: Build unsigned clean restore APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source/restore/android/buhguy-bank-collector
+          gradle --no-daemon -PallowUnsignedRelease=true -PapkVersionCode=4 assembleRelease
+
+      - name: Validate unsigned APK pair and create safe build report
+        shell: bash
+        env:
+          DIAGNOSTIC_SHA: ${{ inputs.diagnostic_commit_sha }}
+          RESTORE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          analyzer="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer"
+          apksigner="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
+          test -x "$analyzer"
+          test -x "$apksigner"
+          mkdir -p unsigned-pair
+          find_one_apk() {
+            local directory="$1"
+            mapfile -t candidates < <(find "$directory" -maxdepth 1 -type f -name '*.apk' -print)
+            if [[ "${#candidates[@]}" -ne 1 ]]; then
+              echo "::error::Expected exactly one release APK in $directory."
+              exit 1
+            fi
+            printf '%s' "${candidates[0]}"
+          }
+          diagnostic_apk="$(find_one_apk source/diagnostic/android/buhguy-bank-collector/app/build/outputs/apk/release)"
+          restore_apk="$(find_one_apk source/restore/android/buhguy-bank-collector/app/build/outputs/apk/release)"
+          cp "$diagnostic_apk" unsigned-pair/alfa-diagnostic-unsigned.apk
+          cp "$restore_apk" unsigned-pair/buhguy-restore-unsigned.apk
+          unzip -tq unsigned-pair/alfa-diagnostic-unsigned.apk
+          unzip -tq unsigned-pair/buhguy-restore-unsigned.apk
+          "$analyzer" manifest print unsigned-pair/alfa-diagnostic-unsigned.apk > "$RUNNER_TEMP/alfa-manifest.xml"
+          "$analyzer" manifest print unsigned-pair/buhguy-restore-unsigned.apk > "$RUNNER_TEMP/restore-manifest.xml"
+          python3 - "$RUNNER_TEMP/alfa-manifest.xml" "$RUNNER_TEMP/restore-manifest.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          android = "{http://schemas.android.com/apk/res/android}"
+          expected_package = "com.adamaste.buhguy.bankcollector"
+
+          def read_manifest(path):
+              root = ET.parse(path).getroot()
+              package = root.attrib.get("package")
+              version_code = root.attrib.get(android + "versionCode")
+              version_name = root.attrib.get(android + "versionName")
+              if package != expected_package:
+                  raise SystemExit("Unexpected APK package")
+              for node in root.iter():
+                  node.attrib = dict(sorted(node.attrib.items()))
+              root.attrib.pop(android + "versionCode", None)
+              return root, version_code, version_name
+
+          diagnostic, diagnostic_code, diagnostic_name = read_manifest(sys.argv[1])
+          restore, restore_code, restore_name = read_manifest(sys.argv[2])
+          if (diagnostic_code, restore_code) != ("3", "4"):
+              raise SystemExit("Unexpected APK versionCode pair")
+          if diagnostic_name != "1.1" or restore_name != "1.1":
+              raise SystemExit("Unexpected APK versionName")
+          if ET.tostring(diagnostic, encoding="unicode") != ET.tostring(restore, encoding="unicode"):
+              raise SystemExit("Diagnostic and restore manifests differ beyond versionCode")
+          PY
+          for specification in \
+            "unsigned-pair/alfa-diagnostic-unsigned.apk:3" \
+            "unsigned-pair/buhguy-restore-unsigned.apk:4"; do
+            IFS=: read -r apk expected_code <<< "$specification"
+            test "$("$analyzer" manifest version-code "$apk")" = "$expected_code"
+            test "$("$analyzer" manifest debuggable "$apk")" = "false"
+            test "$("$analyzer" manifest min-sdk "$apk")" = "26"
+            test "$("$analyzer" manifest target-sdk "$apk")" = "35"
+          done
+          for apk in unsigned-pair/*.apk; do
+            if "$apksigner" verify "$apk" >/dev/null 2>&1; then
+              echo "::error::An unsigned build unexpectedly contains a valid signature."
+              exit 1
+            fi
+            if unzip -Z1 "$apk" | grep -Eiq '^META-INF/[^/]+\.(RSA|DSA|EC|SF)$'; then
+              echo "::error::An unsigned build unexpectedly contains a v1 signature entry."
+              exit 1
+            fi
+          done
+          diagnostic_sha256="$(sha256sum unsigned-pair/alfa-diagnostic-unsigned.apk | awk '{print $1}')"
+          restore_sha256="$(sha256sum unsigned-pair/buhguy-restore-unsigned.apk | awk '{print $1}')"
+          cat > unsigned-pair/build-report.json <<EOF
+          {
+            "diagnosticSourceSha": "$DIAGNOSTIC_SHA",
+            "restoreSourceSha": "$RESTORE_SHA",
+            "packageName": "com.adamaste.buhguy.bankcollector",
+            "diagnosticVersionCode": 3,
+            "restoreVersionCode": 4,
+            "versionName": "1.1",
+            "diagnosticApkSha256": "$diagnostic_sha256",
+            "restoreApkSha256": "$restore_sha256",
+            "manifestEqualExceptVersionCode": true,
+            "signatureState": "unsigned",
+            "buildReportTrust": "self_reported_not_independent_provenance"
+          }
+          EOF
+
+      - name: Upload short-lived unsigned handoff artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alfa-apk-pair-unsigned-${{ github.run_id }}
+          path: unsigned-pair/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Publish safe pre-sign approval summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - unsigned-pair/build-report.json "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              report = json.load(f)
+          with open(sys.argv[2], "a", encoding="utf-8") as f:
+              f.write("## Unsigned APK pair awaiting separate approval\n\n")
+              f.write("No signing secrets were available to the build job.\n\n")
+              f.write("| Artifact | Source commit | Version code | SHA-256 |\n|---|---|---:|---|\n")
+              f.write(f"| Diagnostic APK | `{report['diagnosticSourceSha']}` | 3 | `{report['diagnosticApkSha256']}` |\n")
+              f.write(f"| Clean restore APK | `{report['restoreSourceSha']}` | 4 | `{report['restoreApkSha256']}` |\n")
+              f.write("\nManifest comparison: identical except versionCode; both non-debuggable, minSdk 26, targetSdk 35.\n")
+              f.write("The report and APK are produced by the same untrusted build job; hashes verify handoff integrity only, not independent APK provenance.\n")
+          PY
+
+  sign-alfa-apk-pair:
+    needs: [build-unsigned-alfa-apk-pair, validate-alfa-apk-pair-request]
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/master' &&
+          inputs.prepare_alfa_apk_pair == true &&
+          inputs.confirm_pair_signing == true &&
+          needs.validate-alfa-apk-pair-request.outputs.signing_allowed == 'true' }}
+    runs-on: ubuntu-latest
+    # Configure this GitHub Environment with required reviewers before any signing run.
+    environment:
+      name: android-release-signing
+    # Keep signer disabled until a fixed source SHA and the private Environment
+    # reviewer protection are independently confirmed.
+    env:
+      APPROVED_DIAGNOSTIC_SHA: '36ff71f6289e5e852c29177a4b1fe9719aa8d3f4'
+      SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED: 'false'
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Setup Android SDK signing tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 cmdline-tools;latest'
+
+      - name: Download unsigned handoff artifact from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: alfa-apk-pair-unsigned-${{ github.run_id }}
+          path: unsigned-pair
+
+      - name: Re-validate source SHAs, checksums, package, versions, and manifest
+        shell: bash
+        env:
+          EXPECTED_DIAGNOSTIC_SHA: ${{ inputs.diagnostic_commit_sha }}
+          EXPECTED_RESTORE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$APPROVED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ||
+                "$EXPECTED_DIAGNOSTIC_SHA" != "$APPROVED_DIAGNOSTIC_SHA" ]]; then
+            echo "::error::Signing blocked: diagnostic SHA is not the fixed approved commit."
+            exit 1
+          fi
+          if [[ "$SIGNING_ENVIRONMENT_REVIEWERS_VERIFIED" != "true" ]]; then
+            echo "::error::Signing blocked: private Environment reviewer protection is unverified."
+            exit 1
+          fi
+          python3 - unsigned-pair/build-report.json <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              report = json.load(f)
+          if report.get("diagnosticSourceSha") != os.environ["EXPECTED_DIAGNOSTIC_SHA"]:
+              raise SystemExit("Diagnostic source SHA mismatch")
+          if report.get("restoreSourceSha") != os.environ["EXPECTED_RESTORE_SHA"]:
+              raise SystemExit("Restore source SHA mismatch")
+          if report.get("packageName") != "com.adamaste.buhguy.bankcollector":
+              raise SystemExit("Package name mismatch")
+          if (report.get("diagnosticVersionCode"), report.get("restoreVersionCode")) != (3, 4):
+              raise SystemExit("Version code mismatch")
+          if report.get("versionName") != "1.1" or report.get("signatureState") != "unsigned":
+              raise SystemExit("Unexpected build metadata")
+          if report.get("buildReportTrust") != "self_reported_not_independent_provenance":
+              raise SystemExit("Unexpected provenance claim")
+          if report.get("manifestEqualExceptVersionCode") is not True:
+              raise SystemExit("Manifest comparison was not passed")
+          for key in ("diagnosticApkSha256", "restoreApkSha256"):
+              if not re.fullmatch(r"[0-9a-f]{64}", str(report.get(key, ""))):
+                  raise SystemExit("Malformed APK checksum")
+          PY
+          test "$(find unsigned-pair -maxdepth 1 -type f | wc -l)" -eq 3
+          analyzer="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer"
+          apksigner="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
+          for specification in \
+            "alfa-diagnostic-unsigned.apk:3:diagnosticApkSha256" \
+            "buhguy-restore-unsigned.apk:4:restoreApkSha256"; do
+            IFS=: read -r name version hash_key <<< "$specification"
+            apk="unsigned-pair/$name"
+            test -f "$apk"
+            actual_hash="$(sha256sum "$apk" | awk '{print $1}')"
+            expected_hash="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' unsigned-pair/build-report.json "$hash_key")"
+            test "$actual_hash" = "$expected_hash"
+            test "$("$analyzer" manifest application-id "$apk")" = "com.adamaste.buhguy.bankcollector"
+            test "$("$analyzer" manifest version-code "$apk")" = "$version"
+            test "$("$analyzer" manifest version-name "$apk")" = "1.1"
+            test "$("$analyzer" manifest debuggable "$apk")" = "false"
+            test "$("$analyzer" manifest min-sdk "$apk")" = "26"
+            test "$("$analyzer" manifest target-sdk "$apk")" = "35"
+            unzip -tq "$apk"
+            if "$apksigner" verify "$apk" >/dev/null 2>&1; then
+              echo "::error::Expected unsigned APK, received a signed APK."
+              exit 1
+            fi
+            if unzip -Z1 "$apk" | grep -Eiq '^META-INF/[^/]+\.(RSA|DSA|EC|SF)$'; then
+              echo "::error::Unexpected v1 signing entry in unsigned APK."
+              exit 1
+            fi
+          done
+          "$analyzer" manifest print unsigned-pair/alfa-diagnostic-unsigned.apk > "$RUNNER_TEMP/alfa-manifest.xml"
+          "$analyzer" manifest print unsigned-pair/buhguy-restore-unsigned.apk > "$RUNNER_TEMP/restore-manifest.xml"
+          python3 - "$RUNNER_TEMP/alfa-manifest.xml" "$RUNNER_TEMP/restore-manifest.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          android = "{http://schemas.android.com/apk/res/android}"
+          expected_package = "com.adamaste.buhguy.bankcollector"
+          def normalized(path, code):
+              root = ET.parse(path).getroot()
+              if root.attrib.get("package") != expected_package:
+                  raise SystemExit("Unexpected manifest package")
+              if root.attrib.get(android + "versionCode") != code:
+                  raise SystemExit("Unexpected manifest versionCode")
+              for node in root.iter():
+                  node.attrib = dict(sorted(node.attrib.items()))
+              root.attrib.pop(android + "versionCode", None)
+              return ET.tostring(root, encoding="unicode")
+          if normalized(sys.argv[1], "3") != normalized(sys.argv[2], "4"):
+              raise SystemExit("Critical manifest contents differ")
+          PY
+
+      - name: Validate release signing secrets are configured
+        shell: bash
+        env:
+          BUHGUY_ANDROID_KEYSTORE_B64: ${{ secrets.BUHGUY_ANDROID_KEYSTORE_B64 }}
+          BUHGUY_ANDROID_STORE_PASSWORD: ${{ secrets.BUHGUY_ANDROID_STORE_PASSWORD }}
+          BUHGUY_ANDROID_KEY_ALIAS: ${{ secrets.BUHGUY_ANDROID_KEY_ALIAS }}
+          BUHGUY_ANDROID_KEY_PASSWORD: ${{ secrets.BUHGUY_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            BUHGUY_ANDROID_KEYSTORE_B64 \
+            BUHGUY_ANDROID_STORE_PASSWORD \
+            BUHGUY_ANDROID_KEY_ALIAS \
+            BUHGUY_ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required Actions secret: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Reconstruct temporary keystore
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.BUHGUY_ANDROID_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$KEYSTORE_B64"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/buhguy-bank-collector.jks"
+          chmod 600 "$RUNNER_TEMP/buhguy-bank-collector.jks"
+
+      - name: Sign and verify approved APK pair
+        shell: bash
+        env:
+          STORE_PASSWORD: ${{ secrets.BUHGUY_ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.BUHGUY_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.BUHGUY_ANDROID_KEY_PASSWORD }}
+          DIAGNOSTIC_SHA: ${{ inputs.diagnostic_commit_sha }}
+          RESTORE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          apksigner="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
+          analyzer="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer"
+          expected_cert="cb619643bbfb6b9235c85c560ba26967d2ca0f28db01fb6a7b9b3d6be484486a"
+          mkdir -p signed-pair
+          sign_one() {
+            local input="$1" output="$2" expected_code="$3"
+            "$apksigner" sign \
+              --ks "$RUNNER_TEMP/buhguy-bank-collector.jks" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass env:STORE_PASSWORD \
+              --key-pass env:KEY_PASSWORD \
+              --out "$output" "$input"
+            "$apksigner" verify --min-sdk-version 26 --print-certs "$output" > "$RUNNER_TEMP/cert-output.txt"
+            actual_cert="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' "$RUNNER_TEMP/cert-output.txt" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+            if [[ "$actual_cert" != "$expected_cert" ]]; then
+              echo "::error::Signed APK certificate does not match the installed release certificate."
+              exit 1
+            fi
+            test "$("$analyzer" manifest application-id "$output")" = "com.adamaste.buhguy.bankcollector"
+            test "$("$analyzer" manifest version-code "$output")" = "$expected_code"
+            test "$("$analyzer" manifest version-name "$output")" = "1.1"
+            test "$("$analyzer" manifest debuggable "$output")" = "false"
+            test "$("$analyzer" manifest min-sdk "$output")" = "26"
+            test "$("$analyzer" manifest target-sdk "$output")" = "35"
+            printf '%s certificate SHA-256: %s\n' "$(basename "$output")" "$actual_cert"
+            sha256sum "$output"
+          }
+          sign_one unsigned-pair/alfa-diagnostic-unsigned.apk signed-pair/alfa-diagnostic.apk 3
+          sign_one unsigned-pair/buhguy-restore-unsigned.apk signed-pair/buhguy-restore.apk 4
+          "$analyzer" manifest print unsigned-pair/alfa-diagnostic-unsigned.apk > "$RUNNER_TEMP/alfa-unsigned-manifest.xml"
+          "$analyzer" manifest print signed-pair/alfa-diagnostic.apk > "$RUNNER_TEMP/alfa-signed-manifest.xml"
+          "$analyzer" manifest print unsigned-pair/buhguy-restore-unsigned.apk > "$RUNNER_TEMP/restore-unsigned-manifest.xml"
+          "$analyzer" manifest print signed-pair/buhguy-restore.apk > "$RUNNER_TEMP/restore-signed-manifest.xml"
+          python3 - "$RUNNER_TEMP/alfa-unsigned-manifest.xml" "$RUNNER_TEMP/alfa-signed-manifest.xml" "$RUNNER_TEMP/restore-unsigned-manifest.xml" "$RUNNER_TEMP/restore-signed-manifest.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          android = "{http://schemas.android.com/apk/res/android}"
+          expected_package = "com.adamaste.buhguy.bankcollector"
+          def normalized(path, code):
+              root = ET.parse(path).getroot()
+              if root.attrib.get("package") != expected_package:
+                  raise SystemExit("Unexpected signed manifest package")
+              if root.attrib.get(android + "versionCode") != code:
+                  raise SystemExit("Unexpected signed manifest versionCode")
+              if root.attrib.get(android + "versionName") != "1.1":
+                  raise SystemExit("Unexpected signed manifest versionName")
+              for node in root.iter():
+                  node.attrib = dict(sorted(node.attrib.items()))
+              root.attrib.pop(android + "versionCode", None)
+              return ET.tostring(root, encoding="unicode")
+          pairs = ((sys.argv[1], sys.argv[2], "3"), (sys.argv[3], sys.argv[4], "4"))
+          for unsigned, signed, code in pairs:
+              if normalized(unsigned, code) != normalized(signed, code):
+                  raise SystemExit("Signing changed the APK manifest")
+          PY
+          diagnostic_sha256="$(sha256sum signed-pair/alfa-diagnostic.apk | awk '{print $1}')"
+          restore_sha256="$(sha256sum signed-pair/buhguy-restore.apk | awk '{print $1}')"
+          cat > signed-pair/verification-report.json <<EOF
+          {
+            "diagnosticSourceSha": "$DIAGNOSTIC_SHA",
+            "restoreSourceSha": "$RESTORE_SHA",
+            "packageName": "com.adamaste.buhguy.bankcollector",
+            "diagnosticVersionCode": 3,
+            "restoreVersionCode": 4,
+            "versionName": "1.1",
+            "certificateSha256": "$expected_cert",
+            "buildReportTrust": "self_reported_not_independent_provenance",
+            "diagnosticApkSha256": "$diagnostic_sha256",
+            "restoreApkSha256": "$restore_sha256"
+          }
+          EOF
+
+      - name: Upload only signed APKs and safe report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alfa-apk-pair-signed-${{ github.run_id }}
+          path: |
+            signed-pair/alfa-diagnostic.apk
+            signed-pair/buhguy-restore.apk
+            signed-pair/verification-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/buhguy-bank-collector.jks" "$RUNNER_TEMP/cert-output.txt"
