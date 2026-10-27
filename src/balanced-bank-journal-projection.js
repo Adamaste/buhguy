@@ -14,6 +14,8 @@ const DIRECTION_CREDIT = 'CREDIT';
 const EVENT_TYPE_UNKNOWN = 'UNKNOWN';
 const VALID_CURRENCIES = /^[A-Z]{3}$/;
 const AMOUNT_PATTERN = /^(\d+)(?:\.(\d{1,2}))?$/;
+const ALFA_ANDROID_PROVIDER = 'ru.alfabank.mobile.android';
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function canonicalAmount(value) {
   if (value == null || value === '') return null;
@@ -104,6 +106,10 @@ function sourceProvenance(source) {
       ? { sourceProviderBindingVerified: source.sourceProviderBindingVerified === true }
       : {}),
     ...(typeof source.provider === 'string' ? { provider: source.provider } : {}),
+    ...(source.provider === ALFA_ANDROID_PROVIDER
+      && OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(source.notificationLifecycleId ?? '')
+      ? { notificationLifecycleId: source.notificationLifecycleId }
+      : {}),
     ...(source.tbankCardSpecificAccountProofVerified !== undefined
       ? { tbankCardSpecificAccountProofVerified: source.tbankCardSpecificAccountProofVerified === true }
       : {}),

@@ -285,9 +285,18 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     );
     await fs.copyFile(path.join(source, ...relative.split('/')), stagedPath);
   }
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  const npm = spawnSync(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--offline'], { cwd: stage, encoding: 'utf8', stdio: 'ignore', timeout: 60_000 });
-  assert.equal(npm.status, 0, `synthetic npm ci failed (${npm.error?.code ?? npm.status})`);
+  const npmCliCandidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter(Boolean);
+  let npmCli = null;
+  for (const candidate of npmCliCandidates) {
+    try { await fs.access(candidate); npmCli = candidate; break; } catch { /* Try the next standard npm installation path. */ }
+  }
+  assert.ok(npmCli, `npm CLI not found for Node.js at ${process.execPath}`);
+  const npm = spawnSync(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--offline'], { cwd: stage, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(npm.status, 0, `synthetic npm ci failed (${npm.error?.code ?? npm.status}): ${(npm.stderr ?? '').slice(-2000)}`);
   const dependencyLock = path.join(stage, 'node_modules', '.package-lock.json');
   try { await fs.access(dependencyLock); } catch {
     await fs.mkdir(path.dirname(dependencyLock), { recursive: true });

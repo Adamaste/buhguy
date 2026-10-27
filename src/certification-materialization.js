@@ -198,7 +198,8 @@ async function materialize(pool, { scopeKey = 'default', expectedSourceStateKey,
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch { destroyClient = true; }
     if (supportsTransactionTimeout && transactionTimeoutConfigured
-      && ['Connection terminated unexpectedly', 'terminating connection due to transaction timeout'].includes(error?.message)) {
+      && (error?.code === '25P04'
+        || ['Connection terminated unexpectedly', 'terminating connection due to transaction timeout'].includes(error?.message))) {
       destroyClient = true;
       throw materializationError('Certification materialization transaction timeout', 'CERTIFICATION_MATERIALIZATION_TIMEOUT');
     }

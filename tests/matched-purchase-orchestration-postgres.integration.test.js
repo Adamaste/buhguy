@@ -297,7 +297,7 @@ integration('read-only runner rejects a mutation at the PostgreSQL boundary and 
         await client.query('INSERT INTO receipts DEFAULT VALUES');
         return null;
       },
-    }), /read-only|25006/i);
+    }), (error) => error.code === '25006');
     assert.equal(await snapshot(pool), before);
   } finally { await pool.end(); }
 });

@@ -19,6 +19,7 @@ import java.time.Instant
 
 class BankNotificationListenerService : NotificationListenerService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lifecycleStore by lazy { NotificationLifecycleStore(this) }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val callbackAt = Instant.now().toString()
@@ -176,11 +177,31 @@ class BankNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        val preferences = AppPreferences(this)
+        val registry = BankProviderRegistry.fromPackageAllowlist(preferences.allowedPackages())
+        if (registry.match(sbn.packageName, sbn.notification.channelId) != null) {
+            lifecycleStore.finishLifecycle(sbn.key)
+        }
+        super.onNotificationRemoved(sbn)
+    }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
         val timestamp = Instant.now().toString()
         BankCaptureDiagnostics.log(BankCaptureLogEvent(stage = "listener", listenerState = "connected"))
         AppPreferences(this).markListenerState(timestamp, "connected")
+        try {
+            val preferences = AppPreferences(this)
+            val registry = BankProviderRegistry.fromPackageAllowlist(preferences.allowedPackages())
+            val activeNotifications = getActiveNotifications() ?: return
+            val activeKeys = activeNotifications
+                .filter { registry.match(it.packageName, it.notification.channelId) != null }
+                .map { it.key }
+            lifecycleStore.retainActiveNotificationKeys(activeKeys)
+        } catch (_: Exception) {
+            // A failed reconciliation must not discard persisted lifecycle IDs.
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -208,6 +229,7 @@ class BankNotificationListenerService : NotificationListenerService() {
             bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.take(4096),
             subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.take(4096),
             channelId = channelId,
+            notificationLifecycleId = lifecycleStore.lifecycleId(key),
         )
     }
 }

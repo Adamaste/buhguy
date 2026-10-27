@@ -7,7 +7,7 @@ export const TBANK_DEBIT_PURCHASE_PARSER_ENABLED_ENV = 'TBANK_DEBIT_PURCHASE_PAR
 const SOURCE_TYPES = new Set(['ANDROID_NOTIFICATION', 'BANK_API', 'MANUAL_IMPORT']);
 const DIRECTIONS = new Set(['DEBIT', 'CREDIT', 'UNKNOWN']);
 const PAYLOAD_KEYS = new Set(['amount', 'currency', 'direction', 'merchant', 'counterparty', 'accountReference', 'accountReferenceKind', 'occurredAt', 'description', 'title', 'text', 'eventType', 'reference']);
-const METADATA_KEYS = new Set(['adapter', 'provider', 'deviceType', 'schemaVersion', 'sourcePackage', 'notificationChannel']);
+const METADATA_KEYS = new Set(['adapter', 'provider', 'deviceType', 'schemaVersion', 'sourcePackage', 'notificationChannel', 'notificationLifecycleId']);
 const SECRET_KEY = /(token|cookie|password|secret|authorization|credential|session|private.?key)/i;
 const MAX_SCALAR_LENGTH = 4096;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
@@ -62,6 +62,10 @@ function validateMetadata(metadata = {}) {
     if (!METADATA_KEYS.has(key)) throw new Error(`ingestionMetadata field is not allowed: ${key}`);
     if (metadata[key] !== null && typeof metadata[key] !== 'string') throw new Error(`ingestionMetadata field must be text: ${key}`);
     if (typeof metadata[key] === 'string' && metadata[key].length > MAX_SCALAR_LENGTH) throw new Error(`ingestionMetadata field is too long: ${key}`);
+  }
+  if (metadata.notificationLifecycleId != null
+    && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(metadata.notificationLifecycleId)) {
+    throw new Error('ingestionMetadata.notificationLifecycleId must be an opaque UUID');
   }
   return metadata;
 }

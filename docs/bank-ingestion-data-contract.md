@@ -93,6 +93,34 @@ destination identity is inferred. Other Alfa families, metadata mismatches,
 malformed variants, and ambiguous notifications remain on the generic
 normalizer. Historical v3 rows are not rewritten or backfilled.
 
+The additional active rule `alfa-troika-card-purchase-v1` recognizes only the
+user-confirmed Alfa card-notification shape `- <integer> ₽. Тройка` paired
+with `Тройка: <same amount>,00 ₽; •• 5580` in both `description` and `text`.
+It also requires the `ru.alfabank.mobile.android` source package, a valid
+opaque notification lifecycle UUID, a positive matching amount, and Android
+event time. A debit sign or the word `Тройка` alone is never sufficient. The
+separate exact F5 transfer grammar remains unchanged. Other Alfa messages,
+including transfers, empty companions, and incomplete notifications, stay
+unknown or partial.
+
+For future automatic accounting, the regular bank-only writer additionally
+requires `BANK_ONLY_PURCHASE_ALFA_START_AT` as an explicit UTC timestamp.
+It evaluates the observation's database `created_at`; missing/invalid cutoff
+or missing lifecycle identity blocks Alfa writes. The global bank-only
+enable/scope/cutoff still apply. The Android collector derives the lifecycle
+lookup key with a non-exportable Android Keystore HMAC and sends only a random
+UUID; it never sends the original Android notification key. Exact updates in
+one lifecycle are reused/deduplicated, and the standard FNS matcher uses that
+same lifecycle to avoid a second active purchase.
+
+The old manual Troika write APIs are disabled. Existing tables and historical
+read/certification paths remain for compatibility; no rows are deleted or
+rewritten. New top-ups use the ordinary bank-only purchase and FNS matching
+path. The existing bank-only model does not automatically allocate a spending
+category from merchant text, so a new purchase remains `UNCLASSIFIED` until
+the regular category-allocation path assigns it; this change does not create a
+Troika-specific category ledger.
+
 ## T-Bank Android normalization v2
 
 The active `tbank-bank-normalizer-v2` is scoped to provider

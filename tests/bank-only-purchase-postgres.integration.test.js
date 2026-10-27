@@ -21,11 +21,12 @@ const integration = databaseUrl ? test : test.skip;
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 let fixtureSequence = 0;
 
-function optIn(scopeKey, now = new Date()) {
+function optIn(scopeKey, now = new Date(), alfaStartAt = null) {
   return {
     enabled: true,
     scopeKey,
     startAt: new Date(new Date(now).getTime() - 86400000).toISOString(),
+    alfaStartAt,
     maxWrites: 25,
   };
 }
@@ -50,11 +51,12 @@ async function createTransaction(pool, context, {
   occurredAt = new Date(Date.now() - 60000).toISOString(), observedAt = occurredAt, amount = '83.41', currency = 'RUB',
   eventType = 'PURCHASE', direction = 'DEBIT', normalizationStatus = 'READY', evidenceQuality = 'EXACT',
   merchant = null, accountReference = null, accountReferenceKind = null, accountResolved = true,
-  tbankInstrumentId = null, tbankResolutionState = 'EXACT',
+  tbankInstrumentId = null, tbankResolutionState = 'EXACT', notificationLifecycleId = null,
 } = {}) {
   const dedupKey = digest(`${context.suffix}:${occurredAt}:${eventType}:${direction}:${accountReference ?? ''}:${fixtureSequence += 1}`);
   const observationId = Number((await pool.query(`INSERT INTO bank_event_observations(bank_source_id,dedup_key,observed_at,event_time,payload,payload_sha256,ingestion_metadata)
-    VALUES($1,$2,$3,$4,'{}'::jsonb,$2,jsonb_build_object('provider',$5::text)) RETURNING id`, [context.sourceId, dedupKey, observedAt, occurredAt, context.provider])).rows[0].id);
+    VALUES($1,$2,$3,$4,'{}'::jsonb,$2,$5::jsonb) RETURNING id`, [context.sourceId, dedupKey, observedAt, occurredAt,
+    JSON.stringify({ provider: context.provider, ...(notificationLifecycleId ? { notificationLifecycleId } : {}) })])).rows[0].id);
   const transaction = (await pool.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,merchant,event_type,normalization_status,normalization_version,evidence_quality,account_reference,account_reference_kind)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,'synthetic-bank-only-v1',$9,$10,$11) RETURNING id`, [observationId, occurredAt, amount, currency, direction, merchant, eventType, normalizationStatus, evidenceQuality, accountReference, accountReferenceKind])).rows[0];
   const bankTransactionId = Number(transaction.id);
@@ -433,6 +435,121 @@ integration('disabling bank-only stops new writes while existing ledger, FNS-onl
     assert.deepEqual((await latestCanonicalPurchases(pool, bank)).map(row => row.amount), ['83.41']);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_entry_supersessions
       WHERE scope_id=$1 AND reason_code='BANK_ONLY_PURCHASE_MATCHED_REFINEMENT'`, [bank.scopeId])).rows[0].count, 1);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration('confirmed Alfa Troika card purchases use the ordinary bank-only path once per lifecycle and match FNS without a second active expense', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 6 });
+  try {
+    await pool.query(await readFile(new URL('../db/analytics/011_canonical_spending_analytics_v1.sql', import.meta.url), 'utf8'));
+    const now = new Date(Date.now() + 5000);
+    const context = await createContext(pool, 'ru.alfabank.mobile.android');
+    const lifecycleId = crypto.randomUUID();
+    const occurredAt = new Date(now.getTime() - 90000).toISOString();
+    const alfaStartAt = new Date(now.getTime() - 120000).toISOString();
+    const withoutAlfaCutoff = await createTransaction(pool, context, {
+      occurredAt: new Date(now.getTime() - 130000).toISOString(),
+      observedAt: new Date(now.getTime() - 125000).toISOString(), amount: null, eventType: 'UNKNOWN', direction: 'UNKNOWN',
+      normalizationStatus: 'PARTIAL', evidenceQuality: 'PARTIAL', merchant: 'Тройка', accountReference: '****5580',
+      accountReferenceKind: 'MASKED_CARD', notificationLifecycleId: crypto.randomUUID(),
+    });
+    await pool.query(`UPDATE bank_event_observations SET created_at=$2
+      WHERE id=(SELECT observation_id FROM bank_transactions WHERE id=$1)`, [withoutAlfaCutoff.bankTransactionId, new Date(now.getTime() - 125000)]);
+    const cutoffMissing = await writeBankOnlyPurchase(pool, {
+      bankTransactionId: withoutAlfaCutoff.bankTransactionId, optIn: optIn(context.scopeKey, now), now,
+    });
+    assert.equal(cutoffMissing.status, 'BLOCKED');
+    assert.equal(cutoffMissing.reasonCode, 'ALFA_PURCHASE_CUTOFF_REQUIRED');
+    const preCutoff = await createTransaction(pool, context, {
+      occurredAt: new Date(now.getTime() - 900000).toISOString(),
+      observedAt: new Date(now.getTime() - 125000).toISOString(), amount: '17.00',
+      merchant: 'Тройка', accountReference: '****5580', accountReferenceKind: 'MASKED_CARD',
+      notificationLifecycleId: crypto.randomUUID(),
+    });
+    await pool.query(`UPDATE bank_event_observations SET created_at=$2
+      WHERE id=(SELECT observation_id FROM bank_transactions WHERE id=$1)`, [preCutoff.bankTransactionId, new Date(now.getTime() - 125000)]);
+    const first = await createTransaction(pool, context, {
+      occurredAt, observedAt: new Date(Date.parse(occurredAt) + 11000).toISOString(), amount: '17.00',
+      merchant: 'Тройка', accountReference: '****5580', accountReferenceKind: 'MASKED_CARD',
+      notificationLifecycleId: lifecycleId,
+    });
+    const update = await createTransaction(pool, context, {
+      occurredAt: new Date(Date.parse(occurredAt) + 1000).toISOString(),
+      observedAt: new Date(Date.parse(occurredAt) + 12000).toISOString(), amount: '17.00',
+      merchant: 'Тройка', accountReference: '****5580', accountReferenceKind: 'MASKED_CARD',
+      notificationLifecycleId: lifecycleId,
+    });
+    const optInValue = optIn(context.scopeKey, now, alfaStartAt);
+    const caughtUp = await runBankOnlyPurchaseCatchup(pool, {
+      scopeKey: context.scopeKey, optIn: optInValue, now, logger: { info() {} },
+    });
+    assert.equal(caughtUp.status, 'COMPLETED');
+    assert.equal(caughtUp.examined, 1, 'only the first exact monetary post in a lifecycle is eligible');
+    assert.equal(caughtUp.persisted, 1);
+    const oldCohort = await writeBankOnlyPurchase(pool, { bankTransactionId: preCutoff.bankTransactionId, optIn: optInValue, now });
+    assert.equal(oldCohort.status, 'BLOCKED');
+    assert.equal(oldCohort.reasonCode, 'OUTSIDE_COHORT');
+    assert.equal((await writeBankOnlyPurchase(pool, { bankTransactionId: first.bankTransactionId, optIn: optInValue, now })).status, 'REUSED');
+    const replay = await writeBankOnlyPurchase(pool, { bankTransactionId: update.bankTransactionId, optIn: optInValue, now });
+    assert.equal(replay.status, 'REUSED');
+    assert.equal(replay.reasonCode, 'ALFA_NOTIFICATION_LIFECYCLE_ALREADY_ACCOUNTED');
+    assert.equal(await activePurchaseLedgerCount(pool, context), 1);
+    const evidence = (await pool.query(`SELECT evidence_snapshot->>'merchant' AS merchant,
+        evidence_snapshot->>'accountReference' AS account_reference,
+        evidence_snapshot->>'accountReferenceKind' AS account_reference_kind,
+        evidence_snapshot->>'notificationLifecycleId' AS lifecycle_id
+      FROM business_event_bank_evidence WHERE bank_transaction_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [first.bankTransactionId])).rows[0];
+    assert.equal(evidence.merchant, 'Тройка');
+    assert.equal(evidence.account_reference, '****5580');
+    assert.equal(evidence.account_reference_kind, 'MASKED_CARD');
+    assert.equal(evidence.lifecycle_id, lifecycleId);
+
+    const receiptId = await createReceipt(pool, context, { amount: '17.00', dateTime: occurredAt, suffix: 'alfa-troika' });
+    await writeStandaloneReceipt(pool, context, receiptId);
+    assert.equal(await activePurchaseLedgerCount(pool, context), 2, 'bank and receipt evidence temporarily have separate entries before matching');
+    const from = new Date(Date.parse(occurredAt) - 300000).toISOString();
+    const to = new Date(Date.parse(occurredAt) + 300001).toISOString();
+    const matching = await loadBankReceiptMatching(pool, {
+      scopeKey: context.scopeKey, from, to,
+      internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000,
+    });
+    const candidate = matching.matches.find((item) => item.bank.bankTransactionId === first.bankTransactionId
+      && item.receipt.receiptId === receiptId);
+    const updateStatus = matching.bankStatuses.find((item) => item.bankTransactionId === update.bankTransactionId);
+    assert.equal(updateStatus.status, 'INELIGIBLE');
+    assert.equal(updateStatus.reasonCode, 'DUPLICATE_ALFA_NOTIFICATION_LIFECYCLE');
+    assert.ok(candidate, JSON.stringify({
+      summary: matching.summary,
+      bankStatuses: matching.bankStatuses.map(({ bankTransactionId, status, reasonCode }) => ({ bankTransactionId, status, reasonCode })),
+      receiptStatuses: matching.receiptStatuses.map(({ receiptId: id, status, reasonCode }) => ({ receiptId: id, status, reasonCode })),
+    }));
+    const matched = await persistMatchedPurchase(pool, {
+      scopeKey: context.scopeKey, matchKey: candidate.matchKey, from, to,
+      internalTransferMaxTimeDeltaMs: 300000, receiptMaxTimeDeltaMs: 300000,
+    });
+    assert.ok(['PERSISTED', 'REUSED'].includes(matched.outcome));
+    assert.equal(await activePurchaseLedgerCount(pool, context), 1);
+
+    const unknown = await createTransaction(pool, context, {
+      occurredAt: new Date(Date.parse(occurredAt) + 30000).toISOString(), amount: null,
+      merchant: 'Тройка', eventType: 'UNKNOWN', direction: 'UNKNOWN',
+      normalizationStatus: 'PARTIAL', evidenceQuality: 'PARTIAL',
+      notificationLifecycleId: crypto.randomUUID(),
+    });
+    const unknownResult = await writeBankOnlyPurchase(pool, { bankTransactionId: unknown.bankTransactionId, optIn: optInValue, now });
+    assert.equal(unknownResult.status, 'BLOCKED');
+    assert.equal(unknownResult.reasonCode, 'PURCHASE_PROOF_INCOMPLETE');
+    const transfer = await createTransaction(pool, context, {
+      occurredAt: new Date(Date.parse(occurredAt) + 40000).toISOString(), amount: '17.00',
+      eventType: 'OUTGOING_TRANSFER', direction: 'DEBIT', merchant: null,
+      notificationLifecycleId: crypto.randomUUID(),
+    });
+    const transferResult = await writeBankOnlyPurchase(pool, { bankTransactionId: transfer.bankTransactionId, optIn: optInValue, now });
+    assert.equal(transferResult.status, 'BLOCKED');
+    assert.equal(transferResult.reasonCode, 'PURCHASE_PROOF_INCOMPLETE');
+    assert.equal(await activePurchaseLedgerCount(pool, context), 1);
   } finally {
     await pool.end();
   }

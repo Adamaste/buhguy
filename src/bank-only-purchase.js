@@ -19,9 +19,12 @@ import {
 export const BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV = 'BANK_ONLY_PURCHASE_LEDGER_ENABLED';
 export const BANK_ONLY_PURCHASE_LEDGER_SCOPE_ENV = 'BANK_ONLY_PURCHASE_LEDGER_SCOPE';
 export const BANK_ONLY_PURCHASE_LEDGER_START_AT_ENV = 'BANK_ONLY_PURCHASE_LEDGER_START_AT';
+export const BANK_ONLY_PURCHASE_ALFA_START_AT_ENV = 'BANK_ONLY_PURCHASE_ALFA_START_AT';
 export const BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES = 25;
 export const BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES = BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES * 10;
 const INTERNAL_TRANSFER_MAX_TIME_DELTA_MS = 300000;
+const ALFA_ANDROID_PROVIDER = 'ru.alfabank.mobile.android';
+const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const SHA256 = /^[0-9a-f]{64}$/i;
 const MONEY = /^(?:0|[1-9]\d*)\.\d{2}$/;
@@ -40,6 +43,7 @@ function canonicalize(value) {
 }
 
 function iso(value) {
+  if (value == null || value === '') return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
@@ -48,8 +52,9 @@ export function readBankOnlyPurchaseLedgerOptIn(env = process.env) {
   if (env[BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV] !== 'true') return { enabled: false, reasonCode: 'DISABLED' };
   const scopeKey = safeScope(env[BANK_ONLY_PURCHASE_LEDGER_SCOPE_ENV]);
   const startAt = iso(env[BANK_ONLY_PURCHASE_LEDGER_START_AT_ENV]);
+  const alfaStartAt = iso(env[BANK_ONLY_PURCHASE_ALFA_START_AT_ENV]);
   if (!scopeKey || !startAt) return { enabled: false, reasonCode: 'CONFIG_INVALID' };
-  return { enabled: true, scopeKey, startAt, maxWrites: BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES };
+  return { enabled: true, scopeKey, startAt, alfaStartAt, maxWrites: BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES };
 }
 
 function blocked(reasonCode) { return { status: 'BLOCKED', reasonCode }; }
@@ -84,11 +89,60 @@ async function inspectReceiptMatchStatus(client, { scopeKey, occurredAt, bankTra
 async function eventSourceRow(client, bankTransactionId) {
   return (await client.query(`SELECT bt.id AS "bankTransactionId",bt.observation_id AS "observationId",
       bt.occurred_at AS "occurredAt",bt.amount::text AS amount,bt.currency,
+      bt.merchant,bt.account_reference AS "accountReference",bt.account_reference_kind AS "accountReferenceKind",
       eo.bank_source_id AS "bankSourceId",eo.created_at AS "observedAt",
-      eo.ingestion_metadata->>'provider' AS provider
+      eo.ingestion_metadata->>'provider' AS provider,
+      eo.ingestion_metadata->>'notificationLifecycleId' AS "notificationLifecycleId"
     FROM bank_transactions bt
     JOIN bank_event_observations eo ON eo.id=bt.observation_id
     WHERE bt.id=$1`, [bankTransactionId])).rows[0] ?? null;
+}
+
+async function existingAlfaLifecycleState(client, { source, purchase, scopeId, bankTransactionId }) {
+  if (source.provider !== ALFA_ANDROID_PROVIDER) return null;
+  if (!OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(source.notificationLifecycleId ?? '')) {
+    return { status: 'BLOCKED', reasonCode: 'ALFA_LIFECYCLE_ID_REQUIRED' };
+  }
+  const siblings = (await client.query(`SELECT bt.id,bt.amount::text AS amount,bt.currency,bt.event_type,bt.direction,
+      bt.normalization_status,bt.evidence_quality,
+      COALESCE(be.financial_account_id,resolution.financial_account_id) AS financial_account_id,
+      EXISTS (SELECT 1 FROM bank_receipt_matches matched WHERE matched.bank_transaction_id=bt.id) AS matched
+    FROM bank_event_observations observation
+    JOIN bank_transactions bt ON bt.observation_id=observation.id
+    LEFT JOIN business_event_bank_evidence be ON be.bank_transaction_id=bt.id
+      AND be.evidence_role=$4
+    LEFT JOIN bank_transaction_account_resolution resolution ON resolution.bank_transaction_id=bt.id
+    WHERE observation.bank_source_id=$1
+      AND observation.ingestion_metadata->>'provider'=$2
+      AND observation.ingestion_metadata->>'notificationLifecycleId'=$3
+      AND bt.id<>$5 AND (be.id IS NOT NULL OR EXISTS (
+        SELECT 1 FROM bank_receipt_matches matched WHERE matched.bank_transaction_id=bt.id))
+    ORDER BY bt.id`, [source.bankSourceId, ALFA_ANDROID_PROVIDER, source.notificationLifecycleId,
+    BANK_ONLY_PURCHASE_EVIDENCE_ROLE, bankTransactionId])).rows;
+  if (siblings.length === 0) return null;
+  if (siblings.length !== 1) return { status: 'BLOCKED', reasonCode: 'ALFA_LIFECYCLE_ACCOUNTING_CONFLICT' };
+  const sibling = siblings[0];
+  if (sibling.event_type !== 'PURCHASE' || sibling.direction !== 'DEBIT'
+    || sibling.normalization_status !== 'READY' || sibling.evidence_quality !== 'EXACT'
+    || String(sibling.amount) !== purchase.entry.amount || sibling.currency !== purchase.entry.currency
+    || Number(sibling.financial_account_id) !== purchase.financialAccountId) {
+    return { status: 'BLOCKED', reasonCode: 'ALFA_LIFECYCLE_ACCOUNTING_CONFLICT' };
+  }
+  const activeLedger = (await client.query(`SELECT DISTINCT entry.id,entry.source_event_id
+    FROM ledger_source_links link JOIN ledger_entries entry ON entry.id=link.ledger_entry_id
+    WHERE link.bank_transaction_id=$1
+      AND entry.scope_id=$2
+      AND entry.derivation_rule IN ('LEDGER_BANK_ONLY_PURCHASE_V1','LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1')
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions supersession
+        WHERE supersession.scope_id=entry.scope_id AND supersession.superseded_ledger_entry_id=entry.id)
+    ORDER BY entry.id`, [sibling.id, scopeId])).rows;
+  if (activeLedger.length !== 1) return { status: 'BLOCKED', reasonCode: 'ALFA_LIFECYCLE_ACTIVE_LEDGER_CONFLICT' };
+  return {
+    status: 'REUSED',
+    reasonCode: 'ALFA_NOTIFICATION_LIFECYCLE_ALREADY_ACCOUNTED',
+    eventId: Number(activeLedger[0].source_event_id),
+    ledgerEntryId: Number(activeLedger[0].id),
+  };
 }
 
 async function existingState(client, scope, bankTransactionId) {
@@ -207,6 +261,10 @@ async function persistEntryAtomic(client, { scopeKey, scope, source, purchase, o
     provider: source.provider,
     eventType: 'PURCHASE', direction: 'DEBIT', normalizationStatus: 'READY', evidenceQuality: 'EXACT',
     amount: purchase.entry.amount, currency: purchase.entry.currency, occurredAt: purchase.entry.occurredAt,
+    merchant: source.merchant ?? null,
+    accountReference: source.accountReference ?? null,
+    accountReferenceKind: tbank?.accountReferenceKind ?? source.accountReferenceKind ?? null,
+    notificationLifecycleId: source.notificationLifecycleId ?? null,
     receiptMatchStatusAtWrite,
     scopeKey, financialAccountId: purchase.financialAccountId,
     accountResolutionState: proof.accountResolutionState,
@@ -214,7 +272,6 @@ async function persistEntryAtomic(client, { scopeKey, scope, source, purchase, o
     accountProofMethod,
     sourceProviderBindingVerified: proof.sourceProviderBindingVerified === true,
     tbankCardSpecificAccountProofVerified: proof.tbankCardSpecificAccountProofVerified === true,
-    accountReferenceKind: tbank?.accountReferenceKind ?? null,
     paymentInstrumentId: tbank?.paymentInstrumentId == null ? null : Number(tbank.paymentInstrumentId),
     paymentInstrumentResolutionState: tbank?.paymentInstrumentResolutionState ?? null,
     paymentInstrumentResolutionProvenance: tbank?.paymentInstrumentResolutionProvenance ?? null,
@@ -264,10 +321,17 @@ export async function writeBankOnlyPurchase(pool, { bankTransactionId, optIn = r
     await lockMatchedPurchaseSourceProvider(client, Number(source.bankSourceId), source.provider);
     source = await eventSourceRow(client, txId);
     if (!source || !source.provider) return await rollbackResult(client, 'BANK_SOURCE_INVALID');
+    const alfaStartAt = iso(optIn.alfaStartAt);
+    if (source.provider === ALFA_ANDROID_PROVIDER
+      && (!alfaStartAt || alfaStartAt !== optIn.alfaStartAt
+        || !OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(source.notificationLifecycleId ?? ''))) {
+      return await rollbackResult(client, !alfaStartAt ? 'ALFA_PURCHASE_CUTOFF_REQUIRED' : 'ALFA_LIFECYCLE_ID_REQUIRED');
+    }
     const observedAt = Date.parse(source.observedAt);
     const occurredAt = Date.parse(source.occurredAt);
     const nowMs = new Date(now).getTime();
-    const tooEarly = !Number.isFinite(observedAt) || observedAt < Date.parse(cutoff);
+    const providerCutoff = source.provider === ALFA_ANDROID_PROVIDER ? Date.parse(alfaStartAt) : Date.parse(cutoff);
+    const tooEarly = !Number.isFinite(observedAt) || observedAt < Date.parse(cutoff) || observedAt < providerCutoff;
     if (tooEarly || !Number.isFinite(occurredAt) || !Number.isFinite(nowMs)
       || observedAt > nowMs || occurredAt > nowMs) return await rollbackResult(client, 'OUTSIDE_COHORT');
     const linkedMatch = (await client.query('SELECT id FROM bank_receipt_matches WHERE bank_transaction_id=$1', [txId])).rows;
@@ -283,6 +347,12 @@ export async function writeBankOnlyPurchase(pool, { bankTransactionId, optIn = r
     });
     const purchase = projectedPurchase(projection, txId, scopeKey);
     if (!purchase) return await rollbackResult(client, 'PURCHASE_PROOF_INCOMPLETE');
+    const lifecycleState = await existingAlfaLifecycleState(client, { source, purchase, scopeId: Number(scope.id), bankTransactionId: txId });
+    if (lifecycleState?.status === 'BLOCKED') return await rollbackResult(client, lifecycleState.reasonCode);
+    if (lifecycleState?.status === 'REUSED') {
+      await client.query('COMMIT');
+      return lifecycleState;
+    }
     const receiptMatchStatusAtWrite = await inspectReceiptMatchStatus(client, {
       scopeKey, occurredAt, bankTransactionId: txId,
     });
@@ -347,7 +417,23 @@ export async function runBankOnlyPurchaseCatchup(pool, { scopeKey = null, optIn 
       AND NOT EXISTS (SELECT 1 FROM business_event_bank_evidence be
         WHERE be.bank_transaction_id=bt.id AND be.evidence_role=$4)
       AND NOT EXISTS (SELECT 1 FROM ledger_source_links l WHERE l.bank_transaction_id=bt.id)
-    ORDER BY eo.created_at,bt.id LIMIT $5`, [optIn.startAt, new Date(now).toISOString(), optIn.scopeKey, BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES])).rows;
+      AND (eo.ingestion_metadata->>'provider' IS DISTINCT FROM $6::text
+        OR ($7::timestamptz IS NOT NULL AND eo.created_at >= $7::timestamptz
+          AND nullif(eo.ingestion_metadata->>'notificationLifecycleId','') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_event_observations prior_observation
+            JOIN bank_transactions prior_transaction ON prior_transaction.observation_id=prior_observation.id
+            WHERE prior_observation.bank_source_id=eo.bank_source_id
+              AND prior_observation.ingestion_metadata->>'provider'=$6::text
+              AND prior_observation.ingestion_metadata->>'notificationLifecycleId'=eo.ingestion_metadata->>'notificationLifecycleId'
+              AND prior_transaction.event_type='PURCHASE' AND prior_transaction.direction='DEBIT'
+              AND prior_transaction.normalization_status='READY' AND prior_transaction.evidence_quality='EXACT'
+              AND (prior_observation.created_at<eo.created_at
+                OR (prior_observation.created_at=eo.created_at AND prior_transaction.id<bt.id))
+          )))
+    ORDER BY eo.created_at,bt.id LIMIT $5`, [optIn.startAt, new Date(now).toISOString(), optIn.scopeKey,
+    BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES,
+    ALFA_ANDROID_PROVIDER, optIn.alfaStartAt ?? null])).rows;
   const result = { status: 'COMPLETED', reasonCode: null, examined: candidates.length, persisted: 0, reused: 0, blocked: 0, errors: 0 };
   for (const row of candidates) {
     if (result.persisted + result.reused >= BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES) break;

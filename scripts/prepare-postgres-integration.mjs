@@ -5,6 +5,7 @@ import { backfillNormalization } from '../src/fiscal-normalization.js';
 import { BusinessEventGraphRepository, GRAPH_MODEL_VERSION, SYSTEM_DERIVED } from '../src/business-event-graph.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { rebuildCertification } from '../src/certification.js';
+import { STANDALONE_PURCHASE_VERSION } from '../src/standalone-purchase.js';
 import { assertDisposableLocalTestDatabase } from './assert-disposable-local-test-database.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -66,7 +67,7 @@ try {
     origin: SYSTEM_DERIVED,
     graphModelVersion: GRAPH_MODEL_VERSION,
     ruleCode: 'STANDALONE_PURCHASE_V1',
-    ruleVersion: 'v1',
+    ruleVersion: STANDALONE_PURCHASE_VERSION,
     semanticKey: 'synthetic-integration-purchase',
     amount: 32380,
     currency: 'RUB',
@@ -79,7 +80,7 @@ try {
     origin: SYSTEM_DERIVED,
     graphModelVersion: GRAPH_MODEL_VERSION,
     ruleCode: 'STANDALONE_PURCHASE_V1',
-    ruleVersion: 'v1',
+    ruleVersion: STANDALONE_PURCHASE_VERSION,
   });
   await rebuildLedger(pool, { eventIds: [event.id] });
   await rebuildCertification(pool, { persist: true, replace: true });
