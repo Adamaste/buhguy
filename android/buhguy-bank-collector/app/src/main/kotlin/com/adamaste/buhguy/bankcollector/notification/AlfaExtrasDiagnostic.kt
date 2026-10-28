@@ -2,6 +2,8 @@ package com.adamaste.buhguy.bankcollector.notification
 
 import android.app.Notification
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -12,6 +14,10 @@ object AlfaExtrasDiagnostic {
     private const val WINDOW_MS = 5 * 60_000L
     private const val REPORT_MS = 2 * 60_000L
     private const val MAX_EVENTS = 3
+    private val expiryHandler = Handler(Looper.getMainLooper())
+    private val expiryTask = Runnable {
+        synchronized(this) { expire(SystemClock.elapsedRealtime()) }
+    }
     private val standard = mapOf(
         Notification.EXTRA_TITLE to "TITLE",
         Notification.EXTRA_TITLE_BIG to "TITLE_BIG",
@@ -35,9 +41,11 @@ object AlfaExtrasDiagnostic {
         clear()
         salt = ByteArray(32).also(SecureRandom()::nextBytes)
         armedUntil = now + WINDOW_MS
+        scheduleExpiry(WINDOW_MS)
     }
 
     @Synchronized fun clear() {
+        expiryHandler.removeCallbacks(expiryTask)
         salt.fill(0)
         salt = ByteArray(0)
         armedUntil = 0L
@@ -75,6 +83,7 @@ object AlfaExtrasDiagnostic {
             salt.fill(0)
             salt = ByteArray(0)
             seenKeys.clear()
+            scheduleExpiry(REPORT_MS)
         }
     }
 
@@ -94,8 +103,14 @@ object AlfaExtrasDiagnostic {
             salt.fill(0)
             salt = ByteArray(0)
             seenKeys.clear()
+            if (reportUntil > 0L) scheduleExpiry(REPORT_MS) else clear()
         }
         if (reportUntil > 0L && now >= reportUntil) clear()
+    }
+
+    private fun scheduleExpiry(delayMs: Long) {
+        expiryHandler.removeCallbacks(expiryTask)
+        expiryHandler.postDelayed(expiryTask, delayMs)
     }
 
     private fun candidateRole(key: String): String {

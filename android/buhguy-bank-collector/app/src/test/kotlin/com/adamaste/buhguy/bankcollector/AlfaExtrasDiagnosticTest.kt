@@ -2,6 +2,7 @@ package com.adamaste.buhguy.bankcollector
 
 import android.app.Notification
 import android.os.Bundle
+import android.os.Looper
 import com.adamaste.buhguy.bankcollector.notification.AlfaExtrasDiagnostic
 import org.junit.After
 import org.junit.Assert.assertFalse
@@ -9,6 +10,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class AlfaExtrasDiagnosticTest {
@@ -57,5 +60,15 @@ class AlfaExtrasDiagnosticTest {
         repeat(3) { AlfaExtrasDiagnostic.capture("ru.alfabank.mobile.android", "key-$it", Bundle(), 101L + it) }
         AlfaExtrasDiagnostic.clearFinishedReport()
         assertFalse(AlfaExtrasDiagnostic.display(105L).contains("Notification 1"))
+    }
+
+    @Test fun expiryRunsWhileActivityIsInBackground() {
+        AlfaExtrasDiagnostic.arm()
+        AlfaExtrasDiagnostic.capture("ru.alfabank.mobile.android", "temporary-key", Bundle())
+
+        shadowOf(Looper.getMainLooper()).idleFor(7, TimeUnit.MINUTES)
+
+        assertFalse(AlfaExtrasDiagnostic.display().contains("Notification 1"))
+        assertTrue(AlfaExtrasDiagnostic.display().contains("No report stored"))
     }
 }
