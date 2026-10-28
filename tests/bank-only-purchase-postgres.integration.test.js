@@ -9,6 +9,7 @@ import { rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { persistMatchedPurchase } from '../src/matched-purchase-persistence.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
+import { normalizeBankEvent } from '../src/bank-ingestion.js';
 import {
   BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV,
   readBankOnlyPurchaseLedgerOptIn,
@@ -532,6 +533,47 @@ integration('confirmed Alfa Troika card purchases use the ordinary bank-only pat
     assert.ok(['PERSISTED', 'REUSED'].includes(matched.outcome));
     assert.equal(await activePurchaseLedgerCount(pool, context), 1);
 
+    const secondLifecycleId = crypto.randomUUID();
+    const secondOccurredAt = new Date(now.getTime() - 30000).toISOString();
+    const secondNotification = normalizeBankEvent({
+      sourceKey: 'synthetic-alfa-bank-source',
+      sourceEventId: `synthetic-alfa-${secondLifecycleId}`,
+      observedAt: secondOccurredAt,
+      eventTime: secondOccurredAt,
+      ingestionMetadata: {
+        adapter: 'android-notification', provider: 'ru.alfabank.mobile.android',
+        deviceType: 'android', schemaVersion: '1', sourcePackage: 'ru.alfabank.mobile.android',
+        notificationLifecycleId: secondLifecycleId,
+      },
+      payload: {
+        title: '- 17 ₽. Пятёрочка',
+        description: 'Пятёрочка: 17,00 ₽; •• 5580',
+        text: 'Пятёрочка: 17,00 ₽; •• 5580',
+      },
+    });
+    assert.equal(secondNotification.eventType, 'PURCHASE');
+    assert.equal(secondNotification.merchant, 'Пятёрочка');
+    const secondPurchase = await createTransaction(pool, context, {
+      occurredAt: secondOccurredAt, observedAt: secondOccurredAt,
+      amount: secondNotification.amount, currency: secondNotification.currency,
+      eventType: secondNotification.eventType, direction: secondNotification.direction,
+      normalizationStatus: secondNotification.normalizationStatus, evidenceQuality: secondNotification.evidenceQuality,
+      merchant: secondNotification.merchant, accountReference: secondNotification.accountReference,
+      accountReferenceKind: secondNotification.accountReferenceKind,
+      notificationLifecycleId: secondLifecycleId,
+    });
+    assert.equal((await writeBankOnlyPurchase(pool, { bankTransactionId: secondPurchase.bankTransactionId, optIn: optInValue, now })).status, 'PERSISTED');
+    assert.equal(await activePurchaseLedgerCount(pool, context), 2, 'same-amount purchases with different lifecycle ids remain separate expenses');
+    const secondUpdate = await createTransaction(pool, context, {
+      occurredAt: new Date(Date.parse(secondOccurredAt) + 1000).toISOString(),
+      observedAt: new Date(Date.parse(secondOccurredAt) + 12000).toISOString(), amount: '17.00',
+      merchant: 'Пятёрочка', accountReference: '****5580', accountReferenceKind: 'MASKED_CARD',
+      notificationLifecycleId: secondLifecycleId,
+    });
+    const secondReplay = await writeBankOnlyPurchase(pool, { bankTransactionId: secondUpdate.bankTransactionId, optIn: optInValue, now });
+    assert.equal(secondReplay.status, 'REUSED');
+    assert.equal(await activePurchaseLedgerCount(pool, context), 2, 'an update in the same lifecycle does not create another active expense');
+
     const unknown = await createTransaction(pool, context, {
       occurredAt: new Date(Date.parse(occurredAt) + 30000).toISOString(), amount: null,
       merchant: 'Тройка', eventType: 'UNKNOWN', direction: 'UNKNOWN',
@@ -549,7 +591,7 @@ integration('confirmed Alfa Troika card purchases use the ordinary bank-only pat
     const transferResult = await writeBankOnlyPurchase(pool, { bankTransactionId: transfer.bankTransactionId, optIn: optInValue, now });
     assert.equal(transferResult.status, 'BLOCKED');
     assert.equal(transferResult.reasonCode, 'PURCHASE_PROOF_INCOMPLETE');
-    assert.equal(await activePurchaseLedgerCount(pool, context), 1);
+    assert.equal(await activePurchaseLedgerCount(pool, context), 2);
   } finally {
     await pool.end();
   }
