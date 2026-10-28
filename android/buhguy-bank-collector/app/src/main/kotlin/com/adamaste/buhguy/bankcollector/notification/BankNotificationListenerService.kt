@@ -54,6 +54,10 @@ class BankNotificationListenerService : NotificationListenerService() {
         }
         val mapper = NotificationEventMapper(registry, preferences.sourceKey())
         val snapshot = sbn.toSnapshot(channelId)
+        if (sbn.packageName == "ru.alfabank.mobile.android") {
+            try { AlfaExtrasDiagnostic.capture(sbn.packageName, sbn.key, sbn.notification.extras) }
+            catch (_: Exception) { /* Optional local diagnostic must not affect normal collection. */ }
+        }
         if (preferences.isTbankExtraDiagnosticsEnabled() &&
             TbankNotificationExtraDiagnostics.shouldCapture(
                 snapshot.packageName,
