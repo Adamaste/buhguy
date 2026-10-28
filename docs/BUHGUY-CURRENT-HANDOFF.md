@@ -2,6 +2,25 @@
 
 This document is the operational starting point for a new ChatGPT/Codex session.
 
+## Newer Alfa rollout supplement (2026-10-28)
+
+This supplement supersedes the older phase and next-step statements below for
+the Alfa card-purchase rollout. GitHub master is
+`390b9beb640ae5869faa8771f49260e6717948b2` (PR #189 merged). The isolated
+candidate branch `codex/alfa-generic-card-purchases` expands only the server
+normalizer for the exact confirmed Alfa card-purchase envelope; the card
+binding, bank-only writer, FNS matcher, other-bank parsers, and historical
+Troika records are unchanged. No migration or Android change is included.
+
+Production was inspected read-only. Recent Alfa observations are stored
+without a `notificationLifecycleId` in `ingestion_metadata`; the affected
+normalizations remain `UNKNOWN/PARTIAL`. The Android device was not connected
+to ADB during this check, so the observations cannot be proven to have arrived
+after the latest app installation. Keep
+`BANK_ONLY_PURCHASE_ALFA_START_AT` unset. Do not enable Alfa accounting until
+a fresh observation from the updated Android app has a valid lifecycle UUID.
+No production setting, release, or financial record was changed.
+
 ## Session bootstrap rule
 
 This file is the authoritative operational handoff for a new ChatGPT/Codex session. A new session must not ask the user to reconstruct project history that is available here or in GitHub.
@@ -16,7 +35,7 @@ At the start of any technical work on `Adamaste/buhguy`:
 
 Do not repeat closed stages. If this document disagrees with GitHub about code, merge status, CI, or artifacts, GitHub wins. After a meaningful completed stage, update this handoff in a reviewed PR before moving on.
 
-- Last updated: 2026-10-12
+- Last updated: 2026-10-28 (historical entries below are superseded by the dated supplement above).
 - Current implementation baseline: `43b513ceb2cf9d2d821158d8c5303a6fd83a2fc2` (PR #165 merged into master on 2026-10-11; **not deployed** to production).
 - Current phase: `P0_ACCOUNTING_CHURN_MERGED_AWAITING_DEPLOY_APPROVAL`; PR #165 is merged and locally tested on PostgreSQL 16/18, but the production service still runs the older release with unconditional `replace=true` certification.
 - Current blocker: production code still uses pre-fix accounting catch-up. Controlled deploy requires separate approval, verified artifact/runtime identity and post-deploy no-churn observation. Physical disk reclamation remains a separately approved operation; the distinct PR #163/fourth-preview technical-error blocker remains unresolved.

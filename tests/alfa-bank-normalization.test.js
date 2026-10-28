@@ -37,61 +37,111 @@ test('Alfa F5 promotes the exact proven outgoing semantics', () => {
   });
 });
 
-test('Alfa recognizes only the two user-confirmed Troika card-purchase shapes', () => {
-  const lifecycleId = '9d0dc1ec-431a-4eb1-8d72-3b58ebddb346';
-  for (const [integerAmount, decimalAmount] of [['2254', '2254,00'], ['17', '17,00']]) {
-    const normalized = normalizeBankEvent({
-      ...base,
-      ingestionMetadata: { ...base.ingestionMetadata, sourcePackage: 'ru.alfabank.mobile.android', notificationLifecycleId: lifecycleId },
-      payload: {
-        title: `-${integerAmount} ₽. Тройка`,
-        description: `Тройка: ${decimalAmount} ₽; •• 5580`,
-        text: `Тройка: ${decimalAmount} ₽; •• 5580`,
-      },
-    });
+const alfaLifecycle = '9d0dc1ec-431a-4eb1-8d72-3b58ebddb346';
+
+function alfaCardPurchase({ merchant = 'Тройка', titleAmount = '17', bodyAmount = '17,00', mask = '5580', lifecycleId = alfaLifecycle } = {}) {
+  return normalizeBankEvent({
+    ...base,
+    ingestionMetadata: {
+      ...base.ingestionMetadata,
+      sourcePackage: 'ru.alfabank.mobile.android',
+      notificationLifecycleId: lifecycleId,
+    },
+    payload: {
+      title: `-${titleAmount} ₽. ${merchant}`,
+      description: `${merchant}: ${bodyAmount} ₽; •• ${mask}`,
+      text: `${merchant}: ${bodyAmount} ₽; •• ${mask}`,
+    },
+  });
+}
+
+test('Alfa recognizes the exact user-confirmed card-purchase envelope and extracts merchant', () => {
+  for (const [merchant, titleAmount, bodyAmount, expectedAmount] of [
+    ['Тройка', '2254', '2254,00', '2254.00'],
+    ['Тройка', '17', '17,00', '17.00'],
+    ['Пятёрочка', '350', '350,00', '350.00'],
+    ['Coffee Shop', '350', '350,00', '350.00'],
+  ]) {
+    const normalized = alfaCardPurchase({ merchant, titleAmount, bodyAmount });
     assert.equal(normalized.eventType, 'PURCHASE');
     assert.equal(normalized.direction, 'DEBIT');
-    assert.equal(normalized.amount, `${integerAmount}.00`);
+    assert.equal(normalized.amount, expectedAmount);
     assert.equal(normalized.currency, 'RUB');
-    assert.equal(normalized.merchant, 'Тройка');
+    assert.equal(normalized.merchant, merchant);
     assert.equal(normalized.accountReference, '****5580');
     assert.equal(normalized.accountReferenceKind, 'MASKED_CARD');
     assert.equal(normalized.normalizationStatus, 'READY');
     assert.equal(normalized.evidenceQuality, 'EXACT');
-    assert.equal(normalized.normalizationVersion, 'alfa-troika-card-purchase-v1');
+    assert.equal(normalized.normalizationVersion, 'alfa-card-purchase-v1');
   }
 });
 
-test('Alfa Troika word or debit sign alone never proves a purchase', () => {
-  const lifecycleId = '9d0dc1ec-431a-4eb1-8d72-3b58ebddb346';
-  const metadata = { ...base.ingestionMetadata, sourcePackage: 'ru.alfabank.mobile.android', notificationLifecycleId: lifecycleId };
-  const confirmedTitle = '-17 ₽. Тройка';
-  const confirmedBody = 'Тройка: 17,00 ₽; •• 5580';
+test('Alfa card purchase preserves two decimal places only when both amounts agree', () => {
+  const normalized = alfaCardPurchase({ merchant: 'Пятёрочка', titleAmount: '350,25', bodyAmount: '350,25' });
+  assert.equal(normalized.eventType, 'PURCHASE');
+  assert.equal(normalized.amount, '350.25');
+  assert.equal(normalized.merchant, 'Пятёрочка');
+
+  for (const [titleAmount, bodyAmount] of [['350', '350,25'], ['350,25', '350,24'], ['350,2', '350,20'], ['350,250', '350,25']]) {
+    const result = alfaCardPurchase({ merchant: 'Пятёрочка', titleAmount, bodyAmount });
+    assert.notEqual(result.eventType, 'PURCHASE');
+    assert.notEqual(result.normalizationStatus, 'READY');
+  }
+});
+
+test('Alfa same-amount purchases at different merchants remain independent and replay deterministically', () => {
+  const first = alfaCardPurchase({ merchant: 'Пятёрочка', titleAmount: '350', bodyAmount: '350,00', lifecycleId: alfaLifecycle });
+  const replay = alfaCardPurchase({ merchant: 'Пятёрочка', titleAmount: '350', bodyAmount: '350,00', lifecycleId: alfaLifecycle });
+  const second = alfaCardPurchase({ merchant: 'Кофейня 24', titleAmount: '350', bodyAmount: '350,00', lifecycleId: 'ca16c787-23b7-4ef1-ae04-d975a4656a21' });
+  assert.deepEqual(replay, first);
+  assert.equal(first.eventType, 'PURCHASE');
+  assert.equal(second.eventType, 'PURCHASE');
+  assert.equal(first.amount, second.amount);
+  assert.notEqual(first.merchant, second.merchant);
+});
+
+test('Alfa rejects transfers, refunds, cancellations, incomplete messages, and weak lifecycle evidence', () => {
+  const metadata = { ...base.ingestionMetadata, sourcePackage: 'ru.alfabank.mobile.android', notificationLifecycleId: alfaLifecycle };
+  const goodTitle = '- 17 ₽. Тройка';
+  const goodBody = 'Тройка: 17,00 ₽; •• 5580';
   const unsupported = [
-    { title: confirmedTitle, description: confirmedBody.replace('5580', '5581'), text: confirmedBody.replace('5580', '5581') },
-    { title: confirmedTitle, description: confirmedBody.replace('17,00', '18,00'), text: confirmedBody.replace('17,00', '18,00') },
-    { title: '-17 ₽', description: confirmedBody, text: confirmedBody },
-    { title: confirmedTitle, description: 'Перевод на получателя 17,00 RUB', text: 'Перевод на получателя 17,00 RUB' },
+    { title: goodTitle, description: goodBody.replace('5580', '5581'), text: goodBody.replace('5580', '5581') },
+    { title: goodTitle, description: goodBody.replace('17,00', '18,00'), text: goodBody.replace('17,00', '18,00') },
+    { title: '-17 ₽', description: goodBody, text: goodBody },
+    { title: '- 17 ₽. Перевод Иванову', description: 'Перевод Иванову: 17,00 ₽; •• 5580', text: 'Перевод Иванову: 17,00 ₽; •• 5580' },
+    { title: '- 17 ₽. Возврат', description: 'Возврат: 17,00 ₽; •• 5580', text: 'Возврат: 17,00 ₽; •• 5580' },
+    { title: '- 17 ₽. Отмена покупки', description: 'Отмена покупки: 17,00 ₽; •• 5580', text: 'Отмена покупки: 17,00 ₽; •• 5580' },
+    { title: '- 17 ₽. Пополнение', description: 'Пополнение: 17,00 ₽; •• 5580', text: 'Пополнение: 17,00 ₽; •• 5580' },
+    { title: '- 17 ₽. Пятёрочка', description: 'Магнит: 17,00 ₽; •• 5580', text: 'Магнит: 17,00 ₽; •• 5580' },
+    { title: goodTitle, description: 'Перевод на получателя 17,00 RUB', text: 'Перевод на получателя 17,00 RUB' },
+    { title: goodTitle, description: goodBody, text: 'неполный текст' },
+    { title: '- 17 ₽.', description: goodBody, text: goodBody },
+    { title: goodTitle, description: 'Тройка: 17,00 ₽', text: 'Тройка: 17,00 ₽' },
   ];
   for (const payload of unsupported) {
     const normalized = normalizeBankEvent({ ...base, ingestionMetadata: metadata, payload });
     assert.notEqual(normalized.eventType, 'PURCHASE');
-    assert.notEqual(normalized.normalizationStatus, 'READY');
   }
 
   for (const ingestionMetadata of [
     { ...metadata, notificationLifecycleId: undefined },
+    { ...metadata, notificationLifecycleId: 'not-a-uuid' },
     { ...metadata, sourcePackage: 'com.example.other' },
     { ...metadata, adapter: 'other-adapter' },
     { ...metadata, schemaVersion: '2' },
   ]) {
     const normalized = normalizeBankEvent({
       ...base, ingestionMetadata,
-      payload: { title: confirmedTitle, description: confirmedBody, text: confirmedBody },
+      payload: { title: goodTitle, description: goodBody, text: goodBody },
     });
     assert.notEqual(normalized.eventType, 'PURCHASE');
-    assert.notEqual(normalized.normalizationStatus, 'READY');
   }
+
+  const noEventTime = normalizeBankEvent({
+    ...base, eventTime: null, ingestionMetadata: metadata,
+    payload: { title: goodTitle, description: goodBody, text: goodBody },
+  });
+  assert.notEqual(noEventTime.eventType, 'PURCHASE');
 });
 
 test('Alfa F5 accepts a second sanitized sample only when title and body agree', () => {

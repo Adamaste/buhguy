@@ -93,15 +93,22 @@ destination identity is inferred. Other Alfa families, metadata mismatches,
 malformed variants, and ambiguous notifications remain on the generic
 normalizer. Historical v3 rows are not rewritten or backfilled.
 
-The additional active rule `alfa-troika-card-purchase-v1` recognizes only the
-user-confirmed Alfa card-notification shape `- <integer> ₽. Тройка` paired
-with `Тройка: <same amount>,00 ₽; •• 5580` in both `description` and `text`.
-It also requires the `ru.alfabank.mobile.android` source package, a valid
-opaque notification lifecycle UUID, a positive matching amount, and Android
-event time. A debit sign or the word `Тройка` alone is never sufficient. The
-separate exact F5 transfer grammar remains unchanged. Other Alfa messages,
-including transfers, empty companions, and incomplete notifications, stay
-unknown or partial.
+The additional rule `alfa-card-purchase-v1` recognizes the user-confirmed Alfa
+card-purchase envelope `- <amount> ₽. <merchant>` paired with
+`<same merchant>: <same amount>,<two digits> ₽; •• 5580` in both `description`
+and `text`. Amounts must be positive; integer titles and comma-decimal titles
+with exactly two fractional digits are accepted only when the body amount
+matches exactly. Merchant text is extracted from the title and must match the
+body after whitespace, Unicode normalization, and case normalization.
+Operation-like merchant labels for transfers, top-ups, refunds, cancellations,
+fees, cash withdrawals, and failures are rejected. The rule also requires the
+`ru.alfabank.mobile.android` source package, a valid opaque notification
+lifecycle UUID, and Android event time. A debit sign, a merchant name, or the
+card suffix alone is never sufficient. The card suffix is emitted as
+`****5580` / `MASKED_CARD`; downstream accounting still requires the existing
+confirmed card-to-account and owner proof. The separate exact F5 transfer
+grammar is unchanged. Other Alfa messages, including empty companions and
+incomplete or mismatched notifications, stay unknown or partial.
 
 For future automatic accounting, the regular bank-only writer additionally
 requires `BANK_ONLY_PURCHASE_ALFA_START_AT` as an explicit UTC timestamp.

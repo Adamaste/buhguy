@@ -25,8 +25,11 @@ const TBANK_MASKED_7268_PATTERN = /(?<![\p{L}\p{N}])\*{1,4}\s*7268(?!\d)/giu;
 const TBANK_BALANCE_MARKER_PATTERN = /(?:баланс|остаток|доступно)/giu;
 const TBANK_MONEY_PATTERN = /(?<![\p{L}\p{N}])(\d+(?:[ \u00a0\u202f]\d{3})*(?:[,.]\d{1,2})?)[ \u00a0\u202f]*(RUB(?![\p{L}])|₽|руб(?:ль|ля|лей)?\.?(?![\p{L}]))/giu;
 const ALFA_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s*₽$/u;
-const ALFA_TROIKA_PURCHASE_TITLE_PATTERN = /^-\s*(\d+)\s+₽\.\s+Тройка$/iu;
-const ALFA_TROIKA_PURCHASE_BODY_PATTERN = /^Тройка:\s+(\d+),(\d{2})\s+₽;\s+••\s*(\d{4})$/iu;
+const ALFA_CARD_PURCHASE_TITLE_PATTERN = /^-\s*(\d+)(?:,(\d{2}))?\s+₽\.\s+(.+)$/u;
+const ALFA_CARD_PURCHASE_BODY_PATTERN = /^([^:]+):\s*(\d+),(\d{2})\s+₽;\s+••\s*(\d{4})$/u;
+const ALFA_CARD_PURCHASE_MERCHANT_PATTERN = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.,'’"«»&()+/–—-]{0,79}$/u;
+const ALFA_CARD_PURCHASE_REJECT_PATTERN = /(?:покупк|оплат|перевод|пополн|возврат|возмещ|отмен|аннулир|отклон|отказ|неуспеш|неудач|комисси|сняти|наличн|(?<![\p{L}\p{N}])(?:refund|transfer|top[ -]?up|cancel(?:led|ed|lation)?|declin(?:ed|e)|reject(?:ed)?|cash withdrawal|fee)(?![\p{L}\p{N}]))/iu;
+const ALFA_CARD_PURCHASE_NORMALIZATION_VERSION = 'alfa-card-purchase-v1';
 const OPAQUE_NOTIFICATION_LIFECYCLE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALFA_F5_ACCOUNT_SECTION = /^[\p{L}\p{M}\d.'-]+\s+[\p{L}\p{M}\d.'-]+\s+счета\s+\d+\s*\*\s*(\d{4})$/u;
 const ALFA_F5_AMOUNT_SECTION = /^Перевод\s+на\s+[\p{L}\p{M}\d.'-]+\s+(\d+,\d{2})\s+RUB$/u;
@@ -299,24 +302,31 @@ function exactAlfa({ occurred, amount, accountReference }) {
   };
 }
 
-function exactAlfaTroikaPurchase({ occurred, amount }) {
+function exactAlfaCardPurchase({ occurred, amount, merchant }) {
   return {
     eventType: 'PURCHASE',
     occurredAt: occurred,
     amount,
     currency: 'RUB',
     direction: 'DEBIT',
-    merchant: 'Тройка',
+    merchant,
     counterparty: null,
     accountReference: '****5580',
     accountReferenceKind: 'MASKED_CARD',
     normalizationStatus: 'READY',
     evidenceQuality: 'EXACT',
-    normalizationVersion: 'alfa-troika-card-purchase-v1',
+    normalizationVersion: ALFA_CARD_PURCHASE_NORMALIZATION_VERSION,
   };
 }
 
-function normalizeAlfaTroikaPurchase(input, occurred) {
+function alfaCardPurchaseMerchant(value) {
+  const merchant = normalizeWhitespace(value).normalize('NFC');
+  if (!merchant || !ALFA_CARD_PURCHASE_MERCHANT_PATTERN.test(merchant)) return null;
+  if (!merchantTitle(merchant) || ALFA_CARD_PURCHASE_REJECT_PATTERN.test(merchant)) return null;
+  return merchant;
+}
+
+function normalizeAlfaCardPurchase(input, occurred) {
   const metadata = input.ingestionMetadata ?? {};
   if (metadata.sourcePackage !== ALFA_PROVIDER
     || !OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(metadata.notificationLifecycleId ?? '')) return null;
@@ -325,13 +335,18 @@ function normalizeAlfaTroikaPurchase(input, occurred) {
   const description = normalizeWhitespace(payload.description);
   const text = normalizeWhitespace(payload.text);
   if (!occurred || !description || description !== text) return null;
-  const titleMatch = title.match(ALFA_TROIKA_PURCHASE_TITLE_PATTERN);
-  const bodyMatch = description.match(ALFA_TROIKA_PURCHASE_BODY_PATTERN);
-  if (!titleMatch || !bodyMatch || bodyMatch[3] !== '5580') return null;
-  const titleAmount = `${titleMatch[1].replace(/^0+(?=\d)/u, '')}.00`;
-  const bodyAmount = `${bodyMatch[1].replace(/^0+(?=\d)/u, '')}.${bodyMatch[2]}`;
+  const titleMatch = title.match(ALFA_CARD_PURCHASE_TITLE_PATTERN);
+  const bodyMatch = description.match(ALFA_CARD_PURCHASE_BODY_PATTERN);
+  if (!titleMatch || !bodyMatch || bodyMatch[4] !== '5580') return null;
+  const titleMerchant = alfaCardPurchaseMerchant(titleMatch[3]);
+  const bodyMerchant = alfaCardPurchaseMerchant(bodyMatch[1]);
+  if (!titleMerchant || !bodyMerchant) return null;
+  const merchantKey = (value) => value.normalize('NFC').toLocaleLowerCase('ru-RU');
+  if (merchantKey(titleMerchant) !== merchantKey(bodyMerchant)) return null;
+  const titleAmount = `${titleMatch[1].replace(/^0+(?=\d)/u, '')}.${titleMatch[2] ?? '00'}`;
+  const bodyAmount = `${bodyMatch[2].replace(/^0+(?=\d)/u, '')}.${bodyMatch[3]}`;
   if (titleAmount !== bodyAmount || titleAmount === '0.00') return null;
-  return exactAlfaTroikaPurchase({ occurred, amount: titleAmount });
+  return exactAlfaCardPurchase({ occurred, amount: titleAmount, merchant: titleMerchant });
 }
 
 export function normalizeAlfaBankEvent(input) {
@@ -339,8 +354,8 @@ export function normalizeAlfaBankEvent(input) {
   const title = normalizeWhitespace(payload.title);
   const body = normalizeWhitespace(payload.description) || normalizeWhitespace(payload.text);
   const occurred = occurredAt(input.eventTime);
-  const troikaPurchase = normalizeAlfaTroikaPurchase(input, occurred);
-  if (troikaPurchase) return troikaPurchase;
+  const cardPurchase = normalizeAlfaCardPurchase(input, occurred);
+  if (cardPurchase) return cardPurchase;
   const titleMatch = title.match(ALFA_TITLE_PATTERN);
   const sections = body.split(';').map((section) => section.trim());
   const accountMatch = sections.length === 4 ? sections[0].match(ALFA_F5_ACCOUNT_SECTION) : null;
