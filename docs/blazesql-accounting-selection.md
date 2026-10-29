@@ -11,13 +11,34 @@
 For receipt existence, history, provenance, and user-specific questions, use
 `chatgpt_accounting.user_receipts`. It is the canonical household-person
 receipt inventory and excludes observations from disabled historical sources.
-Use `chatgpt_accounting.analytics_purchases` only for certified economic
-acquisitions; it is not a complete receipt inventory. In that view, `seller`
-is the official FNS seller, while `bank_merchant` is the separate name from an
-unambiguous linked bank transaction. `bank_merchant_source` reports its source
-type (`ANDROID_NOTIFICATION`, `BANK_API`, or `MANUAL_IMPORT`).
+Use `chatgpt_accounting.analytics_purchases` for certified-fact drill-down; it
+is not a complete receipt inventory and is not safe for an unqualified
+monetary sum. It has one row per `certification_fact_id`; the same
+`purchase_id` may repeat across facts or certification runs. Its public
+projection omits the run/source-state tuple needed to select the current
+snapshot. Use the current-snapshot spending reader for totals. In that view,
+`seller` is the official FNS seller, while `bank_merchant` is the separate name from an
+unambiguous linked bank transaction. `bank_merchant_source`
+reports its source type (`ANDROID_NOTIFICATION`, `BANK_API`, or
+`MANUAL_IMPORT`).
 `merchant_display` prefers the bank name and reports its source in
 `merchant_display_source`; it never replaces either source-specific field.
+When joining `analytics_purchase_items` for detail, join on both
+`purchase_id` and `certification_fact_id`. Never sum purchase amounts after
+joining items, receipt observations, or person provenance.
+
+## Current limitation for monetary totals
+
+The existing BlazeSQL semantic schema does not expose the validated
+current-snapshot reader, its snapshot-qualified canonical spending views, or
+ledger supersession identity. Therefore it cannot safely produce a complete
+current spending total by summing `analytics_purchases` or `ledger_entries`.
+Use BlazeSQL's `chatgpt_accounting` views for read-only drill-down only; for a
+defensible total, use the server-side read-only current-snapshot reader or the
+read-only reconciliation report prepared with this change. This change does
+not create a view, grant, or production object. Exposing the snapshot reader
+inside BlazeSQL requires a separately reviewed and authorized read-only
+semantic-layer change.
 
 ## Required views
 

@@ -227,6 +227,15 @@ integration('current snapshot changes identity for receipt population and active
     FROM ledger_entries WHERE id=$1 RETURNING id`, [active.id])).rows[0];
   await pool.query(`INSERT INTO ledger_entry_supersessions(scope_id,superseded_ledger_entry_id,replacement_ledger_entry_id,business_event_id,enrichment_key,semantic_key,reason_code)
     VALUES($1,$2,$3,$4,repeat('e',64),repeat('f',64),'SNAPSHOT_TEST')`, [scope.id, active.id, replacement.id, active.source_event_id]);
+  const supersessionGrain = (await pool.query(`SELECT
+      (SELECT count(*)::int FROM ledger_entries WHERE id=ANY($1::bigint[])) AS historical_entries,
+      (SELECT count(*)::int FROM ledger_entries e
+       WHERE e.id=ANY($1::bigint[])
+         AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s
+           WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)) AS active_entries`,
+  [[active.id, replacement.id]])).rows[0];
+  assert.equal(supersessionGrain.historical_entries, 2);
+  assert.equal(supersessionGrain.active_entries, 1);
   const afterSupersession = await certificationSourceStateKey(pool, scope.id);
   assert.notEqual(afterSupersession, afterReceipt);
   await pool.query('DELETE FROM ledger_entry_supersessions WHERE replacement_ledger_entry_id=$1', [replacement.id]);
@@ -288,6 +297,7 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
     { eventAt: '2026-08-31T20:59:59.999Z', currency: 'RUB', amount: '11.00' },
     { eventAt: '2026-08-31T21:00:00.000Z', currency: 'EUR', amount: '12.00' },
     { eventAt: '2026-09-01T00:00:00.000Z', currency: 'RUB', amount: '13.00' },
+    { eventAt: '2026-08-31T20:59:59.500Z', currency: 'RUB', amount: '11.00' },
   ];
   const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
   const eventIds = [];
@@ -315,9 +325,17 @@ integration('monthly SQL assigns real boundary events by timezone and keeps curr
       GROUP BY date_trunc('month', event_at AT TIME ZONE $5), currency ORDER BY month,currency`,
     [scope.id, run.id, current, eventIds, 'Europe/Moscow', '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z'])).rows;
     assert.deepEqual(rows, [
-      { month: '2026-08', currency: 'RUB', amount: '11.00' },
+      { month: '2026-08', currency: 'RUB', amount: '22.00' },
       { month: '2026-09', currency: 'EUR', amount: '12.00' },
     ]);
+    const sameAmountEvents = (await pool.query(`SELECT count(*)::int AS rows,
+        count(DISTINCT purchase_id)::int AS purchases,
+        sum(amount)::numeric(18,2)::text AS amount
+      FROM canonical_spending_purchases_v1
+      WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3
+        AND purchase_id=ANY($4::bigint[]) AND currency='RUB' AND amount=11.00`,
+    [scope.id, run.id, current, eventIds])).rows[0];
+    assert.deepEqual(sameAmountEvents, { rows: 2, purchases: 2, amount: '22.00' });
     const exactBoundary = (await pool.query(`SELECT count(*)::int AS count, COALESCE(SUM(amount), 0)::NUMERIC(18,2)::text AS amount
       FROM canonical_spending_purchases_v1
       WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3

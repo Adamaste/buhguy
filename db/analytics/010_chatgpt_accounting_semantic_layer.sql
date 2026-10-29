@@ -326,7 +326,7 @@ COMMENT ON COLUMN chatgpt_accounting.fns_sources.display_name IS 'Human-readable
 COMMENT ON COLUMN chatgpt_accounting.certification_facts.status IS 'Accounting certification status, not merely fiscal receipt presence.';
 COMMENT ON COLUMN chatgpt_accounting.ledger_postings.debit IS 'Debit amount; pair with credit and ledger entry for balance analysis.';
 COMMENT ON COLUMN chatgpt_accounting.ledger_postings.credit IS 'Credit amount; pair with debit and ledger entry for balance analysis.';
-COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.amount IS 'Certified acquisition amount at purchase grain.';
+COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.amount IS 'Certified acquisition amount at certification-fact grain. purchase_id can repeat across facts or runs; this projection lacks snapshot identity, so use the validated current-spending reader for totals.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.seller IS 'Official seller name from the FNS receipt; kept separate from bank_merchant.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.bank_merchant IS 'Merchant from one unambiguous linked bank transaction; it does not replace the official FNS seller.';
 COMMENT ON COLUMN chatgpt_accounting.analytics_purchases.bank_merchant_source IS 'Source type of the one unambiguous linked bank transaction: ANDROID_NOTIFICATION, BANK_API, or MANUAL_IMPORT.';
