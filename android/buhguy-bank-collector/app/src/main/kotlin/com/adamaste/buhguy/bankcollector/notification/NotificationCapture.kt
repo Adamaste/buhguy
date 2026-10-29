@@ -14,6 +14,7 @@ class NotificationCapture(private val mapper: NotificationEventMapper) {
     private val json = Json { encodeDefaults = true }
 
     fun capture(snapshot: NotificationSnapshot, capturedAt: Instant = Instant.now()): CapturedNotification? {
+        if (SensitiveBankNotificationFilter.shouldReject(snapshot)) return null
         val event = mapper.map(snapshot, capturedAt) ?: return null
         return CapturedNotification(
             sourceEventId = event.sourceEventId,

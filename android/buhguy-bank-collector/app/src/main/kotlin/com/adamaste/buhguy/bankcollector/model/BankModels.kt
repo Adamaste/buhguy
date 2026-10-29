@@ -12,7 +12,7 @@ data class BankNotificationEvent(
     val ingestionMetadata: Map<String, String?>,
 )
 
-enum class OutboxStatus { PENDING, SENT, PERMANENTLY_REJECTED }
+enum class OutboxStatus { PENDING, SENT, PERMANENTLY_REJECTED, HELD_FOR_REVIEW }
 
 data class OutboxEvent(
     val id: Long,

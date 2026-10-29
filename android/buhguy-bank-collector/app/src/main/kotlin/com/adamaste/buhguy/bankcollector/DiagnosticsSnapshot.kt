@@ -2,6 +2,7 @@ package com.adamaste.buhguy.bankcollector
 
 data class DiagnosticsSnapshot(
     val pendingCount: Int,
+    val heldForReviewCount: Int,
     val lastSuccessfulDeliveryAt: String,
     val lastSuccessfulDeliveryPackage: String,
     val lastSuccessfulDeliveryEventPrefix: String,
@@ -18,6 +19,7 @@ data class DiagnosticsSnapshot(
 ) {
     fun render(): String = listOf(
         "Pending events: $pendingCount",
+        "Events held for review (content hidden): $heldForReviewCount",
         "Last successful delivery: $lastSuccessfulDeliveryServerStatus $lastSuccessfulDeliveryPackage $lastSuccessfulDeliveryEventPrefix at $lastSuccessfulDeliveryAt",
         "Last capture: $lastCaptureOutcome $lastCapturePackage $lastCaptureEventPrefix at $lastCaptureAt",
         "Last callback: $lastCallbackStage $lastCallbackPackage at $lastCallbackAt",
@@ -26,8 +28,9 @@ data class DiagnosticsSnapshot(
     ).joinToString("\n")
 }
 
-fun AppPreferences.diagnosticsSnapshot(pendingCount: Int): DiagnosticsSnapshot = DiagnosticsSnapshot(
+fun AppPreferences.diagnosticsSnapshot(pendingCount: Int, heldForReviewCount: Int): DiagnosticsSnapshot = DiagnosticsSnapshot(
     pendingCount = pendingCount,
+    heldForReviewCount = heldForReviewCount,
     lastSuccessfulDeliveryAt = lastSuccessfulDelivery(),
     lastSuccessfulDeliveryPackage = lastSuccessfulDeliveryPackage(),
     lastSuccessfulDeliveryEventPrefix = lastSuccessfulDeliveryEventPrefix(),

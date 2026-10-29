@@ -46,6 +46,12 @@ interface OutboxDao {
 
     @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'PENDING'")
     fun pendingCountFlow(): Flow<Int>
+
+    @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'HELD_FOR_REVIEW'")
+    fun heldForReviewCountFlow(): Flow<Int>
+
+    @Query("SELECT count(*) FROM bank_notification_outbox WHERE status = 'HELD_FOR_REVIEW'")
+    suspend fun heldForReviewCount(): Int
 }
 
 @Database(entities = [OutboxEntity::class], version = 1, exportSchema = false)

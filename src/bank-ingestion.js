@@ -1,4 +1,9 @@
 import crypto from 'node:crypto';
+import {
+  containsSensitiveAuthorizationContent,
+  SENSITIVE_AUTH_NOTIFICATION_CODE,
+  sensitiveAuthorizationNotificationError,
+} from './bank-notification-security.js';
 import { isAlfaBankAndroidNotification, isSberBankAndroidNotification, isTbankBankAndroidNotification, isYandexBankProvider, isYandexPayOutgoingTransport, normalizeAlfaBankEvent, normalizeSberBankEvent, normalizeTbankBankEvent, normalizeYandexBankEvent, normalizeYandexPayBankEvent } from './bank-normalization.js';
 import { resolveNewBankTransactionIdentity } from './bank-account-resolution.js';
 
@@ -122,6 +127,16 @@ export function validateBankEventInput(input) {
   const eventTime = asIsoDate(input.eventTime, 'eventTime');
   const payload = validatePayload(input.payload);
   const ingestionMetadata = validateMetadata(input.ingestionMetadata ?? {});
+  const stringValues = [input.sourceKey, input.sourceEventId, input.observedAt, input.eventTime,
+    ...Object.values(payload), ...Object.values(ingestionMetadata)];
+  const mappedTextKeys = ['title', 'text', 'description', 'reference'];
+  // Screen the string form of malformed numeric text before rejecting its schema.
+  const mappedTextValues = mappedTextKeys.map((key) => typeof payload[key] === 'number' ? String(payload[key]) : payload[key]);
+  if (containsSensitiveAuthorizationContent(stringValues)
+      || containsSensitiveAuthorizationContent(mappedTextValues, { rejectBareShortCode: true })) {
+    throw sensitiveAuthorizationNotificationError();
+  }
+  if (mappedTextKeys.some((key) => typeof payload[key] === 'number')) throw new Error('payload text fields must be text');
   return { sourceKey: input.sourceKey, sourceEventId: input.sourceEventId ?? null, observedAt, eventTime, payload, ingestionMetadata };
 }
 
@@ -209,7 +224,10 @@ export function createBankIngestionHandler({ pool }) {
     const input = request?.body ?? request;
     try {
       validateBankEventInput(input);
-    } catch {
+    } catch (error) {
+      if (error?.code === SENSITIVE_AUTH_NOTIFICATION_CODE) {
+        return { status: 'rejected', code: SENSITIVE_AUTH_NOTIFICATION_CODE };
+      }
       return { status: 'rejected', code: 'INVALID_EVENT' };
     }
     return ingestBankEvent(pool, input);

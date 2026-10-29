@@ -48,6 +48,19 @@ class AlfaExtrasDiagnosticTest {
         }
     }
 
+    @Test fun reportDoesNotExposeAuthorizationCodeOrSurroundingOperationText() {
+        val syntheticOtp = "000000"
+        val privateText = "Purchase 350 RUB at Sample shop. Verification code: $syntheticOtp"
+        val extras = Bundle().apply { putString(Notification.EXTRA_TEXT, privateText) }
+        AlfaExtrasDiagnostic.arm(100L)
+        AlfaExtrasDiagnostic.capture("ru.alfabank.mobile.android", "private-notification-key", extras, 101L)
+        val report = AlfaExtrasDiagnostic.display(102L)
+        assertTrue(report.contains("TEXT:TEXT"))
+        assertFalse(report.contains(syntheticOtp))
+        assertFalse(report.contains("Verification code"))
+        assertFalse(report.contains("Sample shop"))
+    }
+
     @Test fun expiresAndErasesReport() {
         AlfaExtrasDiagnostic.arm(100L)
         AlfaExtrasDiagnostic.capture("ru.alfabank.mobile.android", "key", Bundle(), 101L)

@@ -35,6 +35,12 @@ class PersistentOutboxTest {
             val secondId = dao.insert(event.copy(sourceEventId = "flow-event-2"))
             dao.setStatus(secondId, "PERMANENTLY_REJECTED")
             assertEquals(0, dao.pendingCountFlow().first())
+            val heldId = dao.insert(event.copy(sourceEventId = "flow-event-held"))
+            dao.setStatus(heldId, "HELD_FOR_REVIEW", "OUTBOX_CONTENT_UNREADABLE")
+            assertEquals(0, dao.pendingCountFlow().first())
+            assertEquals(1, dao.heldForReviewCountFlow().first())
+            assertEquals(1, dao.heldForReviewCount())
+            assertTrue(dao.pending(50).isEmpty())
         } finally {
             database.close()
             context.deleteDatabase(databaseName)

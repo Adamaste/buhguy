@@ -55,6 +55,7 @@ const unitFiles = [
   'tests/bank-device-auth.test.js',
   'tests/bank-source-provisioning.test.js',
   'tests/bank-ingestion-http.test.js',
+  'tests/bank-notification-security.test.js',
   'tests/bank-device-runtime.test.js',
   'tests/bank-ingestion-privilege-scripts.test.js',
   'tests/runtime-schema.test.js',
