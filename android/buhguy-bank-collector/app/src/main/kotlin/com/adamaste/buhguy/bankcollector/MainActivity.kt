@@ -109,16 +109,18 @@ class MainActivity : AppCompatActivity() {
         }
         val pending = TextView(this).apply {
             tag = "diagnostics"
-            text = "Pending events: loading..."
+            text = "Pending events: loading...\nEvents held for review (content hidden): loading..."
         }
         layout.addView(pending)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val pendingFlow = (application as BankCollectorApplication).database.outbox().pendingCountFlow()
+                val heldFlow = (application as BankCollectorApplication).database.outbox().heldForReviewCountFlow()
                 preferences.diagnosticChanges()
                     .combine(pendingFlow) { _, count -> count }
-                    .collect { count ->
-                        pending.text = preferences.diagnosticsSnapshot(count).render()
+                    .combine(heldFlow) { pendingCount, heldCount -> pendingCount to heldCount }
+                    .collect { (pendingCount, heldCount) ->
+                        pending.text = preferences.diagnosticsSnapshot(pendingCount, heldCount).render()
                         tbankDiagnosticToggle.isChecked = preferences.isTbankExtraDiagnosticsEnabled()
                         tbankDiagnosticReport.text = preferences.tbankExtraDiagnosticsReport()
                             .ifBlank { "No local T-Bank extra-field report captured" }

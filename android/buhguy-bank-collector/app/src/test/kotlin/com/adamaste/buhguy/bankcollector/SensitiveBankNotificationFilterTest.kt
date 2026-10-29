@@ -92,6 +92,18 @@ class SensitiveBankNotificationFilterTest {
         assertFalse(SensitiveBankNotificationFilter.shouldReject(snapshot(title = "Other -16 RUB", text = "Balance 1,250 RUB")))
     }
 
+    @Test fun ordinaryNotificationsAndLabeledBankIdentifiersPassAcrossProviders() {
+        val controls = listOf(
+            "ru.alfabank.mobile.android" to snapshot(title = "Purchase 350 RUB. Sample shop", text = "Sample shop: 350.00 RUB; card ending 5580"),
+            "com.sberbankmobile" to snapshot(title = "Transfer 125 RUB", text = "Operation ID 123456"),
+            "ru.tinkoff.android" to snapshot(title = "Refund 17 RUB", text = "Transaction reference 654321"),
+            "ru.yandex.bank" to snapshot(title = "Transit top-up 100 RUB", text = "Account balance updated"),
+        )
+        controls.forEach { (packageName, event) ->
+            assertFalse("$packageName ordinary event was rejected", SensitiveBankNotificationFilter.shouldReject(event.copy(packageName = packageName)))
+        }
+    }
+
     private fun snapshot(
         title: String? = "Bank notification",
         text: String? = null,

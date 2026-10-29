@@ -9,7 +9,7 @@ bank-only accounting, receipt matching, or the event schema.
 
 The detector is deliberately content-minimizing: it returns only a boolean.
 It recognizes explicit Russian and English one-time/verification/authorization
-code wording, instructions not to share a code, a short numeric value
+message wording and code wording, instructions not to share a code, a short numeric value
 written directly as a code or password, and a mapped text field consisting
 only of a short numeric string. An operation/transaction/reference
 code is excluded from the short-number rule so ordinary bank references do
@@ -37,6 +37,10 @@ contains source text.
    constant reason code. It does not retry the same sensitive pending event
    indefinitely. Transient network/5xx responses retain the existing retry
    behavior.
+5. A pre-existing PENDING row whose JSON cannot be safely parsed is not sent
+   or deleted. It moves to `HELD_FOR_REVIEW` with a generic reason, and the
+   diagnostics screen shows only the aggregate held count; no event content,
+   identifier, or bank text is exposed there.
 
 The normal payload contract, other-bank normalization, lifecycle identity,
 bank-only writer, and FNS matcher are unchanged.
@@ -55,8 +59,9 @@ never normalized into a purchase by this change.
 ## Previously stored data and cleanup gate
 
 No historical row or device outbox record is modified by this change. The
-current Room DAO retains SENT and permanently rejected rows and exposes only a
-PENDING count; it has no row-scrub operation. The server stores accepted
+current Room DAO retains SENT, permanently rejected, and held rows; the app
+exposes aggregate PENDING and HELD_FOR_REVIEW counts only. It has no row-scrub
+operation. The server stores accepted
 payload JSON in `bank_event_observations`, and the same payload participates
 in its stored hash/deduplication evidence. A server 422 prevents a new payload
 insert but does not erase an older Android outbox row or a previously stored

@@ -4,6 +4,7 @@ const OTP_LANGUAGE = [
   /одноразов\p{L}*\s+(?:код|парол)\p{L}*/iu,
   /(?:код|парол)\p{L}*\s+(?:для\s+)?(?:подтвержден|авторизац|верификац|безопасност)\p{L}*/iu,
   /(?:код|парол)\p{L}*\s+(?:из\s+)?(?:смс|sms)\b/iu,
+  /(?:сообщени[ея]|message)\s+(?:об?\s*)?(?:авторизац|подтвержден|authorization|verification)\p{L}*/iu,
   /\b(?:otp|sms\s+(?:verification\s+)?code|confirmation\s+code|verification\s+code|authentication\s+code|authorization\s+code|security\s+code|one[-\s]?time\s+(?:code|password|passcode))\b/iu,
   /(?:никому\s+не\s+(?:сообщайте|передавайте|называйте)|не\s+(?:сообщайте|передавайте|называйте)\s+(?:этот\s+)?(?:код|парол)\w*)/iu,
   /\b(?:do\s+not|never)\s+(?:share|tell|disclose)\s+(?:this\s+)?(?:code|password)\b/iu,

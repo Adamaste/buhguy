@@ -41,6 +41,18 @@ test('rejects an operation notice when it also contains a one-time code', () => 
   });
 });
 
+test('server independently rejects the bank authorization-message format', () => {
+  const event = {
+    ...cleanEvent,
+    payload: { title: 'Сообщение авторизации', text: `Operation 16 RUB. ${syntheticOtp}` },
+  };
+  assert.throws(() => validateBankEventInput(event), (error) => {
+    assert.equal(error.code, SENSITIVE_AUTH_NOTIFICATION_CODE);
+    assert.equal(error.message.includes(syntheticOtp), false);
+    return true;
+  });
+});
+
 test('scans every persisted text field including source event identity', () => {
   const event = { ...cleanEvent, sourceEventId: `authorization code ${syntheticOtp}` };
   assert.throws(() => validateBankEventInput(event), (error) => error.code === SENSITIVE_AUTH_NOTIFICATION_CODE);
