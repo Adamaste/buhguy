@@ -4,12 +4,21 @@ Status: local implementation and disposable-clone validation only. Production wa
 
 ## Curated Views
 
-- `analytics_purchases`: one row per certified acquisition fact/business purchase.
-- `analytics_purchase_items`: one row per item of the authoritative receipt selected by the proof chain.
+- `analytics_purchases`: one row per certified acquisition fact. A business
+  event can appear in multiple certification facts or runs.
+- `analytics_purchase_items`: one row per item per certified acquisition fact
+  of the authoritative receipt selected by the proof chain.
 
 The views source only `analytics_proof_chain` rows where `metric_code = 'CONFIRMED_ACQUISITION_VALUE'` and `status = 'CERTIFIED'`. The proof-chain receipt is used as the item-bearing evidence. Prepayment and fulfillment receipts are not unioned, so Xiaomi remains one purchase for `32380.00`, not `64760.00`.
 
-`analytics_purchases.amount` is safe to sum at purchase grain. The item view intentionally does not expose the purchase total; `item_sum` is safe to sum at item grain. Missing or mismatched item reconciliation remains visible to the validator.
+Do not sum `analytics_purchases.amount` across the entire view or use it for
+an unqualified time-period total: the view does not expose the certification
+run/source-state identity needed to select one coherent snapshot. Use the
+snapshot-qualified `canonical_spending_purchases_v1` or the validated
+current-snapshot reader for totals. Join items to their fact using both
+`purchase_id` and `certification_fact_id`; `item_sum` is safe only at
+item-fact grain. Missing or mismatched item reconciliation remains visible to
+the validator.
 
 The views expose seller and seller INN, but no raw JSON, FNS source identity, fiscal sign, auth/session data, or buyer PII.
 

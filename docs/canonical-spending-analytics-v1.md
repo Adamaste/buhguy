@@ -64,7 +64,9 @@ The exact-master read-only audit found:
 
 - `analytics_purchases` currently has 1,919 rows, 1,919 distinct non-null
   `purchase_id` values, and no duplicate purchase grain in the audited
-  snapshot.
+  historical audit. This row count does not define the view's grain: it selects
+  one row per certified fact and can repeat a `purchase_id` across facts or
+  runs. Do not rely on that older count to justify summing the view.
 - `chatgpt_accounting.user_receipts` is a person-by-receipt provenance
   inventory, not a monetary purchase grain. The audited snapshot had 2,773
   rows, 2,771 distinct receipts, and 3 persons.
@@ -84,8 +86,8 @@ The exact-master read-only audit found:
 
 | Relation | Current meaning | Safe use |
 | --- | --- | --- |
-| `analytics_purchases` | one certified acquisition fact/business purchase | economic purchase totals |
-| `analytics_purchase_items` | receipt item lines for the proof-chain receipt | item-level detail, never purchase totals |
+| `analytics_purchases` | one certified acquisition fact; event can repeat across facts/runs | fact-level drill-down only; no unqualified monetary sum |
+| `analytics_purchase_items` | item lines per certified acquisition fact | item detail joined by purchase and certification fact; never purchase totals |
 | `chatgpt_accounting.user_receipts` | person x receipt source provenance | inventory and attribution evidence only |
 | certification facts | versioned metric facts for a certification source state | certified/provisional metrics and trace |
 | bank cash-flow/journal | monetary movement and funding side | funding and balanced journal, not spending category |
