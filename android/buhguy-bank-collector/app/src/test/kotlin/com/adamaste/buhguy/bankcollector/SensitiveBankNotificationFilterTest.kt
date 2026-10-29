@@ -69,6 +69,15 @@ class SensitiveBankNotificationFilterTest {
         assertEquals("HELD_FOR_REVIEW", OutboxStatus.HELD_FOR_REVIEW.name)
     }
 
+    @Test fun preSendScreenHoldsNumericOrNestedStoredTextInsteadOfTransmittingIt() {
+        val numericText = """{"sourceKey":"android-test","sourceEventId":"safe-hash","observedAt":"2026-10-29T10:00:00Z","eventTime":null,"payload":{"text":123456},"ingestionMetadata":{}}"""
+        val nestedPayload = """{"sourceKey":"android-test","sourceEventId":"safe-hash","observedAt":"2026-10-29T10:00:00Z","eventTime":null,"payload":{"text":{"value":"hidden"}},"ingestionMetadata":{}}"""
+        val nestedMetadata = """{"sourceKey":"android-test","sourceEventId":"safe-hash","observedAt":"2026-10-29T10:00:00Z","eventTime":null,"payload":{"title":"Bank"},"ingestionMetadata":{"extra":["hidden"]}}"""
+        assertEquals(StoredEventScreening.UNREADABLE, SensitiveBankNotificationFilter.screenStoredEvent(numericText))
+        assertEquals(StoredEventScreening.UNREADABLE, SensitiveBankNotificationFilter.screenStoredEvent(nestedPayload))
+        assertEquals(StoredEventScreening.UNREADABLE, SensitiveBankNotificationFilter.screenStoredEvent(nestedMetadata))
+    }
+
     @Test fun catchesUnicodeAndZeroWidthObfuscation() {
         val snapshot = snapshot(text = "ＯＮＥ ＴＩＭＥ\u200B ＰＡＳＳＷＯＲＤ 000000")
         assertTrue(SensitiveBankNotificationFilter.shouldReject(snapshot))

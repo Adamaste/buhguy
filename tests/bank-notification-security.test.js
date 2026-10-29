@@ -60,6 +60,7 @@ test('scans every persisted text field including source event identity', () => {
 
 test('rejects a short numeric-only mapped text field without treating numeric amounts as codes', () => {
   assert.throws(() => validateBankEventInput({ ...cleanEvent, payload: { title: 'Bank', text: syntheticOtp } }), (error) => error.code === SENSITIVE_AUTH_NOTIFICATION_CODE);
+  assert.throws(() => validateBankEventInput({ ...cleanEvent, payload: { title: 'Bank', text: 123456 } }), (error) => error.code === SENSITIVE_AUTH_NOTIFICATION_CODE);
   assert.doesNotThrow(() => validateBankEventInput({ ...cleanEvent, payload: { amount: '10000', currency: 'RUB', direction: 'DEBIT' } }));
 });
 
@@ -89,7 +90,7 @@ test('ingestion rejects sensitive content before making any database call', asyn
   assert.equal(databaseCalls, 0);
 });
 
-test('HTTP returns a generic permanent rejection and never persists or echoes the sensitive payload', async () => {
+test('HTTP returns generic permanent rejections and never persists or echoes sensitive text or numeric codes', async () => {
   const secret = 'a'.repeat(43);
   const credentialKey = 'synthetic-key';
   const token = createDeviceToken(credentialKey, secret);
@@ -109,15 +110,21 @@ test('HTTP returns a generic permanent rejection and never persists or echoes th
   const server = createBankIngestionServer({ pool, logger: { error: (...args) => logs.push(args) } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/v1/bank/events`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...cleanEvent, payload: { text: `Purchase 350 RUB. Confirmation code: ${syntheticOtp}` } }),
-    });
-    const body = await response.text();
-    assert.equal(response.status, 422);
-    assert.equal(body, '{"status":"rejected","code":"SENSITIVE_AUTH_NOTIFICATION"}');
-    assert.equal(body.includes(syntheticOtp), false);
+    const url = `http://127.0.0.1:${server.address().port}/api/v1/bank/events`;
+    for (const payload of [
+      { text: `Purchase 350 RUB. Confirmation code: ${syntheticOtp}` },
+      { text: 123456 },
+    ]) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...cleanEvent, payload }),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 422);
+      assert.equal(body, '{"status":"rejected","code":"SENSITIVE_AUTH_NOTIFICATION"}');
+      assert.equal(body.includes(syntheticOtp), false);
+    }
     assert.equal(queries.some((sql) => /INSERT\s+INTO\s+bank_event_observations/i.test(sql)), false);
     assert.equal(queries.some((sql) => /INSERT\s+INTO\s+bank_transactions/i.test(sql)), false);
     assert.deepEqual(logs, []);

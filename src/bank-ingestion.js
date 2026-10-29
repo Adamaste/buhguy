@@ -129,11 +129,14 @@ export function validateBankEventInput(input) {
   const ingestionMetadata = validateMetadata(input.ingestionMetadata ?? {});
   const stringValues = [input.sourceKey, input.sourceEventId, input.observedAt, input.eventTime,
     ...Object.values(payload), ...Object.values(ingestionMetadata)];
-  const mappedTextValues = ['title', 'text', 'description', 'reference'].map((key) => payload[key]);
+  const mappedTextKeys = ['title', 'text', 'description', 'reference'];
+  // Screen the string form of malformed numeric text before rejecting its schema.
+  const mappedTextValues = mappedTextKeys.map((key) => typeof payload[key] === 'number' ? String(payload[key]) : payload[key]);
   if (containsSensitiveAuthorizationContent(stringValues)
       || containsSensitiveAuthorizationContent(mappedTextValues, { rejectBareShortCode: true })) {
     throw sensitiveAuthorizationNotificationError();
   }
+  if (mappedTextKeys.some((key) => typeof payload[key] === 'number')) throw new Error('payload text fields must be text');
   return { sourceKey: input.sourceKey, sourceEventId: input.sourceEventId ?? null, observedAt, eventTime, payload, ingestionMetadata };
 }
 

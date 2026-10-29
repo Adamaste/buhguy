@@ -4,6 +4,7 @@ import java.text.Normalizer
 import java.util.Locale
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -50,26 +51,40 @@ object SensitiveBankNotificationFilter {
         listOf(snapshot.title, snapshot.text, snapshot.bigText, snapshot.subText),
     )
 
-    fun screenStoredEvent(eventJson: String): StoredEventScreening = try {
-        val root = Json.parseToJsonElement(eventJson).jsonObject
-        val payload = root["payload"] as? JsonObject ?: return StoredEventScreening.UNREADABLE
-        val payloadText = listOf("title", "text", "description", "reference")
-            .map { key -> payload[key].asTextOrNull() }
-        val allStrings = buildList {
-            listOf("sourceKey", "sourceEventId", "observedAt", "eventTime").forEach { add(root[it].asTextOrNull()) }
-            payload.values.forEach { add(it.asTextOrNull()) }
-            (root["ingestionMetadata"] as? JsonObject)?.values?.forEach { add(it.asTextOrNull()) }
+    fun screenStoredEvent(eventJson: String): StoredEventScreening {
+        return try {
+            val root = Json.parseToJsonElement(eventJson).jsonObject
+            val allowedRootKeys = setOf("sourceKey", "sourceEventId", "observedAt", "eventTime", "payload", "ingestionMetadata")
+            if (root.keys.any { it !in allowedRootKeys }
+                || root["sourceKey"].asTextOrNull() == null
+                || root["sourceEventId"].asTextOrNull() == null
+                || root["observedAt"].asTextOrNull() == null
+                || (root["eventTime"] != null && !root["eventTime"].isStringOrNull())
+            ) return StoredEventScreening.UNREADABLE
+            val payload = root["payload"] as? JsonObject ?: return StoredEventScreening.UNREADABLE
+            if (!payload.values.all { it.isStringOrNull() }) return StoredEventScreening.UNREADABLE
+            val metadata = root["ingestionMetadata"] as? JsonObject ?: return StoredEventScreening.UNREADABLE
+            if (!metadata.values.all { it.isStringOrNull() }) return StoredEventScreening.UNREADABLE
+            val payloadText = listOf("title", "text", "description", "reference")
+                .map { key -> payload[key].asTextOrNull() }
+            val allStrings = buildList {
+                listOf("sourceKey", "sourceEventId", "observedAt", "eventTime").forEach { add(root[it].asTextOrNull()) }
+                payload.values.forEach { add(it.asTextOrNull()) }
+                metadata.values.forEach { add(it.asTextOrNull()) }
+            }
+            if (shouldReject(allStrings, rejectBareShortCode = false)
+                || shouldReject(payloadText, rejectBareShortCode = true)
+            ) StoredEventScreening.SENSITIVE_AUTH else StoredEventScreening.SAFE
+        } catch (_: Exception) {
+            StoredEventScreening.UNREADABLE
         }
-        if (shouldReject(allStrings, rejectBareShortCode = false)
-            || shouldReject(payloadText, rejectBareShortCode = true)
-        ) StoredEventScreening.SENSITIVE_AUTH else StoredEventScreening.SAFE
-    } catch (_: Exception) {
-        StoredEventScreening.UNREADABLE
     }
 
     private fun JsonElement?.asTextOrNull(): String? = (this as? JsonPrimitive)
         ?.takeIf { it.isString }
         ?.contentOrNull
+
+    private fun JsonElement?.isStringOrNull(): Boolean = this == JsonNull || (this as? JsonPrimitive)?.isString == true
 
     private fun normalizeText(value: CharSequence): String = Normalizer
         .normalize(value.toString().take(4096), Normalizer.Form.NFKC)
