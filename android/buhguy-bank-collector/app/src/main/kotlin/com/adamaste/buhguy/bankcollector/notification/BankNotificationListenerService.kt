@@ -52,6 +52,31 @@ class BankNotificationListenerService : NotificationListenerService() {
             preferences.markLastCallback(callbackAt, sbn.packageName, "filtered")
             return
         }
+        val sensitiveOrUnreadable = try {
+            val notificationExtras = sbn.notification.extras
+            SensitiveBankNotificationFilter.shouldReject(
+                listOf(
+                    notificationExtras.getCharSequence(Notification.EXTRA_TITLE),
+                    notificationExtras.getCharSequence(Notification.EXTRA_TEXT),
+                    notificationExtras.getCharSequence(Notification.EXTRA_BIG_TEXT),
+                    notificationExtras.getCharSequence(Notification.EXTRA_SUB_TEXT),
+                ),
+            )
+        } catch (_: Exception) {
+            true
+        }
+        if (sensitiveOrUnreadable) {
+            BankCaptureDiagnostics.log(
+                BankCaptureLogEvent(
+                    packageName = sbn.packageName,
+                    outcome = BankCaptureOutcome.SENSITIVE_AUTH_REJECTED,
+                    stage = "pre_outbox_filter",
+                    reason = "sensitive_or_unreadable_content",
+                ),
+            )
+            preferences.markLastCapture(callbackAt, sbn.packageName, BankCaptureOutcome.SENSITIVE_AUTH_REJECTED.name, "")
+            return
+        }
         val mapper = NotificationEventMapper(registry, preferences.sourceKey())
         val snapshot = sbn.toSnapshot(channelId)
         if (sbn.packageName == "ru.alfabank.mobile.android") {

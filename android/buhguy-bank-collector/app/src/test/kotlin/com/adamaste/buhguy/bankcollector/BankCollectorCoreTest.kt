@@ -64,6 +64,10 @@ class BankCollectorCoreTest {
         assertEquals(DeliveryDecision.Retry, deliveryDecision(500, false))
         assertEquals(DeliveryDecision.Retry, deliveryDecision(null, true))
         assertEquals(DeliveryDecision.PermanentlyRejected("HTTP_400"), deliveryDecision(400, false))
+        assertEquals(
+            DeliveryDecision.PermanentlyRejected("SENSITIVE_AUTH_NOTIFICATION"),
+            deliveryDecision(422, false, "rejected", "SENSITIVE_AUTH_NOTIFICATION"),
+        )
         assertEquals(DeliveryDecision.PreservePending("AUTH_REQUIRED"), deliveryDecision(401, false))
         assertEquals(DeliveryDecision.PreservePending("SOURCE_MISMATCH"), deliveryDecision(403, false, serverCode = "SOURCE_MISMATCH"))
     }

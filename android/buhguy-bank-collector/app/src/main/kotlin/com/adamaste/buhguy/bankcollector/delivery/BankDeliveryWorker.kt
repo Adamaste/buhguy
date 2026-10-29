@@ -10,6 +10,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.adamaste.buhguy.bankcollector.BankCollectorApplication
+import com.adamaste.buhguy.bankcollector.notification.SensitiveBankNotificationFilter
+import com.adamaste.buhguy.bankcollector.notification.StoredEventScreening
 import com.adamaste.buhguy.bankcollector.AppPreferences
 import com.adamaste.buhguy.bankcollector.notification.BankCaptureDiagnostics
 import java.util.concurrent.TimeUnit
@@ -26,6 +28,19 @@ class BankDeliveryWorker(context: Context, params: WorkerParameters) : Coroutine
         val database = AppRuntime.database(applicationContext)
         val transport = AppRuntime.transport(applicationContext)
         for (entity in database.outbox().pending(50)) {
+            when (SensitiveBankNotificationFilter.screenStoredEvent(entity.eventJson)) {
+                StoredEventScreening.SAFE -> Unit
+                StoredEventScreening.SENSITIVE_AUTH -> {
+                    database.outbox().setStatus(entity.id, "PERMANENTLY_REJECTED", "SENSITIVE_AUTH_NOTIFICATION")
+                    Log.w("BankDelivery", "package=${entity.packageName} status=REJECTED reason=SENSITIVE_AUTH_NOTIFICATION")
+                    continue
+                }
+                StoredEventScreening.UNREADABLE -> {
+                    database.outbox().setStatus(entity.id, "HELD_FOR_REVIEW", "OUTBOX_CONTENT_UNREADABLE")
+                    Log.w("BankDelivery", "package=${entity.packageName} status=HELD_FOR_REVIEW reason=OUTBOX_CONTENT_UNREADABLE")
+                    continue
+                }
+            }
             val result = runCatching { transport.send(entity.eventJson) }
                 .getOrElse { error -> transportFailureResult(error) }
             when (val decision = deliveryDecision(result.httpStatus, result.networkFailure, result.serverStatus, result.serverCode)) {

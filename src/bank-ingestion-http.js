@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { authenticateBankDevice } from './bank-device-auth.js';
 import { createBankIngestionHandler, resolveBankObservationAccountingScope, validateBankEventInput } from './bank-ingestion.js';
+import { SENSITIVE_AUTH_NOTIFICATION_CODE } from './bank-notification-security.js';
 import { matchedPurchaseReconciliationWindow, readMatchedPurchaseReconciliationOptIn, runBoundedMatchedPurchaseReconciliation } from './matched-purchase-reconciliation.js';
 import { readBankOnlyPurchaseLedgerOptIn, writeBankOnlyPurchase } from './bank-only-purchase.js';
 
@@ -83,7 +84,12 @@ export function createBankIngestionServer({
         if (error.code === 'BODY_TOO_LARGE') return writeJson(response, 413, { status: 'rejected', code: 'BODY_TOO_LARGE' });
         return writeJson(response, 400, { status: 'rejected', code: 'INVALID_EVENT' });
       }
-      try { validateBankEventInput(body); } catch { return writeJson(response, 400, { status: 'rejected', code: 'INVALID_EVENT' }); }
+      try { validateBankEventInput(body); } catch (error) {
+        if (error?.code === SENSITIVE_AUTH_NOTIFICATION_CODE) {
+          return writeJson(response, 422, { status: 'rejected', code: SENSITIVE_AUTH_NOTIFICATION_CODE });
+        }
+        return writeJson(response, 400, { status: 'rejected', code: 'INVALID_EVENT' });
+      }
       if (body.sourceKey !== auth.sourceKey) return writeJson(response, 403, { status: 'rejected', code: 'SOURCE_MISMATCH' });
       const result = await handler({ body });
       let responseResult = result;

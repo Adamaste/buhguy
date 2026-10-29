@@ -10,6 +10,7 @@ enum class BankCaptureOutcome {
     CAPTURED,
     INSERTED,
     DUPLICATE,
+    SENSITIVE_AUTH_REJECTED,
     ERROR,
 }
 

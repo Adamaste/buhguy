@@ -14,6 +14,8 @@ fun deliveryDecision(httpStatus: Int?, networkFailure: Boolean, serverStatus: St
     httpStatus == 403 && serverCode == "SOURCE_MISMATCH" -> DeliveryDecision.PreservePending("SOURCE_MISMATCH")
     httpStatus == 429 || httpStatus >= 500 -> DeliveryDecision.Retry
     httpStatus in 200..299 && (serverStatus == "created" || serverStatus == "duplicate") -> DeliveryDecision.Sent
-    httpStatus in 400..499 || serverStatus == "rejected" -> DeliveryDecision.PermanentlyRejected(serverStatus ?: "HTTP_$httpStatus")
+    httpStatus in 400..499 || serverStatus == "rejected" -> DeliveryDecision.PermanentlyRejected(
+        if (serverCode == "SENSITIVE_AUTH_NOTIFICATION") serverCode else serverStatus ?: "HTTP_$httpStatus",
+    )
     else -> DeliveryDecision.Retry
 }
