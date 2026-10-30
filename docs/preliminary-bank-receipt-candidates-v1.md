@@ -39,3 +39,15 @@ particular, a transfer, return, advance, prepayment, unknown currency or
 unresolved account can still appear if its amount and time meet the two search
 criteria; its type and blockers remain visible for review. The strict matching
 and automatic accounting gates are unchanged.
+
+## Local PostgreSQL integration-test isolation
+
+The default integration fixture does not create the shared `receipt_collector`
+role. A suite that validates grants added by migrations opts in to a temporary
+role before fixture migrations, then the runner removes its grants and role in
+a `finally` block. The role is cluster-wide, while `DROP OWNED` cleans
+dependencies only in the current database. Run one suite at a time against one
+disposable database; do not prepare several test databases concurrently in the
+same PostgreSQL cluster. If `receipt_collector` already exists, fixture setup
+stops before changing the test schema; use a fresh isolated PostgreSQL cluster
+instead of cleaning up another database's role or grants.
