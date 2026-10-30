@@ -17,6 +17,7 @@
     "test": "node ./scripts/test-suite.js",
     "test:unit": "node ./scripts/test-suite.js --unit-only",
     "test:integration": "node ./scripts/test-postgres-integration.js",
+    "report:receipt-bank-candidates": "node ./scripts/bank-receipt-provisional-candidates-read-only.mjs",
     "test:observation-locking": "node ./scripts/run-observation-locking-clone.mjs",
     "check": "node --check ./bin/receipt-collector.js",
     "coverage:gate": "node ./bin/receipt-collector.js coverage summary",
