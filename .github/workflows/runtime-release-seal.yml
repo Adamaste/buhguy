@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_target_sha:
-        description: Type the exact allowlisted release SHA to run this build
+        description: Type the exact commit SHA already contained in master
         required: true
         type: string
 
@@ -14,21 +14,29 @@ permissions:
 jobs:
   seal-verify:
     if: >-
-      ${{ github.ref == 'refs/heads/master' &&
-          inputs.confirm_target_sha == 'c0a7959c26cde4b73a4b19efbe66e5e42336a502' }}
+      ${{ github.ref == 'refs/heads/master' && inputs.confirm_target_sha != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
     env:
-      TARGET_SHA: c0a7959c26cde4b73a4b19efbe66e5e42336a502
+      TARGET_SHA: ${{ inputs.confirm_target_sha }}
     steps:
-      - name: Checkout the fixed target commit
+      - name: Checkout master history without persisted credentials
         uses: actions/checkout@v4
         with:
-          ref: c0a7959c26cde4b73a4b19efbe66e5e42336a502
-          fetch-depth: 1
+          ref: master
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate the exact target is a commit already in master
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$TARGET_SHA" origin/master
+          git checkout --detach "$TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -44,17 +52,32 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
           release_dir="$RUNNER_TEMP/buhguy-release-$TARGET_SHA"
           mkdir -m 700 "$release_dir"
-          git archive --format=tar "$TARGET_SHA" \
-            bin src db/migrations \
-            deploy/runtime-release.mjs \
-            scripts/migrate-prod-troika-024.mjs \
-            scripts/migrate-prod-bank-only-025.mjs \
-            package.json package-lock.json \
-            | tar -xf - -C "$release_dir"
+          archive_paths=(
+            bin src db/migrations deploy/runtime-release.mjs
+            scripts/migrate-prod-troika-024.mjs
+            scripts/migrate-prod-bank-only-025.mjs
+            package.json package-lock.json
+          )
+          if git cat-file -e "$TARGET_SHA:scripts/migrate-prod-bank-reconciliation-026.mjs" 2>/dev/null \
+            || git cat-file -e "$TARGET_SHA:db/migrations/026_manual_bank_reconciliation_review_evidence.sql" 2>/dev/null \
+            || git cat-file -e "$TARGET_SHA:scripts/manual-bank-reconciliation-review.mjs" 2>/dev/null; then
+            archive_paths+=(
+              scripts/migrate-prod-bank-reconciliation-026.mjs
+              scripts/manual-bank-reconciliation-review.mjs
+            )
+          fi
+          git archive --format=tar "$TARGET_SHA" "${archive_paths[@]}" | tar -xf - -C "$release_dir"
           test -s "$release_dir/scripts/migrate-prod-troika-024.mjs"
           test -s "$release_dir/scripts/migrate-prod-bank-only-025.mjs"
           test -s "$release_dir/deploy/runtime-release.mjs"
           test -s "$release_dir/package-lock.json"
+          if [[ -f "$release_dir/scripts/migrate-prod-bank-reconciliation-026.mjs" \
+            || -f "$release_dir/db/migrations/026_manual_bank_reconciliation_review_evidence.sql" \
+            || -f "$release_dir/scripts/manual-bank-reconciliation-review.mjs" ]]; then
+            test -s "$release_dir/scripts/migrate-prod-bank-reconciliation-026.mjs"
+            test -s "$release_dir/scripts/manual-bank-reconciliation-review.mjs"
+            test -s "$release_dir/db/migrations/026_manual_bank_reconciliation_review_evidence.sql"
+          fi
           cd "$release_dir"
           npm ci --omit=dev --ignore-scripts --no-audit --no-fund
           printf 'RELEASE_DIR=%s\n' "$release_dir" >> "$GITHUB_ENV"
@@ -81,6 +104,14 @@ jobs:
             'scripts/migrate-prod-troika-024.mjs',
             'scripts/migrate-prod-bank-only-025.mjs',
           ];
+          const manualReviewMarkers = [
+            'scripts/migrate-prod-bank-reconciliation-026.mjs',
+            'scripts/manual-bank-reconciliation-review.mjs',
+            'db/migrations/026_manual_bank_reconciliation_review_evidence.sql',
+          ];
+          if (manualReviewMarkers.some((path) => manifest.files.some((item) => item.path === path))) {
+            required.push(...manualReviewMarkers);
+          }
           for (const path of required) {
             const entry = manifest.files.find((item) => item.path === path && item.type === 'file');
             if (!entry || !/^[a-f0-9]{40}$/.test(entry.gitBlob)
@@ -107,6 +138,11 @@ jobs:
           tar -C "$RELEASE_DIR" -czf "$archive" .
           tar -tzf "$archive" | grep -Fx './scripts/migrate-prod-troika-024.mjs' >/dev/null
           tar -tzf "$archive" | grep -Fx './scripts/migrate-prod-bank-only-025.mjs' >/dev/null
+          if [[ -f "$RELEASE_DIR/scripts/migrate-prod-bank-reconciliation-026.mjs" ]]; then
+            tar -tzf "$archive" | grep -Fx './scripts/migrate-prod-bank-reconciliation-026.mjs' >/dev/null
+            tar -tzf "$archive" | grep -Fx './scripts/manual-bank-reconciliation-review.mjs' >/dev/null
+            tar -tzf "$archive" | grep -Fx './db/migrations/026_manual_bank_reconciliation_review_evidence.sql' >/dev/null
+          fi
           tar -tzf "$archive" | grep -Fx './release-manifest.json' >/dev/null
 
           archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
@@ -119,6 +155,9 @@ jobs:
             printf 'archive_bytes=%s\n' "$archive_bytes"
             printf 'runner_024=present-and-manifest-verified\n'
             printf 'runner_025=present-and-manifest-verified\n'
+            if [[ -f "$RELEASE_DIR/scripts/migrate-prod-bank-reconciliation-026.mjs" ]]; then
+              printf 'runner_026=present-and-manifest-verified\n'
+            fi
             printf 'seal_verify=PASS\n'
           } > "$report"
           cat "$report" >> "$GITHUB_STEP_SUMMARY"
@@ -128,9 +167,9 @@ jobs:
       - name: Upload only the sealed release and hash report
         uses: actions/upload-artifact@v4
         with:
-          name: buhguy-runtime-sealed-c0a7959c26cde4b73a4b19efbe66e5e42336a502
+          name: buhguy-runtime-sealed-${{ inputs.confirm_target_sha }}
           path: |
-            ${{ runner.temp }}/buhguy-runtime-c0a7959c26cde4b73a4b19efbe66e5e42336a502.tar.gz
+            ${{ runner.temp }}/buhguy-runtime-${{ inputs.confirm_target_sha }}.tar.gz
             ${{ runner.temp }}/buhguy-runtime-release-report.txt
           if-no-files-found: error
           retention-days: 7

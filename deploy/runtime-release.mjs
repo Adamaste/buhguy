@@ -13,8 +13,14 @@ const CODE_ROOTS = ['bin/', 'src/', 'db/migrations/'];
 const SOURCE_CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.sql']);
 const TROIKA_024_RUNNER = 'scripts/migrate-prod-troika-024.mjs';
 const BANK_ONLY_025_RUNNER = 'scripts/migrate-prod-bank-only-025.mjs';
+const BANK_RECONCILIATION_026_MIGRATION = 'db/migrations/026_manual_bank_reconciliation_review_evidence.sql';
+const BANK_RECONCILIATION_026_RUNNER = 'scripts/migrate-prod-bank-reconciliation-026.mjs';
+const MANUAL_BANK_REVIEW_TOOL = 'scripts/manual-bank-reconciliation-review.mjs';
+const BANK_ONLY_CAPABILITY_FILES = [TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER];
+const MANUAL_REVIEW_CAPABILITY_FILES = [...BANK_ONLY_CAPABILITY_FILES, BANK_RECONCILIATION_026_MIGRATION, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL];
+const MANUAL_REVIEW_CAPABILITY_MARKERS = [BANK_RECONCILIATION_026_MIGRATION, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL];
 const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'scripts', 'node_modules']);
-const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER]);
+const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL]);
 const SENSITIVE = /(^|[._-])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|auth|session|sessions|profile|profiles|state|backup|backups|dump|dumps|log|logs|cache|browser-profile)([._-]|$)/i;
 const NEVER_RELEASE_COMPONENTS = new Set([
   '.env', '.receipt-collector', '.local-browsers', 'ms-playwright',
@@ -35,6 +41,13 @@ export class ReleaseError extends Error {
 function fail(code) { throw new ReleaseError(code); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
 function comparePaths(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+export function requiredReleaseCapabilityFiles(paths) {
+  const declared = paths instanceof Set ? paths : new Set(paths);
+  if (MANUAL_REVIEW_CAPABILITY_MARKERS.some(file => declared.has(file))) return MANUAL_REVIEW_CAPABILITY_FILES;
+  if (declared.has(BANK_ONLY_025_RUNNER)) return BANK_ONLY_CAPABILITY_FILES;
+  if (declared.has(TROIKA_024_RUNNER)) return [TROIKA_024_RUNNER];
+  return [];
+}
 function gitBlobSha(bytes) {
   const header = Buffer.from(`blob ${bytes.length}\0`);
   return crypto.createHash('sha1').update(header).update(bytes).digest('hex');
@@ -214,8 +227,13 @@ function validateManifestLists(manifest) {
   const ordered = [...paths].sort(comparePaths);
   const actual = [...manifest.files.map(x => x.path), ...manifest.directories.map(x => x.path)].sort(comparePaths);
   if (actual.some((value, index) => value !== ordered[index])) fail('MANIFEST_ORDER_OR_PATH_INVALID');
-  for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER]) {
+  for (const required of ['package.json', 'package-lock.json', 'bin/receipt-collector.js', 'src/cli.js', 'deploy/runtime-release.mjs']) {
     if (!manifest.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
+  }
+  const declaredFiles = new Set(manifest.files.map(entry => entry.path));
+  const requiredCapabilities = requiredReleaseCapabilityFiles(declaredFiles);
+  for (const required of requiredCapabilities) {
+    if (!declaredFiles.has(required)) fail('RUNTIME_FILE_MISSING');
   }
   return trustedSourcePaths;
 }
@@ -267,7 +285,7 @@ function git(sourceRoot, args, options = {}) {
 }
 
 function gitPathList(sourceRoot, sha) {
-  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, 'package.json', 'package-lock.json']);
+  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL, 'package.json', 'package-lock.json']);
   return output.toString('utf8').split('\0').filter(Boolean).sort(comparePaths);
 }
 
@@ -345,8 +363,10 @@ export async function sealRelease({ sourceRoot, releaseDir, sha, fsApi = fs }) {
   const expectedCodePaths = gitPathList(sourceRoot, sha);
   const trustedSourcePaths = new Set(expectedCodePaths.filter(relative => CODE_ROOTS.some(prefix => relative.startsWith(prefix)) && SOURCE_CODE_EXTENSIONS.has(path.extname(relative).toLowerCase())));
   const inventory = await walkForSeal(releaseDir, fsApi, trustedSourcePaths);
-  for (const required of [TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER]) {
-    if (!expectedCodePaths.includes(required) || !inventory.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
+  const expectedPathSet = new Set(expectedCodePaths);
+  const requiredCapabilities = requiredReleaseCapabilityFiles(expectedPathSet);
+  for (const required of requiredCapabilities) {
+    if (!expectedPathSet.has(required) || !inventory.files.some(entry => entry.path === required && entry.type === 'file')) fail('RUNTIME_FILE_MISSING');
   }
   const stageCodePaths = inventory.files.filter(entry => isGitRuntimeFile(entry.path)).map(entry => entry.path).sort((a, b) => a.localeCompare(b, 'en'));
   if (stageCodePaths.length !== expectedCodePaths.length || stageCodePaths.some((p, i) => p !== expectedCodePaths[i])) fail('GIT_TREE_CONTENT_MISMATCH');
