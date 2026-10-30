@@ -13,6 +13,7 @@ import { rebuildLedger, refreshLedgerForReceipt } from '../src/ledger.js';
 import { bindBankSourceProviderAccount } from '../src/bank-source-provider-binding.js';
 import { lockMatchedPurchaseBankTransaction, lockMatchedPurchaseSourceProvider } from '../src/matched-purchase-locks.js';
 import { resolveBankTransactionAccount } from '../src/bank-account-resolution.js';
+import { approveHistoricalReceiptBankMatch, previewHistoricalReceiptBankMatch } from '../src/manual-bank-reconciliation-review.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -644,4 +645,110 @@ integration('account resolution and source/provider binding serialize with match
     if (fixture) await pool.query('DELETE FROM accounting_scopes WHERE id=$1', [fixture.scopeId]).catch(() => {});
     await pool.end();
   }
+});
+
+integration('historical review persists one evidenced pre-cohort pair through the existing writer without duplicate active expense', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  const cutoffEnvKey = 'MATCHED_PURCHASE_RECONCILIATION_START_AT';
+  const previousCutoff = process.env[cutoffEnvKey];
+  try {
+    const fixture = await createFixture(pool, 'historical-review', { standalone: false, amount: '37.00' });
+    const bankAt = '2026-10-01T10:00:00.000Z';
+    const receiptAt = '2026-10-01T10:01:00.000Z';
+    const cutoff = '2026-10-17T08:08:21.000Z';
+    await pool.query('UPDATE bank_transactions SET occurred_at=$1 WHERE id=$2', [bankAt, fixture.txId]);
+    await pool.query('UPDATE bank_event_observations SET created_at=$1 WHERE id=$2', [bankAt, fixture.observationId]);
+    await pool.query('UPDATE receipts SET date_time=$1 WHERE id=$2', [receiptAt, fixture.receiptId]);
+    await persistStandalonePurchases(pool, { scopeKey: fixture.scopeKey, receiptIds: [fixture.receiptId] });
+    const standaloneEventId = Number((await pool.query("SELECT event_id FROM business_event_evidence WHERE receipt_id=$1 AND evidence_role='PURCHASE_EVIDENCE'", [fixture.receiptId])).rows[0].event_id);
+    await rebuildLedger(pool, { scopeKey: fixture.scopeKey, eventIds: [standaloneEventId] });
+
+    const selection = { bankTransactionId: fixture.txId, receiptId: fixture.receiptId, financialAccountId: fixture.accountId, scopeKey: fixture.scopeKey };
+    const preview = await previewHistoricalReceiptBankMatch(pool, selection);
+    assert.equal(preview.status, 'DRY_RUN');
+    assert.equal(preview.reasonCode, 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL');
+    assert.equal(preview.ledgerChanged, false);
+    assert.equal(Number((await pool.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId])).rows[0].count), 1);
+
+    const evidence = {
+      evidenceType: 'BANK_STATEMENT',
+      evidenceSha256: digest('synthetic historical statement artifact'),
+      evidenceReferenceSha256: digest('synthetic external transaction locator'),
+      reviewerCode: 'test-0123456789abcdef',
+    };
+    delete process.env[cutoffEnvKey];
+    await assert.rejects(() => approveHistoricalReceiptBankMatch(pool, {
+      ...selection, expectedMatchKey: preview.matchKey, cohortCutoff: cutoff, evidence, persist: true,
+    }), error => error.code === 'MANUAL_REVIEW_CONFIGURED_COHORT_CUTOFF_UNSET');
+    await assert.rejects(() => persistMatchedPurchase(pool, {
+      scopeKey: fixture.scopeKey,
+      from: preview.from,
+      to: preview.to,
+      internalTransferMaxTimeDeltaMs: 5000,
+      receiptMaxTimeDeltaMs: 300000,
+      matchKey: preview.matchKey,
+      approvedMatchKey: preview.matchKey,
+      historicalReviewEvidence: { evidence, cohortCutoff: cutoff },
+    }), error => error.code === 'MANUAL_REVIEW_CONFIGURED_COHORT_CUTOFF_UNSET');
+    process.env[cutoffEnvKey] = cutoff;
+    await assert.rejects(() => approveHistoricalReceiptBankMatch(pool, {
+      ...selection, expectedMatchKey: preview.matchKey, cohortCutoff: '2026-10-18T08:08:21.000Z', evidence, persist: true,
+    }), error => error.code === 'MANUAL_REVIEW_COHORT_CUTOFF_MISMATCH');
+    const approved = await approveHistoricalReceiptBankMatch(pool, {
+      ...selection, expectedMatchKey: preview.matchKey, cohortCutoff: cutoff, evidence, persist: true,
+    });
+    assert.equal(approved.status, 'APPROVED_AND_PERSISTED');
+    assert.equal(Number((await pool.query("SELECT count(*)::int AS count FROM manual_bank_reconciliation_review_evidence WHERE scope_id=$1 AND review_kind='RECEIPT_BANK_MATCH'", [fixture.scopeId])).rows[0].count), 1);
+    assert.equal(Number((await pool.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId])).rows[0].count), 1);
+    assert.equal(Number((await pool.query('SELECT count(*)::int AS count FROM ledger_entry_supersessions WHERE scope_id=$1', [fixture.scopeId])).rows[0].count), 1);
+
+    const replay = await approveHistoricalReceiptBankMatch(pool, {
+      ...selection, expectedMatchKey: preview.matchKey, cohortCutoff: cutoff, evidence, persist: true,
+    });
+    assert.equal(replay.status, 'APPROVED_AND_ALREADY_ACCOUNTED');
+    assert.equal(Number((await pool.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [fixture.scopeId])).rows[0].count), 1);
+  } finally {
+    if (previousCutoff === undefined) delete process.env[cutoffEnvKey];
+    else process.env[cutoffEnvKey] = previousCutoff;
+    await pool.end();
+  }
+});
+
+integration('historical review refuses ambiguous same-amount purchases and candidates outside the existing five-minute window', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    const ambiguous = await createFixture(pool, 'historical-ambiguous', { amount: '110.00' });
+    const secondObservation = Number((await pool.query(`INSERT INTO bank_event_observations(bank_source_id,dedup_key,observed_at,event_time,payload,payload_sha256)
+      SELECT bank_source_id,$2,$3,$3,'{}',$4 FROM bank_event_observations WHERE id=$1 RETURNING id`,
+    [ambiguous.observationId, digest(`second-observation-${ambiguous.suffix}`), '2026-10-01T10:00:00.000Z', digest(`second-payload-${ambiguous.suffix}`)])).rows[0].id);
+    const secondTx = Number((await pool.query(`INSERT INTO bank_transactions(observation_id,occurred_at,amount,currency,direction,event_type,normalization_status,normalization_version,evidence_quality)
+      VALUES($1,'2026-10-01T10:00:02.000Z','110.00','RUB','DEBIT','PURCHASE','READY','fixture','EXACT') RETURNING id`, [secondObservation])).rows[0].id);
+    await pool.query(`INSERT INTO bank_transaction_account_resolution(bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
+      VALUES($1,$2,'EXACT','fixture','fixture')`, [secondTx, ambiguous.accountId]);
+    await pool.query('UPDATE bank_transactions SET occurred_at=$1 WHERE id=$2', ['2026-10-01T10:00:00.000Z', ambiguous.txId]);
+    await pool.query('UPDATE bank_event_observations SET created_at=$1 WHERE id=$2', ['2026-10-01T10:00:00.000Z', ambiguous.observationId]);
+    await pool.query('UPDATE receipts SET date_time=$1 WHERE id=$2', ['2026-10-01T10:00:01.000Z', ambiguous.receiptId]);
+    const ambiguousResult = await previewHistoricalReceiptBankMatch(pool, {
+      bankTransactionId: ambiguous.txId, receiptId: ambiguous.receiptId,
+      financialAccountId: ambiguous.accountId, scopeKey: ambiguous.scopeKey,
+    });
+    assert.equal(ambiguousResult.status, 'FAIL_CLOSED');
+    assert.equal(ambiguousResult.reasonCode, 'PAIR_NOT_UNIQUE_IN_MATCHER_COMPONENT');
+    assert.equal(Number((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [ambiguous.scopeId])).rows[0].count), 0);
+
+    const outside = await createFixture(pool, 'historical-outside-window', { amount: '37.00' });
+    await pool.query('UPDATE bank_transactions SET occurred_at=$1 WHERE id=$2', ['2026-10-01T11:00:00.000Z', outside.txId]);
+    await pool.query('UPDATE bank_event_observations SET created_at=$1 WHERE id=$2', ['2026-10-01T11:00:00.000Z', outside.observationId]);
+    await pool.query('UPDATE receipts SET date_time=$1 WHERE id=$2', ['2026-10-01T11:06:00.000Z', outside.receiptId]);
+    const outsideResult = await previewHistoricalReceiptBankMatch(pool, {
+      bankTransactionId: outside.txId, receiptId: outside.receiptId,
+      financialAccountId: outside.accountId, scopeKey: outside.scopeKey,
+    });
+    assert.equal(outsideResult.status, 'FAIL_CLOSED');
+    assert.equal(outsideResult.reasonCode, 'PAIR_NOT_UNIQUE_IN_MATCHER_COMPONENT');
+    assert.equal(Number((await pool.query('SELECT count(*)::int AS count FROM bank_receipt_matches WHERE scope_id=$1', [outside.scopeId])).rows[0].count), 0);
+  } finally { await pool.end(); }
 });

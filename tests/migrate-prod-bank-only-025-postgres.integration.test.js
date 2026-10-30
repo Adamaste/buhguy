@@ -185,7 +185,8 @@ integration('strict migration 025 preserves existing synthetic FNS-only and matc
     assert.equal(beforeMatched.matches.length, 1);
     assert.equal(beforeMatched.bankEvidence.length, 1);
 
-    const result = await migrateBankOnly025(pool);
+    await copyFile(new URL(BANK_ONLY_MIGRATION_025, new URL('../db/migrations/', import.meta.url)), path.join(migrationsDir, BANK_ONLY_MIGRATION_025));
+    const result = await migrateBankOnly025(pool, migrationsDir);
     assert.deepEqual(result.applied, [BANK_ONLY_MIGRATION_025]);
     assert.deepEqual(await snapshotScope(pool, standalone.scopeId), beforeStandalone);
     assert.deepEqual(await snapshotScope(pool, matched.scopeId), beforeMatched);

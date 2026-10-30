@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { publishRelease, sealRelease, selectRelease, validateReleasePath, verifyRelease } from '../deploy/runtime-release.mjs';
+import { publishRelease, requiredReleaseCapabilityFiles, sealRelease, selectRelease, validateReleasePath, verifyRelease } from '../deploy/runtime-release.mjs';
 
 const shaA = 'a'.repeat(40);
 const shaB = 'b'.repeat(40);
@@ -47,18 +47,21 @@ function posixTestFs() {
   return api;
 }
 
-async function makeStage(root, sha, label) {
+async function makeStage(root, sha, label, omittedPaths = []) {
   const stage = path.join(root, `.staging-${sha}`);
   const contents = new Map([
     ['bin/receipt-collector.js', `export const release = '${label}';\n`],
     ['src/cli.js', `export const cliRelease = '${label}';\n`],
     ['deploy/runtime-release.mjs', 'export const releaseTool = true;\n'],
+    ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'SELECT 26026;\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
     ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
+    ['scripts/migrate-prod-bank-reconciliation-026.mjs', 'export const migrationRunner = "026_manual_bank_reconciliation_review_evidence.sql";\n'],
+    ['scripts/manual-bank-reconciliation-review.mjs', 'export const historicalReviewTool = true;\n'],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0' } } }) + '\n'],
   ]);
-  for (const [relative, content] of contents) {
+  for (const [relative, content] of [...contents].filter(([relative]) => !omittedPaths.includes(relative))) {
     const file = path.join(stage, ...relative.split('/'));
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, content);
@@ -99,6 +102,33 @@ async function makeStage(root, sha, label) {
   }
   return { stage, manifestSha256: manifestHash(bytes) };
 }
+
+test('new verifier accepts pre-024 immutable releases and still requires both migration runners for B', async t => {
+  const root = await fs.mkdtemp(path.join(testDirectory, '.runtime-compatibility-'));
+  t.after(() => makeWritableAndRemove(root));
+  const sha = 'c'.repeat(40);
+  const legacy = await makeStage(root, sha, 'legacy', [
+    'db/migrations/026_manual_bank_reconciliation_review_evidence.sql',
+    'scripts/migrate-prod-troika-024.mjs',
+    'scripts/migrate-prod-bank-only-025.mjs',
+    'scripts/migrate-prod-bank-reconciliation-026.mjs',
+    'scripts/manual-bank-reconciliation-review.mjs',
+  ]);
+  assert.equal((await verifyRelease({ releaseDir: legacy.stage, sha, manifestSha256: legacy.manifestSha256, fsApi: posixTestFs(), runtimeCheck: false })).status, 'PASS');
+
+  const bankOnlyB = await makeStage(root, 'e'.repeat(40), 'bank-only-B', [
+    'db/migrations/026_manual_bank_reconciliation_review_evidence.sql',
+    'scripts/migrate-prod-bank-reconciliation-026.mjs',
+    'scripts/manual-bank-reconciliation-review.mjs',
+  ]);
+  assert.equal((await verifyRelease({ releaseDir: bankOnlyB.stage, sha: 'e'.repeat(40), manifestSha256: bankOnlyB.manifestSha256, fsApi: posixTestFs(), runtimeCheck: false })).status, 'PASS');
+
+  const incompleteB = await makeStage(root, 'd'.repeat(40), 'incomplete-B', ['scripts/migrate-prod-troika-024.mjs']);
+  await assert.rejects(
+    () => verifyRelease({ releaseDir: incompleteB.stage, sha: 'd'.repeat(40), manifestSha256: incompleteB.manifestSha256, fsApi: posixTestFs(), runtimeCheck: false }),
+    error => error.code === 'RUNTIME_FILE_MISSING',
+  );
+});
 
 async function makeWritableAndRemove(root) {
   try {
@@ -234,8 +264,46 @@ test('runtime allowlist admits only the pinned production migration runners unde
   assert.equal(validateReleasePath('scripts'), 'scripts');
   assert.equal(validateReleasePath('scripts/migrate-prod-troika-024.mjs'), 'scripts/migrate-prod-troika-024.mjs');
   assert.equal(validateReleasePath('scripts/migrate-prod-bank-only-025.mjs'), 'scripts/migrate-prod-bank-only-025.mjs');
+  assert.equal(validateReleasePath('scripts/migrate-prod-bank-reconciliation-026.mjs'), 'scripts/migrate-prod-bank-reconciliation-026.mjs');
+  assert.equal(validateReleasePath('scripts/manual-bank-reconciliation-review.mjs'), 'scripts/manual-bank-reconciliation-review.mjs');
   assert.throws(() => validateReleasePath('scripts/migrate-prod-only.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
   assert.throws(() => validateReleasePath('scripts/arbitrary-migration.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
+});
+
+test('runtime release capabilities preserve legacy A/B and require the full historical-review set only when marked', () => {
+  assert.deepEqual(requiredReleaseCapabilityFiles(new Set(['scripts/migrate-prod-troika-024.mjs'])), [
+    'scripts/migrate-prod-troika-024.mjs',
+  ]);
+  assert.deepEqual(requiredReleaseCapabilityFiles(new Set([
+    'scripts/migrate-prod-troika-024.mjs',
+    'scripts/migrate-prod-bank-only-025.mjs',
+  ])), [
+    'scripts/migrate-prod-troika-024.mjs',
+    'scripts/migrate-prod-bank-only-025.mjs',
+  ]);
+  assert.deepEqual(requiredReleaseCapabilityFiles(new Set([
+    'scripts/migrate-prod-troika-024.mjs',
+    'scripts/migrate-prod-bank-only-025.mjs',
+    'scripts/migrate-prod-bank-reconciliation-026.mjs',
+  ])), [
+    'scripts/migrate-prod-troika-024.mjs',
+    'scripts/migrate-prod-bank-only-025.mjs',
+    'db/migrations/026_manual_bank_reconciliation_review_evidence.sql',
+    'scripts/migrate-prod-bank-reconciliation-026.mjs',
+    'scripts/manual-bank-reconciliation-review.mjs',
+  ]);
+});
+
+test('Linux seal workflow stays manual, read-only, and packages the selected SHA without breaking older releases', async () => {
+  const workflow = await fs.readFile(fileURLToPath(new URL('../.github/workflows/runtime-release-seal.yml', import.meta.url)), 'utf8');
+  assert.match(workflow, /on:\s*\r?\n\s+workflow_dispatch:/);
+  assert.match(workflow, /permissions:\s*\r?\n\s+contents:\s*read/);
+  assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request|schedule):/m);
+  assert.match(workflow, /archive_paths=\(/);
+  assert.match(workflow, /scripts\/migrate-prod-bank-reconciliation-026\.mjs/);
+  assert.match(workflow, /buhguy-runtime-sealed-\$\{\{ inputs\.confirm_target_sha \}\}/);
+  assert.match(workflow, /buhguy-runtime-\$\{\{ inputs\.confirm_target_sha \}\}\.tar\.gz/);
+  assert.doesNotMatch(workflow, /grep\s+-Fxq\b/);
 });
 
 test('seal binds a synthetic release to one exact Git tree and verifies runtime dependencies', async t => {
@@ -251,8 +319,11 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     ['src/browser-session-import.js', 'export const browserSessionImportModule = true;\n'],
     ['db/migrations/001_initial.sql', 'SELECT 1;\n'],
     ['db/migrations/011_bank_device_credentials.sql', 'CREATE TABLE device_credentials (id integer PRIMARY KEY);\n'],
+    ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'SELECT 26026;\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
     ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
+    ['scripts/migrate-prod-bank-reconciliation-026.mjs', 'export const migrationRunner = "026_manual_bank_reconciliation_review_evidence.sql";\n'],
+    ['scripts/manual-bank-reconciliation-review.mjs', 'export const historicalReviewTool = true;\n'],
     ['deploy/runtime-release.mjs', (await fs.readFile(fileURLToPath(new URL('../deploy/runtime-release.mjs', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n')],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0', engines: { node: '>=22' } } } }) + '\n'],
@@ -276,7 +347,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.copyFile(from, to);
   }
-  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
+  for (const relative of ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs']) {
     const stagedPath = path.join(stage, ...relative.split('/'));
     await fs.unlink(stagedPath);
     await assert.rejects(
@@ -350,7 +421,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
   const manifest = JSON.parse(await fs.readFile(path.join(stage, 'release-manifest.json'), 'utf8'));
-  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
+  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs']) {
     assert.ok(manifest.files.some(entry => entry.path === relative && entry.gitBlob));
   }
 

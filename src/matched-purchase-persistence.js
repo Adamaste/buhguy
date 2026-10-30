@@ -12,6 +12,12 @@ import { APPROVED_INTERNAL_TRANSFER_WINDOW_MS, APPROVED_RECEIPT_WINDOW_MS } from
 import { lockMatchedPurchaseBankTransaction, lockMatchedPurchaseScope, lockMatchedPurchaseSourceProvider } from './matched-purchase-locks.js';
 import { hasAutomaticMatchedPurchaseAccountProof, TBANK_ANDROID_PROVIDER } from './matched-purchase-account-proof.js';
 import { BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_RULE, isValidBankOnlyPurchaseEvidence } from './bank-only-purchase-contract.js';
+import {
+  assertManualReviewCohortCutoff,
+  insertManualReviewEvidence,
+  MANUAL_RECONCILIATION_REVIEW_KINDS,
+  normalizeManualReviewEvidence,
+} from './manual-reconciliation-evidence.js';
 
 export const MATCHED_PURCHASE_PERSISTENCE_VERSION = 'matched-purchase-persistence-v1';
 export const MATCHED_PURCHASE_BANK_LEDGER_RULE = 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1';
@@ -467,6 +473,44 @@ async function bankOnlyLedgerForMatch(client, scope, fields) {
   return { eventId: Number(row.business_event_id), entryId: Number(entries[0].id) };
 }
 
+async function recordHistoricalPairReviewEvidence(client, scope, fields, selected, reviewInput) {
+  if (!reviewInput || typeof reviewInput !== 'object' || Array.isArray(reviewInput)
+    || Object.keys(reviewInput).length !== 2
+    || !Object.hasOwn(reviewInput, 'evidence') || !Object.hasOwn(reviewInput, 'cohortCutoff')) {
+    fail('HISTORICAL_REVIEW_EVIDENCE_SHAPE_INVALID');
+  }
+  const evidence = normalizeManualReviewEvidence(reviewInput.evidence, {
+    reviewKind: MANUAL_RECONCILIATION_REVIEW_KINDS.RECEIPT_BANK_MATCH,
+    receiptId: fields.receiptId,
+    cohortCutoff: reviewInput.cohortCutoff,
+    matchKey: fields.matchKey,
+  });
+  if (selected.reasonCode !== 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL') fail('HISTORICAL_PAIR_NOT_REQUIRES_APPROVAL');
+  const facts = (await client.query(`SELECT bt.occurred_at,eo.created_at AS observed_at,r.date_time AS receipt_date_time,
+      ar.financial_account_id,ar.resolution_state,a.scope_id AS account_scope_id,a.currency AS account_currency
+    FROM bank_transactions bt
+    JOIN bank_event_observations eo ON eo.id=bt.observation_id
+    JOIN receipts r ON r.id=$2
+    LEFT JOIN bank_transaction_account_resolution ar ON ar.bank_transaction_id=bt.id
+    LEFT JOIN financial_accounts a ON a.id=ar.financial_account_id
+    WHERE bt.id=$1`, [fields.bankTransactionId, fields.receiptId])).rows[0];
+  if (!facts || Number(facts.financial_account_id) !== fields.financialAccountId
+    || !['EXACT', 'MANUAL', 'RECONCILED'].includes(facts.resolution_state)
+    || Number(facts.account_scope_id) !== Number(scope.id) || facts.account_currency !== fields.currency) {
+    fail('HISTORICAL_PAIR_ACCOUNT_RESOLUTION_CHANGED');
+  }
+  const cutoff = assertManualReviewCohortCutoff(evidence.cohortCutoff);
+  if (Date.parse(facts.occurred_at) >= cutoff || Date.parse(facts.observed_at) >= cutoff
+    || Date.parse(facts.receipt_date_time) >= cutoff) fail('HISTORICAL_PAIR_IS_NOT_PRE_COHORT');
+  return insertManualReviewEvidence(client, {
+    scopeId: scope.id,
+    bankTransactionId: fields.bankTransactionId,
+    receiptId: fields.receiptId,
+    financialAccountId: fields.financialAccountId,
+    evidence,
+  });
+}
+
 async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader = loadBankReceiptMatching) {
   if (options.automaticPolicy && (options.automaticPolicy !== MATCHED_PURCHASE_AUTO_POLICY
     || options.assignmentPolicy !== BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS
@@ -494,6 +538,13 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const current = await matchingLoader(client, options);
     const currentMatch = (current?.matches ?? []).find((item) => item.matchKey === fields.matchKey);
     if (!currentMatch || !same(matchFields(currentMatch), fields)) fail('AUTHORITATIVE_MATCH_CHANGED');
+    let historicalReview = null;
+    if (options.historicalReviewEvidence) {
+      if (options.automaticPolicy || options.matchKey !== fields.matchKey || options.approvedMatchKey !== fields.matchKey) {
+        fail('HISTORICAL_REVIEW_REQUIRES_EXPLICIT_SINGLE_PAIR_APPROVAL');
+      }
+      historicalReview = await recordHistoricalPairReviewEvidence(client, scope, fields, currentMatch, options.historicalReviewEvidence);
+    }
     const enrichment = await loadMatchedPurchaseEnrichment(client, { ...options, matchKey: fields.matchKey, matchingLoader: async () => ({ matches: [currentMatch] }) });
     if (enrichment.projectionStatus !== MATCHED_PURCHASE_ENRICHMENT_STATUSES.PROJECTED) fail(enrichment.reasonCode ?? 'ENRICHMENT_BLOCKED');
     const outcome = enrichment.ledgerDisposition === LEDGER_DISPOSITIONS.REUSE_EXISTING_BANK_FUNDING ? 'REUSED' : 'PERSISTED';
@@ -530,7 +581,7 @@ async function persistMatchedPurchaseInternal(pool, options = {}, matchingLoader
     const active = (await client.query(`SELECT count(*)::int AS count FROM ledger_entries e WHERE e.scope_id=$1 AND e.source_event_id=$2 AND e.origin=$3 AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)`, [scope.id, Number(purchase.event.id), SYSTEM_DERIVED])).rows[0].count;
     if (Number(active) !== 1) fail('LEDGER_CONFLICT');
     await client.query('COMMIT');
-    return { modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, outcome, matchId: Number(matchRow.id), eventId: Number(purchase.event.id), bankEvidenceId, ledgerEntryId: Number(ledger.entry.id), certification, enrichmentKey: enrichment.enrichmentKey };
+    return { modelVersion: MATCHED_PURCHASE_PERSISTENCE_VERSION, outcome, matchId: Number(matchRow.id), eventId: Number(purchase.event.id), bankEvidenceId, ledgerEntryId: Number(ledger.entry.id), certification, enrichmentKey: enrichment.enrichmentKey, ...(historicalReview ? { historicalReviewEvidenceId: historicalReview.id } : {}) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; } finally {
     let releaseError;
     if (releaseScopeLock) {

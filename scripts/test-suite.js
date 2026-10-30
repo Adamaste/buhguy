@@ -27,6 +27,8 @@ const unitFiles = [
   'tests/manual-troika-topup-expense.test.js',
   'tests/migrate-prod-troika-024.test.js',
   'tests/migrate-prod-bank-only-025.test.js',
+  'tests/migrate-prod-bank-reconciliation-026.test.js',
+  'tests/manual-reconciliation-evidence.test.js',
   'tests/disposable-local-test-database.test.js',
   'tests/multi-user-fns.test.js',
   'tests/fns-user-onboarding.test.js',
@@ -91,6 +93,7 @@ const postgresFiles = [
   'tests/canonical-spending-current-snapshot-postgres.integration.test.js',
   'tests/certification-materialization-postgres.integration.test.js',
   'tests/migrate-prod-bank-only-025-postgres.integration.test.js',
+  'tests/manual-bank-reconciliation-review-postgres.integration.test.js',
   'tests/bank-only-purchase-postgres.integration.test.js',
 ];
 
