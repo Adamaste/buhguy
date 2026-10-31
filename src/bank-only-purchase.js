@@ -98,6 +98,26 @@ async function eventSourceRow(client, bankTransactionId) {
     WHERE bt.id=$1`, [bankTransactionId])).rows[0] ?? null;
 }
 
+async function hasNearbyAdvanceReceiptCandidate(client, { scopeId, occurredAt, amount, currency }) {
+  const result = await client.query(`SELECT r.id
+    FROM receipts r
+    JOIN receipt_fiscal_facts f ON f.receipt_id=r.id
+    WHERE f.normalization_version='fiscal-normalizer-v1'
+      AND f.normalization_status='READY'
+      AND f.payment_components_status='RECONCILED'
+      AND f.payment_stage IN ('PREPAYMENT_ONLY','ADVANCE_ONLY','MIXED')
+      AND r.total_sum=$2::numeric
+      AND (r.currency IS NULL OR r.currency=$3)
+      AND r.date_time BETWEEN to_timestamp($1::double precision / 1000.0) - interval '5 minutes'
+        AND to_timestamp($1::double precision / 1000.0) + interval '5 minutes'
+      AND EXISTS (SELECT 1 FROM receipt_source_observations observation
+        JOIN fns_sources source ON source.id=observation.fns_source_id
+        WHERE observation.receipt_id=r.id AND source.scope_id=$4)
+    ORDER BY r.date_time,r.id
+    LIMIT 1`, [occurredAt, amount, currency, scopeId]);
+  return result.rowCount > 0;
+}
+
 async function existingAlfaLifecycleState(client, { source, purchase, scopeId, bankTransactionId }) {
   if (source.provider !== ALFA_ANDROID_PROVIDER) return null;
   if (!OPAQUE_NOTIFICATION_LIFECYCLE_ID.test(source.notificationLifecycleId ?? '')) {
@@ -353,6 +373,9 @@ export async function writeBankOnlyPurchase(pool, { bankTransactionId, optIn = r
       await client.query('COMMIT');
       return lifecycleState;
     }
+    if (await hasNearbyAdvanceReceiptCandidate(client, {
+      scopeId: Number(scope.id), occurredAt, amount: purchase.entry.amount, currency: purchase.entry.currency,
+    })) return await rollbackResult(client, 'PREPAYMENT_RECEIPT_CANDIDATE');
     const receiptMatchStatusAtWrite = await inspectReceiptMatchStatus(client, {
       scopeKey, occurredAt, bankTransactionId: txId,
     });

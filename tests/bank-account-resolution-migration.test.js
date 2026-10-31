@@ -86,7 +86,7 @@ test('T-Bank V2 card proof grants only read access to the required instrument re
 });
 
 test('bank-only purchase runtime receives only narrow read and ledger-link permissions', async () => {
-  const sql = await readFile(new URL('../db/migrations/026_bank_only_purchase_runtime_privileges.sql', import.meta.url), 'utf8');
+  const sql = await readFile(new URL('../db/migrations/027_bank_only_purchase_runtime_privileges.sql', import.meta.url), 'utf8');
   assert.match(sql, /GRANT SELECT \(merchant\) ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT SELECT \(created_at\) ON public\.business_events TO receipt_collector/);
   assert.match(sql, /GRANT SELECT \(scope_id, source_event_id, target_event_id, relation_type\) ON public\.business_event_edges TO receipt_collector/);

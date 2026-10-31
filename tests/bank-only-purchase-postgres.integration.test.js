@@ -77,7 +77,7 @@ async function createTransaction(pool, context, {
   return { bankTransactionId, observationId, occurredAt };
 }
 
-async function createReceipt(pool, context, { amount = '83.41', dateTime, suffix = context.suffix } = {}) {
+async function createReceipt(pool, context, { amount = '83.41', dateTime, suffix = context.suffix, paymentStage = 'SETTLEMENT_ONLY' } = {}) {
   const receiptId = Number((await pool.query(`INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type)
     VALUES($1,$2,'Synthetic merchant',$3,'RUB',1) RETURNING id`, [`${context.scopeKey}-receipt-${suffix}`, dateTime, amount])).rows[0].id);
   const sourceId = Number((await pool.query(`INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref,device_ref)
@@ -92,8 +92,8 @@ async function createReceipt(pool, context, { amount = '83.41', dateTime, suffix
       fiscal_operation_type,household_cash_direction,cash_total_sum,cash_total_state,ecash_total_sum,ecash_total_state,prepaid_sum,prepaid_state,
       credit_sum,credit_state,provision_sum,provision_state,payment_components_status,payment_stage,correction_status)
     VALUES($1,'fiscal-normalizer-v1',$2,$3,'READY',1,'OUT','0.00','EXPLICIT_ZERO',$4,'PRESENT_VALUE','0.00','EXPLICIT_ZERO',
-      '0.00','EXPLICIT_ZERO','0.00','EXPLICIT_ZERO','RECONCILED','SETTLEMENT_ONLY','UNKNOWN')`, [receiptId,
-    digest(`${context.scopeKey}:receipt-source:${suffix}`), digest(`${context.scopeKey}:receipt-normalized:${suffix}`), amount]);
+      '0.00','EXPLICIT_ZERO','0.00','EXPLICIT_ZERO','RECONCILED',$5,'UNKNOWN')`, [receiptId,
+    digest(`${context.scopeKey}:receipt-source:${suffix}`), digest(`${context.scopeKey}:receipt-normalized:${suffix}`), amount, paymentStage]);
   return receiptId;
 }
 
@@ -352,6 +352,31 @@ integration('bank-only purchase uses ACTIVE ledger, defers receipt candidates, a
     assert.equal(privilege.can_select_new_source, true);
     assert.equal(privilege.can_insert_new_source, true);
     assert.equal(privilege.can_update_new_source, false);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration('bank-only writer blocks an ordinary expense when a scoped PREPAYMENT_ONLY receipt is a nearby exact-amount candidate', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
+  try {
+    const now = new Date();
+    const context = await createContext(pool, 'yandex-bank.example');
+    const occurredAt = new Date(now.getTime() - 30000).toISOString();
+    const amount = '29211.66';
+    const transaction = await createTransaction(pool, context, { occurredAt, observedAt: occurredAt, amount });
+    await createReceipt(pool, context, { amount, dateTime: new Date(Date.parse(occurredAt) + 60000).toISOString(), suffix: 'nearby-prepayment', paymentStage: 'PREPAYMENT_ONLY' });
+
+    const result = await writeBankOnlyPurchase(pool, { bankTransactionId: transaction.bankTransactionId, optIn: optIn(context.scopeKey, now) });
+    assert.deepEqual({ status: result.status, reasonCode: result.reasonCode }, {
+      status: 'BLOCKED', reasonCode: 'PREPAYMENT_RECEIPT_CANDIDATE',
+    });
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
+      WHERE bank_transaction_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [transaction.bankTransactionId])).rows[0].count, 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_source_links
+      WHERE bank_transaction_id=$1`, [transaction.bankTransactionId])).rows[0].count, 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_events
+      WHERE scope_id=$1 AND rule_code='BANK_ONLY_PURCHASE_V1'`, [context.scopeId])).rows[0].count, 0);
   } finally {
     await pool.end();
   }

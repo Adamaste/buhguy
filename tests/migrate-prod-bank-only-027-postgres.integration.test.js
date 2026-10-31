@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import pg from 'pg';
 import { assertDisposableLocalTestDatabase } from '../scripts/assert-disposable-local-test-database.js';
-import { BANK_ONLY_MIGRATION_026, migrateBankOnly026 } from '../scripts/migrate-prod-bank-only-026.mjs';
+import { BANK_ONLY_MIGRATION_027, migrateBankOnly027 } from '../scripts/migrate-prod-bank-only-027.mjs';
 import { migrate } from '../src/database.js';
 import { runBankOnlyPurchaseCatchup } from '../src/bank-only-purchase.js';
 
@@ -17,8 +17,8 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 
 async function migrationsThrough025() {
   const source = new URL('../db/migrations/', import.meta.url);
-  const names = (await readdir(source)).filter(name => name.endsWith('.sql') && name < BANK_ONLY_MIGRATION_026).sort();
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'buhguy-bank-only-026-stage-'));
+  const names = (await readdir(source)).filter(name => name.endsWith('.sql') && name < BANK_ONLY_MIGRATION_027).sort();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'buhguy-bank-only-027-stage-'));
   for (const name of names) await copyFile(new URL(name, source), path.join(directory, name));
   return directory;
 }
@@ -44,7 +44,7 @@ function runtimeRolePool(adminPool) {
 
 async function seedEligiblePurchase(pool) {
   const suffix = `${process.pid}-${Date.now()}`;
-  const scopeKey = `bank-only-026-${suffix}`;
+  const scopeKey = `bank-only-027-${suffix}`;
   const scopeId = Number((await pool.query('INSERT INTO accounting_scopes(scope_key,label) VALUES($1,$2) RETURNING id', [scopeKey, 'Synthetic migration regression'])).rows[0].id);
   const personId = Number((await pool.query('INSERT INTO persons(scope_id,person_key,display_name) VALUES($1,$2,$3) RETURNING id', [scopeId, `${scopeKey}-person`, 'Synthetic owner'])).rows[0].id);
   const accountId = Number((await pool.query("INSERT INTO financial_accounts(scope_id,institution,provider,display_name,currency) VALUES($1,'Synthetic bank','bank.example',$2,'RUB') RETURNING id", [scopeId, `${scopeKey}-account`])).rows[0].id);
@@ -66,7 +66,7 @@ async function seedEligiblePurchase(pool) {
   return { bankTransactionId, scopeId, scopeKey, now };
 }
 
-integration('026 grants only required columns and lets bounded catch-up retry a previously failed bank-only purchase', { concurrency: false }, async () => {
+integration('027 grants only required columns and lets bounded catch-up retry a previously failed bank-only purchase', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
   const previousMigrations = await migrationsThrough025();
   try {
@@ -109,8 +109,8 @@ integration('026 grants only required columns and lets bounded catch-up retry a 
     assert.deepEqual(failedItem.fields, { bankTransactionId: fixture.bankTransactionId, status: 'ERROR', reasonCode: '42501' });
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM business_event_bank_evidence WHERE bank_transaction_id=$1', [fixture.bankTransactionId])).rows[0].count, 0);
 
-    const applied = await migrateBankOnly026(pool);
-    assert.deepEqual(applied.applied, [BANK_ONLY_MIGRATION_026]);
+    const applied = await migrateBankOnly027(pool);
+    assert.deepEqual(applied.applied, [BANK_ONLY_MIGRATION_027]);
     const after = (await pool.query(`SELECT has_column_privilege('receipt_collector','public.bank_transactions','merchant','SELECT') AS merchant,
       has_column_privilege('receipt_collector','public.bank_transactions','counterparty','SELECT') AS counterparty,
       has_column_privilege('receipt_collector','public.business_events','created_at','SELECT') AS event_created_at,

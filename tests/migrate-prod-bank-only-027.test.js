@@ -5,17 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  BANK_ONLY_MIGRATION_026,
-  BANK_ONLY_MIGRATION_026_SHA256,
-  migrateBankOnly026,
-} from '../scripts/migrate-prod-bank-only-026.mjs';
+  BANK_ONLY_MIGRATION_027,
+  BANK_ONLY_MIGRATION_027_SHA256,
+  migrateBankOnly027,
+} from '../scripts/migrate-prod-bank-only-027.mjs';
 
 const migrationRoot = new URL('../db/migrations/', import.meta.url);
 const migrationFiles = (await readdir(migrationRoot)).filter(file => file.endsWith('.sql')).sort();
-const expectedAppliedBefore026 = migrationFiles.filter(file => file !== BANK_ONLY_MIGRATION_026);
+const expectedAppliedBefore027 = migrationFiles.filter(file => file !== BANK_ONLY_MIGRATION_027);
 
 async function makeMigrationsDirectory() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'buhguy-bank-only-026-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'buhguy-bank-only-027-'));
   for (const filename of migrationFiles) {
     await writeFile(path.join(directory, filename), await readFile(new URL(filename, migrationRoot)));
   }
@@ -48,61 +48,76 @@ function fakePool(appliedFilenames) {
   };
 }
 
-test('026 runner pins migration bytes and applies only after 001-025', async () => {
+test('027 runner pins migration bytes and applies after all earlier migrations are applied', async () => {
   const directory = await makeMigrationsDirectory();
   try {
-    const bytes = await readFile(path.join(directory, BANK_ONLY_MIGRATION_026));
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), BANK_ONLY_MIGRATION_026_SHA256);
-    const database = fakePool(expectedAppliedBefore026);
-    const result = await migrateBankOnly026(database.pool, directory);
-    assert.deepEqual(result.applied, [BANK_ONLY_MIGRATION_026]);
+    const bytes = await readFile(path.join(directory, BANK_ONLY_MIGRATION_027));
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), BANK_ONLY_MIGRATION_027_SHA256);
+    const database = fakePool(expectedAppliedBefore027);
+    const result = await migrateBankOnly027(database.pool, directory);
+    assert.deepEqual(result.applied, [BANK_ONLY_MIGRATION_027]);
     assert.deepEqual(database.executed, [
       { sql: bytes.toString('utf8').trim() },
-      { filename: BANK_ONLY_MIGRATION_026 },
+      { filename: BANK_ONLY_MIGRATION_027 },
     ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('026 runner refuses missing earlier migrations without executing SQL', async () => {
+test('027 runner refuses missing earlier migrations without executing SQL', async () => {
   const directory = await makeMigrationsDirectory();
   try {
-    const applied = migrationFiles.filter(file => file !== '025_bank_only_purchase_ledger.sql' && file !== BANK_ONLY_MIGRATION_026);
+    const applied = migrationFiles.filter(file => file !== '025_bank_only_purchase_ledger.sql' && file !== BANK_ONLY_MIGRATION_027);
     const database = fakePool(applied);
-    await assert.rejects(() => migrateBankOnly026(database.pool, directory), error =>
+    await assert.rejects(() => migrateBankOnly027(database.pool, directory), error =>
       error.code === 'MIGRATION_PENDING_SET_MISMATCH'
-      && error.expected === BANK_ONLY_MIGRATION_026
+      && error.expected === BANK_ONLY_MIGRATION_027
       && error.pending.includes('025_bank_only_purchase_ledger.sql')
-      && error.pending.includes(BANK_ONLY_MIGRATION_026));
+      && error.pending.includes(BANK_ONLY_MIGRATION_027));
     assert.deepEqual(database.executed, []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('026 runner rejects any other pending migration', async () => {
+test('027 runner refuses when PR 194 migration 026 is still pending', async () => {
   const directory = await makeMigrationsDirectory();
   try {
-    await writeFile(path.join(directory, '027_unapproved.sql'), 'SELECT 27027;');
-    const database = fakePool(expectedAppliedBefore026);
-    await assert.rejects(() => migrateBankOnly026(database.pool, directory), error =>
+    const reconciliationMigration = '026_manual_bank_reconciliation_review_evidence.sql';
+    await writeFile(path.join(directory, reconciliationMigration), 'SELECT 26026;');
+    const database = fakePool(expectedAppliedBefore027);
+    await assert.rejects(() => migrateBankOnly027(database.pool, directory), error =>
       error.code === 'MIGRATION_PENDING_SET_MISMATCH'
-      && error.pending.includes(BANK_ONLY_MIGRATION_026)
-      && error.pending.includes('027_unapproved.sql'));
+      && error.pending.includes(BANK_ONLY_MIGRATION_027)
+      && error.pending.includes(reconciliationMigration));
     assert.deepEqual(database.executed, []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('026 runner fails closed on changed bytes before opening a connection', async () => {
+test('027 runner proceeds after PR 194 migration 026 is recorded as applied', async () => {
   const directory = await makeMigrationsDirectory();
   try {
-    const filename = path.join(directory, BANK_ONLY_MIGRATION_026);
+    const reconciliationMigration = '026_manual_bank_reconciliation_review_evidence.sql';
+    await writeFile(path.join(directory, reconciliationMigration), 'SELECT 26026;');
+    const database = fakePool([...expectedAppliedBefore027, reconciliationMigration]);
+    const result = await migrateBankOnly027(database.pool, directory);
+    assert.deepEqual(result.applied, [BANK_ONLY_MIGRATION_027]);
+    assert.deepEqual(database.executed.at(-1), { filename: BANK_ONLY_MIGRATION_027 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('027 runner fails closed on changed bytes before opening a connection', async () => {
+  const directory = await makeMigrationsDirectory();
+  try {
+    const filename = path.join(directory, BANK_ONLY_MIGRATION_027);
     await writeFile(filename, `${await readFile(filename, 'utf8')}\n-- changed\n`);
-    const database = fakePool(expectedAppliedBefore026);
-    await assert.rejects(() => migrateBankOnly026(database.pool, directory), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
+    const database = fakePool(expectedAppliedBefore027);
+    await assert.rejects(() => migrateBankOnly027(database.pool, directory), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
     assert.equal(database.connectCount, 0);
     assert.deepEqual(database.executed, []);
   } finally {
@@ -110,11 +125,11 @@ test('026 runner fails closed on changed bytes before opening a connection', asy
   }
 });
 
-test('026 runner is idempotent when its exact migration is already applied', async () => {
+test('027 runner is idempotent when its exact migration is already applied', async () => {
   const directory = await makeMigrationsDirectory();
   try {
     const database = fakePool(migrationFiles);
-    const result = await migrateBankOnly026(database.pool, directory);
+    const result = await migrateBankOnly027(database.pool, directory);
     assert.deepEqual(result.applied, []);
     assert.deepEqual(database.executed, []);
   } finally {

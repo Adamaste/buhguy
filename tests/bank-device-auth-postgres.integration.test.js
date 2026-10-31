@@ -108,8 +108,9 @@ integration('bank-only writer errors remain retryable across a duplicate ingesti
       payload: { amount: '83.41', currency: 'RUB', direction: 'DEBIT', title: 'Purchase' },
       ingestionMetadata: { adapter: 'test', provider: 'bank.example', schemaVersion: '1' },
     };
+    const serializedEvent = JSON.stringify(event);
     const headers = { authorization: `Bearer ${credential.token}`, 'content-type': 'application/json' };
-    const send = () => fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers, body: JSON.stringify(event) });
+    const send = () => fetch(`${base}/api/v1/bank/events`, { method: 'POST', headers, body: serializedEvent });
 
     const first = await send();
     assert.equal(first.status, 503);
@@ -132,8 +133,9 @@ integration('bank-only writer errors remain retryable across a duplicate ingesti
 
     const rows = await pool.query(`SELECT
       (SELECT count(*)::int FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)) AS observations,
+      (SELECT source_event_id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1)) AS source_event_id,
       (SELECT count(*)::int FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))) AS transactions`, [sourceKey]);
-    assert.deepEqual(rows.rows[0], { observations: 1, transactions: 1 });
+    assert.deepEqual(rows.rows[0], { observations: 1, source_event_id: event.sourceEventId, transactions: 1 });
   } finally {
     if (server?.listening) await new Promise((resolve) => server.close(resolve));
     await pool.query('DELETE FROM bank_transactions WHERE observation_id IN (SELECT id FROM bank_event_observations WHERE bank_source_id=(SELECT id FROM bank_sources WHERE source_key=$1))', [sourceKey]).catch(() => {});
