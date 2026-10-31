@@ -16,8 +16,14 @@ transaction or receipt are reported as `AMBIGUOUS`; no edge is selected.
 The report reads only normalized `bank_transactions` fields and FNS receipt
 header/fiscal facts. It never selects `bank_event_observations.payload`, raw
 notification text, FNS raw payload, account references, or authentication
-material. Existing links are labelled `SAVED_EXACT`,
-`SAVED_REQUIRES_APPROVAL`, or as a conflict. Every candidate explicitly says
+material. Existing links with an exact-proof reason are labelled
+`SAVED_EXACT`; when the persisted row has no durable approval-status field, the
+report labels it `SAVED_STATUS_UNRECORDED` and shows its original
+`persistedReasonCode` separately. That reason code is not treated as a current
+approval state. `NOOP_ALREADY_PERSISTED` alone does not prove automatic
+eligibility: `passesAutomaticAccountingPolicy` is true only when the current
+strict preview also carries the configured automatic policy approval basis
+and unambiguous assignment policy. Every candidate explicitly says
 `ledgerWritesAllowed: false`.
 
 Run locally or in an explicitly approved read-only database environment:
