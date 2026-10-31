@@ -624,9 +624,24 @@ integration('near-simultaneous bank and FNS arrival converges to one matched ACT
     const active = await activePurchaseEntries(fixture);
     assert.equal(active.length, 1);
     assert.equal(active[0].derivation_rule, 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1');
-    assert.deepEqual(await matchedCounts(fixture), {
-      matches: 1, bank_evidence: 1, matched_entries: 1, active_purchase_entries: 1, active_purchase_debits: '18.75',
-    });
+    const counts = await matchedCounts(fixture);
+    assert.equal(counts.matches, 1);
+    assert.equal(counts.matched_entries, 1);
+    assert.equal(counts.active_purchase_entries, 1);
+    assert.equal(counts.active_purchase_debits, '18.75');
+    const evidenceByRole = Object.fromEntries((await pool.query(`SELECT evidence_role,count(*)::int AS count
+      FROM business_event_bank_evidence WHERE scope_id=$1 GROUP BY evidence_role`, [fixture.scopeId])).rows
+      .map((row) => [row.evidence_role, row.count]));
+    assert.equal(evidenceByRole.BANK_PURCHASE_MATCH, 1);
+    assert.ok((evidenceByRole.BANK_ONLY_PURCHASE ?? 0) <= 1);
+    assert.ok(Object.keys(evidenceByRole).every((role) => ['BANK_PURCHASE_MATCH', 'BANK_ONLY_PURCHASE'].includes(role)));
+    assert.equal((await pool.query(`SELECT count(*)::int AS count
+      FROM business_event_bank_evidence evidence
+      JOIN ledger_entries entry ON entry.source_event_id=evidence.business_event_id
+        AND entry.derivation_rule='LEDGER_BANK_ONLY_PURCHASE_V1'
+      WHERE evidence.scope_id=$1 AND evidence.evidence_role='BANK_ONLY_PURCHASE'
+        AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s
+          WHERE s.scope_id=entry.scope_id AND s.superseded_ledger_entry_id=entry.id)`, [fixture.scopeId])).rows[0].count, 0);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_receipt_matches
       WHERE scope_id=$1 AND bank_transaction_id=$2 AND receipt_id=$3`, [fixture.scopeId, Number(bank.body.transactionId), fixture.receiptIds[0]])).rows[0].count, 1);
   } finally { await closeFixture(fixture); }
