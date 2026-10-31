@@ -11,7 +11,7 @@ import {
 } from '../scripts/migrate-prod-bank-only-025.mjs';
 
 const migrationRoot = new URL('../db/migrations/', import.meta.url);
-const migrationFiles = (await readdir(migrationRoot)).filter(file => file.endsWith('.sql')).sort();
+const migrationFiles = (await readdir(migrationRoot)).filter(file => file.endsWith('.sql') && file <= BANK_ONLY_MIGRATION_025).sort();
 const expectedAppliedBefore025 = migrationFiles.filter(file => file !== BANK_ONLY_MIGRATION_025);
 
 async function makeMigrationsDirectory() {

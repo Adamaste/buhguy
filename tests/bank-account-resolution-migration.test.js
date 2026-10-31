@@ -84,3 +84,16 @@ test('T-Bank V2 card proof grants only read access to the required instrument re
   assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
   assert.doesNotMatch(sql, /GRANT .* ON SEQUENCE/i);
 });
+
+test('bank-only purchase runtime receives only narrow read and ledger-link permissions', async () => {
+  const sql = await readFile(new URL('../db/migrations/026_bank_only_purchase_runtime_privileges.sql', import.meta.url), 'utf8');
+  assert.match(sql, /GRANT SELECT \(merchant\) ON public\.bank_transactions TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(created_at\) ON public\.business_events TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(scope_id, source_event_id, target_event_id, relation_type\) ON public\.business_event_edges TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(id, scope_id, target_event_id, source_receipt_id, allocated_amount, resolution_status\) ON public\.business_event_allocations TO receipt_collector/);
+  assert.match(sql, /GRANT INSERT \(graph_allocation_id\) ON public\.ledger_source_links TO receipt_collector/);
+  assert.match(sql, /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'receipt_collector'\)/);
+  assert.doesNotMatch(sql, /GRANT SELECT\s+ON public\./i);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\s+ON public\.\w+ TO receipt_collector/i);
+  assert.doesNotMatch(sql, /GRANT UPDATE\b/i);
+});

@@ -442,9 +442,21 @@ export async function runBankOnlyPurchaseCatchup(pool, { scopeKey = null, optIn 
       if (outcome.status === 'PERSISTED') result.persisted += 1;
       else if (outcome.status === 'REUSED') result.reused += 1;
       else if (outcome.status === 'BLOCKED') result.blocked += 1;
+      const level = outcome.status === 'BLOCKED' ? 'warn' : 'info';
+      logger[level]?.('bank_only_purchase_catchup_item', {
+        bankTransactionId: Number(row.id),
+        status: outcome.status,
+        reasonCode: outcome.reasonCode ?? null,
+      });
     } catch (error) {
       result.errors += 1;
-      result.reasonCode ??= /^[A-Z0-9_]{1,64}$/.test(error?.code ?? '') ? error.code : 'BANK_ONLY_WRITE_FAILED';
+      const reasonCode = /^[A-Z0-9_]{1,64}$/.test(error?.code ?? '') ? error.code : 'BANK_ONLY_WRITE_FAILED';
+      result.reasonCode ??= reasonCode;
+      logger.error?.('bank_only_purchase_catchup_item', {
+        bankTransactionId: Number(row.id),
+        status: 'ERROR',
+        reasonCode,
+      });
     }
   }
   if (result.errors) result.status = 'ERROR';

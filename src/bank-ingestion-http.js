@@ -57,6 +57,15 @@ function bearerToken(request) {
   return value.slice(value.indexOf(' ') + 1);
 }
 
+async function bankTransactionIdForObservation(pool, observationId) {
+  const id = Number(observationId);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  const rows = (await pool.query('SELECT id FROM bank_transactions WHERE observation_id=$1', [id])).rows;
+  if (rows.length !== 1) return null;
+  const transactionId = Number(rows[0].id);
+  return Number.isSafeInteger(transactionId) && transactionId > 0 ? transactionId : null;
+}
+
 export function createBankIngestionServer({
   pool,
   logger = console,
@@ -87,6 +96,7 @@ export function createBankIngestionServer({
       if (body.sourceKey !== auth.sourceKey) return writeJson(response, 403, { status: 'rejected', code: 'SOURCE_MISMATCH' });
       const result = await handler({ body });
       let responseResult = result;
+      let retryableBankOnlyFailure = false;
       if (matchedPurchaseCanary?.enabled === true && result.status === 'created') {
         let reconciliation = { status: 'BLOCKED', reasonCode: 'BANK_EVENT_SCOPE_UNRESOLVED' };
         try {
@@ -133,10 +143,40 @@ export function createBankIngestionServer({
           };
         }
         responseResult = { ...responseResult, bankOnlyPurchase };
-        logSafely(logger, bankOnlyPurchase.status === 'ERROR' ? 'error' : 'info', 'bank_only_purchase_after_ingestion', bankOnlyPurchase);
+        retryableBankOnlyFailure = bankOnlyPurchase.status === 'ERROR';
+        logSafely(logger, bankOnlyPurchase.status === 'ERROR' ? 'error' : 'info', 'bank_only_purchase_after_ingestion', {
+          bankTransactionId: Number.isSafeInteger(Number(result.transactionId)) ? Number(result.transactionId) : null,
+          trigger: 'CREATED',
+          ...bankOnlyPurchase,
+        });
+      } else if (bankOnlyPurchaseOptIn?.enabled === true && result.status === 'duplicate') {
+        let bankOnlyPurchase = { status: 'ERROR', reasonCode: 'BANK_TRANSACTION_ID_MISSING' };
+        let bankTransactionId = null;
+        try {
+          bankTransactionId = await bankTransactionIdForObservation(pool, result.observationId);
+          if (bankTransactionId) {
+            bankOnlyPurchase = safeBankOnlyPurchaseResult(await accountBankOnlyPurchase(pool, {
+              bankTransactionId,
+              optIn: bankOnlyPurchaseOptIn,
+              now: now(),
+            }));
+          }
+        } catch (error) {
+          bankOnlyPurchase = {
+            status: 'ERROR',
+            reasonCode: typeof error?.code === 'string' && SAFE_CODE.test(error.code) ? error.code : 'BANK_ONLY_WRITE_FAILED',
+          };
+        }
+        responseResult = { ...responseResult, bankOnlyPurchase };
+        retryableBankOnlyFailure = bankOnlyPurchase.status === 'ERROR';
+        logSafely(logger, bankOnlyPurchase.status === 'ERROR' ? 'error' : 'info', 'bank_only_purchase_after_ingestion', {
+          bankTransactionId,
+          trigger: 'DUPLICATE_RETRY',
+          ...bankOnlyPurchase,
+        });
       }
-      if (result.status === 'created') return writeJson(response, 201, responseResult);
-      if (result.status === 'duplicate') return writeJson(response, 200, responseResult);
+      if (result.status === 'created') return writeJson(response, retryableBankOnlyFailure ? 503 : 201, responseResult);
+      if (result.status === 'duplicate') return writeJson(response, retryableBankOnlyFailure ? 503 : 200, responseResult);
       if (result.code === 'SOURCE_EVENT_CONFLICT') return writeJson(response, 409, responseResult);
       return writeJson(response, 400, responseResult);
     } catch (error) {
