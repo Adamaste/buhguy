@@ -399,71 +399,85 @@ async function rollbackResult(client, reasonCode) {
 export async function runBankOnlyPurchaseCatchup(pool, { scopeKey = null, optIn = readBankOnlyPurchaseLedgerOptIn(), now = new Date(), logger = console } = {}) {
   if (optIn?.enabled !== true) return { status: 'DISABLED', reasonCode: optIn?.reasonCode ?? 'DISABLED', examined: 0, persisted: 0, reused: 0, blocked: 0 };
   if (scopeKey != null && scopeKey !== optIn.scopeKey) return { status: 'BLOCKED', reasonCode: 'SCOPE_MISMATCH', examined: 0, persisted: 0, reused: 0, blocked: 0 };
-  const candidates = (await pool.query(`SELECT bt.id
-    FROM bank_transactions bt
-    JOIN bank_event_observations eo ON eo.id=bt.observation_id
-    WHERE eo.created_at >= $1::timestamptz
-      AND eo.created_at <= $2::timestamptz AND bt.occurred_at <= $2::timestamptz
-      AND bt.event_type='PURCHASE' AND bt.direction='DEBIT'
-      AND bt.normalization_status='READY' AND bt.evidence_quality='EXACT'
-      AND bt.amount > 0 AND bt.currency='RUB'
-      AND (SELECT count(DISTINCT p.scope_id)
-        FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
-        WHERE sp.bank_source_id=eo.bank_source_id)=1
-      AND EXISTS (SELECT 1 FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
-        JOIN accounting_scopes s ON s.id=p.scope_id WHERE sp.bank_source_id=eo.bank_source_id
-          AND s.scope_key=$3)
-      AND NOT EXISTS (SELECT 1 FROM bank_receipt_matches m WHERE m.bank_transaction_id=bt.id)
-      AND NOT EXISTS (SELECT 1 FROM business_event_bank_evidence be
-        WHERE be.bank_transaction_id=bt.id AND be.evidence_role=$4)
-      AND NOT EXISTS (SELECT 1 FROM ledger_source_links l WHERE l.bank_transaction_id=bt.id)
-      AND (eo.ingestion_metadata->>'provider' IS DISTINCT FROM $6::text
-        OR ($7::timestamptz IS NOT NULL AND eo.created_at >= $7::timestamptz
-          AND nullif(eo.ingestion_metadata->>'notificationLifecycleId','') IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM bank_event_observations prior_observation
-            JOIN bank_transactions prior_transaction ON prior_transaction.observation_id=prior_observation.id
-            WHERE prior_observation.bank_source_id=eo.bank_source_id
-              AND prior_observation.ingestion_metadata->>'provider'=$6::text
-              AND prior_observation.ingestion_metadata->>'notificationLifecycleId'=eo.ingestion_metadata->>'notificationLifecycleId'
-              AND prior_transaction.event_type='PURCHASE' AND prior_transaction.direction='DEBIT'
-              AND prior_transaction.normalization_status='READY' AND prior_transaction.evidence_quality='EXACT'
-              AND (prior_observation.created_at<eo.created_at
-                OR (prior_observation.created_at=eo.created_at AND prior_transaction.id<bt.id))
-          )))
-    ORDER BY eo.created_at,bt.id LIMIT $5`, [optIn.startAt, new Date(now).toISOString(), optIn.scopeKey,
-    BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES,
-    ALFA_ANDROID_PROVIDER, optIn.alfaStartAt ?? null])).rows;
-  const result = { status: 'COMPLETED', reasonCode: null, examined: candidates.length, persisted: 0, reused: 0, blocked: 0, errors: 0 };
-  for (const row of candidates) {
-    if (result.persisted + result.reused >= BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES) break;
-    try {
-      const outcome = await writeBankOnlyPurchase(pool, { bankTransactionId: Number(row.id), optIn, now });
-      if (outcome.status === 'PERSISTED') result.persisted += 1;
-      else if (outcome.status === 'REUSED') result.reused += 1;
-      else if (outcome.status === 'BLOCKED') result.blocked += 1;
-      const level = outcome.status === 'BLOCKED' ? 'warn' : 'info';
-      logger[level]?.('bank_only_purchase_catchup_item', {
-        bankTransactionId: Number(row.id),
-        status: outcome.status,
-        reasonCode: outcome.reasonCode ?? null,
-      });
-    } catch (error) {
-      result.errors += 1;
-      const reasonCode = /^[A-Z0-9_]{1,64}$/.test(error?.code ?? '') ? error.code : 'BANK_ONLY_WRITE_FAILED';
-      result.reasonCode ??= reasonCode;
-      logger.error?.('bank_only_purchase_catchup_item', {
-        bankTransactionId: Number(row.id),
-        status: 'ERROR',
-        reasonCode,
-      });
+  const result = { status: 'COMPLETED', reasonCode: null, examined: 0, persisted: 0, reused: 0, blocked: 0, errors: 0, candidatePages: 0 };
+  const runAt = new Date(now).toISOString();
+  let cursorCreatedAt = null;
+  let cursorBankTransactionId = null;
+  while (true) {
+    const candidates = (await pool.query(`SELECT bt.id,eo.created_at::text AS candidate_created_at
+      FROM bank_transactions bt
+      JOIN bank_event_observations eo ON eo.id=bt.observation_id
+      WHERE eo.created_at >= $1::timestamptz
+        AND eo.created_at <= $2::timestamptz AND bt.occurred_at <= $2::timestamptz
+        AND bt.event_type='PURCHASE' AND bt.direction='DEBIT'
+        AND bt.normalization_status='READY' AND bt.evidence_quality='EXACT'
+        AND bt.amount > 0 AND bt.currency='RUB'
+        AND (SELECT count(DISTINCT p.scope_id)
+          FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
+          WHERE sp.bank_source_id=eo.bank_source_id)=1
+        AND EXISTS (SELECT 1 FROM bank_source_person sp JOIN persons p ON p.id=sp.person_id
+          JOIN accounting_scopes s ON s.id=p.scope_id WHERE sp.bank_source_id=eo.bank_source_id
+            AND s.scope_key=$3)
+        AND NOT EXISTS (SELECT 1 FROM bank_receipt_matches m WHERE m.bank_transaction_id=bt.id)
+        AND NOT EXISTS (SELECT 1 FROM business_event_bank_evidence be
+          WHERE be.bank_transaction_id=bt.id AND be.evidence_role=$4)
+        AND NOT EXISTS (SELECT 1 FROM ledger_source_links l WHERE l.bank_transaction_id=bt.id)
+        AND (eo.ingestion_metadata->>'provider' IS DISTINCT FROM $6::text
+          OR ($7::timestamptz IS NOT NULL AND eo.created_at >= $7::timestamptz
+            AND nullif(eo.ingestion_metadata->>'notificationLifecycleId','') IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM bank_event_observations prior_observation
+              JOIN bank_transactions prior_transaction ON prior_transaction.observation_id=prior_observation.id
+              WHERE prior_observation.bank_source_id=eo.bank_source_id
+                AND prior_observation.ingestion_metadata->>'provider'=$6::text
+                AND prior_observation.ingestion_metadata->>'notificationLifecycleId'=eo.ingestion_metadata->>'notificationLifecycleId'
+                AND prior_transaction.event_type='PURCHASE' AND prior_transaction.direction='DEBIT'
+                AND prior_transaction.normalization_status='READY' AND prior_transaction.evidence_quality='EXACT'
+                AND (prior_observation.created_at<eo.created_at
+                  OR (prior_observation.created_at=eo.created_at AND prior_transaction.id<bt.id))
+            )))
+        AND ($8::timestamptz IS NULL OR eo.created_at>$8::timestamptz
+          OR (eo.created_at=$8::timestamptz AND bt.id>$9::bigint))
+      ORDER BY eo.created_at,bt.id LIMIT $5`, [optIn.startAt, runAt, optIn.scopeKey,
+      BANK_ONLY_PURCHASE_EVIDENCE_ROLE, BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES,
+      ALFA_ANDROID_PROVIDER, optIn.alfaStartAt ?? null, cursorCreatedAt, cursorBankTransactionId])).rows;
+    if (!candidates.length) break;
+    result.candidatePages += 1;
+    for (const row of candidates) {
+      cursorCreatedAt = row.candidate_created_at;
+      cursorBankTransactionId = row.id;
+      result.examined += 1;
+      try {
+        const outcome = await writeBankOnlyPurchase(pool, { bankTransactionId: Number(row.id), optIn, now });
+        if (outcome.status === 'PERSISTED') result.persisted += 1;
+        else if (outcome.status === 'REUSED') result.reused += 1;
+        else if (outcome.status === 'BLOCKED') result.blocked += 1;
+        const level = outcome.status === 'BLOCKED' ? 'warn' : 'info';
+        logger[level]?.('bank_only_purchase_catchup_item', {
+          bankTransactionId: Number(row.id),
+          status: outcome.status,
+          reasonCode: outcome.reasonCode ?? null,
+        });
+      } catch (error) {
+        result.errors += 1;
+        const reasonCode = /^[A-Z0-9_]{1,64}$/.test(error?.code ?? '') ? error.code : 'BANK_ONLY_WRITE_FAILED';
+        result.reasonCode ??= reasonCode;
+        logger.error?.('bank_only_purchase_catchup_item', {
+          bankTransactionId: Number(row.id),
+          status: 'ERROR',
+          reasonCode,
+        });
+      }
+      if (result.persisted + result.reused >= BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES) break;
     }
+    if (result.persisted + result.reused >= BANK_ONLY_PURCHASE_LEDGER_MAX_WRITES
+      || candidates.length < BANK_ONLY_PURCHASE_LEDGER_MAX_CANDIDATES) break;
   }
   if (result.errors) result.status = 'ERROR';
   logger.info?.('bank_only_purchase_catchup_completed', {
     scopeKey: optIn.scopeKey, status: result.status, examined: result.examined,
     persisted: result.persisted, reused: result.reused, blocked: result.blocked,
-    errors: result.errors, reasonCode: result.reasonCode,
+    errors: result.errors, candidatePages: result.candidatePages, reasonCode: result.reasonCode,
   });
   return result;
 }

@@ -357,6 +357,49 @@ integration('bank-only purchase uses ACTIVE ledger, defers receipt candidates, a
   }
 });
 
+integration('bank-only catch-up pages past a full batch of blocked candidates', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 6 });
+  try {
+    const context = await createContext(pool, 'bank.example');
+    const now = new Date(Date.now() + 120000);
+    for (let index = 0; index < 250; index += 1) {
+      const occurredAt = new Date(now.getTime() - 60000 + index).toISOString();
+      await createTransaction(pool, context, {
+        occurredAt,
+        observedAt: occurredAt,
+        amount: (10 + index / 100).toFixed(2),
+        accountResolved: false,
+      });
+    }
+    const eligible = await createTransaction(pool, context, {
+      occurredAt: new Date(now.getTime() - 30000).toISOString(),
+      observedAt: new Date(now.getTime() - 30000).toISOString(),
+      amount: '999.99',
+    });
+    const itemLogs = [];
+    const result = await runBankOnlyPurchaseCatchup(pool, {
+      scopeKey: context.scopeKey,
+      optIn: optIn(context.scopeKey, now),
+      now,
+      logger: {
+        info: (event, fields) => itemLogs.push({ event, fields }),
+        warn: (event, fields) => itemLogs.push({ event, fields }),
+        error: (event, fields) => itemLogs.push({ event, fields }),
+      },
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.examined, 251);
+    assert.equal(result.blocked, 250);
+    assert.equal(result.persisted, 1);
+    assert.equal(result.candidatePages, 2);
+    assert.equal(await activePurchaseLedgerCount(pool, context), 1);
+    assert.ok(itemLogs.some(({ event, fields }) => event === 'bank_only_purchase_catchup_item'
+      && fields.bankTransactionId === eligible.bankTransactionId && fields.status === 'PERSISTED'));
+  } finally {
+    await pool.end();
+  }
+});
+
 integration('disabling bank-only stops new writes while existing ledger, FNS-only, and matched accounting remain usable', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 6 });
   try {
