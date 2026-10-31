@@ -33,7 +33,13 @@ export async function runAccountingCatchup(pool, {
     prepaymentPurchases: prepayments?.created?.purchases ?? 0,
     standalonePurchases: standalone?.created ?? 0,
     returnEvents: returns?.created?.returns ?? 0,
+    bankOnlyPurchaseStatus: bankOnlyPurchases?.status ?? 'UNKNOWN',
+    bankOnlyPurchaseExamined: bankOnlyPurchases?.examined ?? 0,
     bankOnlyPurchaseWrites: bankOnlyPurchases?.persisted ?? 0,
+    bankOnlyPurchaseReused: bankOnlyPurchases?.reused ?? 0,
+    bankOnlyPurchaseBlocked: bankOnlyPurchases?.blocked ?? 0,
+    bankOnlyPurchaseErrors: bankOnlyPurchases?.errors ?? 0,
+    bankOnlyPurchaseReasonCode: bankOnlyPurchases?.reasonCode ?? null,
     ledgerEntries: ledger?.created?.entries ?? 0,
     certificationFacts: certification?.facts?.length ?? 0,
   });

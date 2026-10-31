@@ -52,9 +52,16 @@ class PersistentOutboxTest {
             val event = OutboxEntity(
                 sourceEventId = "source-event-1",
                 packageName = "com.example.bank",
-                eventJson = "{\"amount\":\"10\"}",
+                eventJson = "{\"sourceEventId\":\"source-event-1\",\"payload\":{\"amount\":\"10.00\"}}",
             )
-            assertTrue(first.outbox().insert(event) > 0)
+            val eventRowId = first.outbox().insert(event)
+            assertTrue(eventRowId > 0)
+            first.outbox().markRetry(eventRowId, "transient delivery failure")
+            val retried = first.outbox().pending(50).single()
+            assertEquals("PENDING", retried.status)
+            assertEquals(1, retried.retryCount)
+            assertEquals(event.sourceEventId, retried.sourceEventId)
+            assertEquals(event.eventJson, retried.eventJson)
             assertEquals(-1L, first.outbox().insert(event))
             assertEquals(1, first.outbox().pendingCount())
             first.close()
@@ -67,6 +74,8 @@ class PersistentOutboxTest {
                 assertEquals(1, pending.size)
                 assertEquals("source-event-1", pending.single().sourceEventId)
                 assertEquals("PENDING", pending.single().status)
+                assertEquals(1, pending.single().retryCount)
+                assertEquals(event.eventJson, pending.single().eventJson)
             } finally {
                 reopened.close()
             }

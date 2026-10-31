@@ -9,6 +9,7 @@ GRANT UPDATE (last_used_at) ON public.bank_device_credentials TO receipt_collect
 GRANT SELECT, INSERT ON public.bank_event_observations TO receipt_collector;
 GRANT INSERT ON public.bank_transactions TO receipt_collector;
 GRANT SELECT (id, observation_id, account_reference, account_reference_kind) ON public.bank_transactions TO receipt_collector;
+GRANT SELECT (merchant) ON public.bank_transactions TO receipt_collector;
 GRANT SELECT (amount, currency, occurred_at, event_type, direction, normalization_status, evidence_quality) ON public.bank_transactions TO receipt_collector;
 GRANT INSERT ON public.bank_transaction_account_resolution TO receipt_collector;
 GRANT SELECT (bank_transaction_id, financial_account_id, resolution_state, provenance) ON public.bank_transaction_account_resolution TO receipt_collector;
