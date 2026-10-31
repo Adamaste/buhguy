@@ -357,26 +357,42 @@ integration('bank-only purchase uses ACTIVE ledger, defers receipt candidates, a
   }
 });
 
-integration('bank-only writer blocks an ordinary expense when a scoped PREPAYMENT_ONLY receipt is a nearby exact-amount candidate', { concurrency: false }, async () => {
+integration('bank-only writer and strict matcher keep PREPAYMENT_ONLY and ADVANCE_ONLY out of ordinary purchase accounting', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
   try {
-    const now = new Date();
-    const context = await createContext(pool, 'yandex-bank.example');
-    const occurredAt = new Date(now.getTime() - 30000).toISOString();
-    const amount = '29211.66';
-    const transaction = await createTransaction(pool, context, { occurredAt, observedAt: occurredAt, amount });
-    await createReceipt(pool, context, { amount, dateTime: new Date(Date.parse(occurredAt) + 60000).toISOString(), suffix: 'nearby-prepayment', paymentStage: 'PREPAYMENT_ONLY' });
+    for (const paymentStage of ['PREPAYMENT_ONLY', 'ADVANCE_ONLY']) {
+      const now = new Date();
+      const context = await createContext(pool, 'yandex-bank.example');
+      const occurredAt = new Date(now.getTime() - 30000).toISOString();
+      const amount = '29211.66';
+      const transaction = await createTransaction(pool, context, { occurredAt, observedAt: occurredAt, amount });
+      await createReceipt(pool, context, {
+        amount,
+        dateTime: new Date(Date.parse(occurredAt) + 60000).toISOString(),
+        suffix: `nearby-${paymentStage.toLowerCase()}`,
+        paymentStage,
+      });
 
-    const result = await writeBankOnlyPurchase(pool, { bankTransactionId: transaction.bankTransactionId, optIn: optIn(context.scopeKey, now) });
-    assert.deepEqual({ status: result.status, reasonCode: result.reasonCode }, {
-      status: 'BLOCKED', reasonCode: 'PREPAYMENT_RECEIPT_CANDIDATE',
-    });
-    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
-      WHERE bank_transaction_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [transaction.bankTransactionId])).rows[0].count, 0);
-    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_source_links
-      WHERE bank_transaction_id=$1`, [transaction.bankTransactionId])).rows[0].count, 0);
-    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_events
-      WHERE scope_id=$1 AND rule_code='BANK_ONLY_PURCHASE_V1'`, [context.scopeId])).rows[0].count, 0);
+      const result = await writeBankOnlyPurchase(pool, { bankTransactionId: transaction.bankTransactionId, optIn: optIn(context.scopeKey, now) });
+      assert.deepEqual({ status: result.status, reasonCode: result.reasonCode }, {
+        status: 'BLOCKED', reasonCode: 'PREPAYMENT_RECEIPT_CANDIDATE',
+      }, paymentStage);
+      const strictMatches = await loadBankReceiptMatching(pool, {
+        scopeKey: context.scopeKey,
+        from: new Date(Date.parse(occurredAt) - 300000).toISOString(),
+        to: new Date(Date.parse(occurredAt) + 300001).toISOString(),
+        internalTransferMaxTimeDeltaMs: 300000,
+        receiptMaxTimeDeltaMs: 300000,
+      });
+      assert.equal(strictMatches.matches.length, 0, paymentStage);
+      assert.equal(strictMatches.receiptStatuses[0].status, 'INELIGIBLE', paymentStage);
+      assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
+        WHERE bank_transaction_id=$1 AND evidence_role='BANK_ONLY_PURCHASE'`, [transaction.bankTransactionId])).rows[0].count, 0);
+      assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_source_links
+        WHERE bank_transaction_id=$1`, [transaction.bankTransactionId])).rows[0].count, 0);
+      assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_events
+        WHERE scope_id=$1 AND rule_code='BANK_ONLY_PURCHASE_V1'`, [context.scopeId])).rows[0].count, 0);
+    }
   } finally {
     await pool.end();
   }
