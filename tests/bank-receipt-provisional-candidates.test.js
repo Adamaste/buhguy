@@ -103,6 +103,40 @@ test('saved match is shown without creating a second association', () => {
   assert.equal(result[0].ledgerWritesAllowed, false);
 });
 
+test('generic persisted approval reason is not reported as a confirmed approval status', () => {
+  const [row] = findPreliminaryBankReceiptCandidates({
+    bankRows: [bank(1)], receiptRows: [receipt(2)],
+    persistedMatches: [{ bankTransactionId: '1', receiptId: '2', reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL' }],
+    strictDecisions: [{
+      bankTransactionId: '1', receiptId: '2', orchestrationAction: 'NOOP_ALREADY_PERSISTED',
+      approvalBasis: 'NONE', automaticPolicy: null, assignmentPolicy: 'UNAMBIGUOUS_COMPONENTS',
+    }],
+  });
+  assert.equal(row.linkStatus, 'SAVED_STATUS_UNRECORDED');
+  assert.equal(row.persistedReasonCode, 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL');
+  assert.equal(row.automaticAccountingAction, 'NOOP_ALREADY_PERSISTED');
+  assert.equal(row.automaticAccountingApprovalBasis, 'NONE');
+  assert.equal(row.passesAutomaticAccountingPolicy, false);
+  assert.equal(row.ledgerWritesAllowed, false);
+});
+
+test('NOOP is currently policy-eligible only when the strict preview carries the automatic approval basis', () => {
+  const [row] = findPreliminaryBankReceiptCandidates({
+    bankRows: [bank(1)], receiptRows: [receipt(2)],
+    persistedMatches: [{ bankTransactionId: '1', receiptId: '2', reasonCode: 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL' }],
+    strictDecisions: [{
+      bankTransactionId: '1', receiptId: '2', orchestrationAction: 'NOOP_ALREADY_PERSISTED',
+      approvalBasis: 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2',
+      automaticPolicy: 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2',
+      assignmentPolicy: 'UNAMBIGUOUS_COMPONENTS',
+    }],
+  });
+  assert.equal(row.linkStatus, 'SAVED_STATUS_UNRECORDED');
+  assert.equal(row.automaticAccountingApprovalBasis, 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2');
+  assert.equal(row.passesAutomaticAccountingPolicy, true);
+  assert.equal(row.ledgerWritesAllowed, false);
+});
+
 test('known transfer or refund shape is displayed as a candidate with a blocker, not as a purchase', () => {
   const result = findPreliminaryBankReceiptCandidates({
     bankRows: [bank(1, { eventType: 'TRANSFER' })],
