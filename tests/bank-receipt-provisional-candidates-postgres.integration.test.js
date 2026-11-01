@@ -17,6 +17,9 @@ integration('provisional candidate rows are read from one read-only snapshot and
     const scopeId = (await pool.query("INSERT INTO accounting_scopes(scope_key,label) VALUES($1,'fixture') RETURNING id", [`provisional-${suffix}`])).rows[0].id;
     const personId = (await pool.query("INSERT INTO persons(scope_id,person_key,display_name) VALUES($1,$2,'fixture') RETURNING id", [scopeId, `person-${suffix}`])).rows[0].id;
     const accountId = (await pool.query("INSERT INTO financial_accounts(scope_id,institution,display_name,currency) VALUES($1,'fixture','fixture','RUB') RETURNING id", [scopeId])).rows[0].id;
+    const otherScopeKey = `provisional-other-${suffix}`;
+    const otherScopeId = (await pool.query("INSERT INTO accounting_scopes(scope_key,label) VALUES($1,'other scope') RETURNING id", [otherScopeKey])).rows[0].id;
+    const otherAccountId = (await pool.query("INSERT INTO financial_accounts(scope_id,institution,display_name,currency) VALUES($1,'fixture','other fixture','USD') RETURNING id", [otherScopeId])).rows[0].id;
     const sourceId = (await pool.query("INSERT INTO bank_sources(source_key,source_type,display_name) VALUES($1,'ANDROID_NOTIFICATION','fixture') RETURNING id", [`bank-source-${suffix}`])).rows[0].id;
     await pool.query("INSERT INTO bank_source_person(bank_source_id,person_id,relation_type) VALUES($1,$2,'OWNER')", [sourceId, personId]);
     const observationId = (await pool.query(`INSERT INTO bank_event_observations
@@ -37,8 +40,9 @@ integration('provisional candidate rows are read from one read-only snapshot and
     await pool.query(`INSERT INTO bank_transaction_account_resolution
       (bank_transaction_id,financial_account_id,resolution_state,provenance,reason)
       VALUES($1,NULL,'UNKNOWN','fixture','not resolved')`, [duplicateLookingBankTransactionId]);
+    await pool.query("UPDATE bank_transaction_account_resolution SET financial_account_id=$2,resolution_state='MANUAL' WHERE bank_transaction_id=$1", [duplicateLookingBankTransactionId, otherAccountId]);
     const receiptId = (await pool.query(`INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency,operation_type)
-      VALUES($1,'2026-10-10T10:01:00Z','Receipt label','12.34',NULL,3) RETURNING id`, [`fns-${suffix}`])).rows[0].id;
+      VALUES($1,'2026-10-10T10:01:00Z','Receipt label','12.34','RUB',3) RETURNING id`, [`fns-${suffix}`])).rows[0].id;
     const fnsSourceId = (await pool.query(`INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref,device_ref)
       VALUES($1,$2,'fixture','fixture','fixture') RETURNING id`, [scopeId, `fns-source-${suffix}`])).rows[0].id;
     await pool.query('INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id) VALUES($1,$2,$3)', [receiptId, fnsSourceId, `source-receipt-${suffix}`]);
@@ -46,14 +50,23 @@ integration('provisional candidate rows are read from one read-only snapshot and
     const before = (await pool.query('SELECT count(*)::integer AS count FROM bank_receipt_matches')).rows[0].count;
     const ledgerBefore = (await pool.query('SELECT count(*)::integer AS count FROM ledger_entries')).rows[0].count;
     const report = await buildPreliminaryCandidateReadOnlyReport(pool, { from, to }, {
-      enabled: false, canaryScopeKey: null, automaticPolicy: null, bankIngestedAfter: null,
+      enabled: true, canaryScopeKey: otherScopeKey, automaticPolicy: 'AUTO_EXACT_PURCHASE_UNAMBIGUOUS_5M_V2',
+      bankIngestedAfter: '2026-10-10T10:00:01.000Z',
     });
     assert.equal(report.candidates.length, 2);
     assert.deepEqual(new Set(report.candidates.map((row) => row.bankTransactionId)), new Set([String(bankTransactionId), String(duplicateLookingBankTransactionId)]));
     assert.ok(report.candidates.every((row) => row.receiptId === String(receiptId)));
     assert.ok(report.candidates.every((row) => row.candidateStatus === 'AMBIGUOUS'));
     assert.ok(report.candidates.every((row) => row.bank.currency === 'USD'));
-    assert.ok(report.candidates.every((row) => row.receipt.currency === null));
+    assert.ok(report.candidates.every((row) => row.receipt.currency === 'RUB'));
+    assert.ok(report.candidates.every((row) => row.bookkeepingReasonCodes.includes('CURRENCY_MISMATCH')));
+    const preCutoff = report.candidates.find((row) => row.bankTransactionId === String(bankTransactionId));
+    assert.ok(preCutoff.bookkeepingReasonCodes.includes('AUTO_BANK_EVENT_OUTSIDE_COHORT'));
+    const crossScope = report.candidates.find((row) => row.bankTransactionId === String(duplicateLookingBankTransactionId));
+    assert.equal(crossScope.bank.accountResolutionState, 'MANUAL');
+    assert.equal(crossScope.bank.scopeKey, otherScopeKey);
+    assert.deepEqual(crossScope.receipt.scopeKeys, [`provisional-${suffix}`]);
+    assert.ok(crossScope.bookkeepingReasonCodes.includes('ACCOUNTING_SCOPE_MISMATCH'));
     assert.ok(report.candidates.every((row) => row.bookkeepingReasonCodes.includes('BANK_NOT_PURCHASE')));
     assert.ok(report.candidates.every((row) => row.bookkeepingReasonCodes.includes('FNS_OPERATION_NOT_PURCHASE')));
     assert.ok(report.candidates.every((row) => row.ledgerWritesAllowed === false));

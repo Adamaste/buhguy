@@ -160,3 +160,17 @@ test('candidate analysis does not mutate source rows or expose raw event content
   assert.equal(JSON.stringify(row).includes('payload'), false);
   assert.equal(JSON.stringify(row).includes('raw'), false);
 });
+
+test('known currency mismatch, different scopes, and pre-cutoff date still produce amount/time candidate', () => {
+  const result = findPreliminaryBankReceiptCandidates({
+    bankRows: [bank(1, { currency: 'USD', scopeKey: 'bank-scope' })],
+    receiptRows: [receipt(2, { currency: 'RUB', scopeKeys: ['receipt-scope'] })],
+    cohortStartAt: '2026-10-11T00:00:00Z',
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].candidateStatus, 'UNIQUE_AMOUNT_TIME_CANDIDATE');
+  assert.ok(result[0].bookkeepingReasonCodes.includes('CURRENCY_MISMATCH'));
+  assert.ok(result[0].bookkeepingReasonCodes.includes('ACCOUNTING_SCOPE_MISMATCH'));
+  assert.ok(result[0].bookkeepingReasonCodes.includes('AUTO_BANK_EVENT_OUTSIDE_COHORT'));
+  assert.equal(result[0].ledgerWritesAllowed, false);
+});
