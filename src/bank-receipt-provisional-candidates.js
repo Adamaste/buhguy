@@ -1,4 +1,6 @@
 import { resolveFnsReceiptCurrency } from './fns-receipt-currency.js';
+import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES } from './bank-receipt-matching.js';
+import { MATCHED_PURCHASE_AUTO_POLICY } from './matched-purchase-orchestration.js';
 
 export const PRELIMINARY_BANK_RECEIPT_WINDOW_MS = 5 * 60 * 1000;
 export const PRELIMINARY_CANDIDATE_STATUSES = Object.freeze({
@@ -260,11 +262,16 @@ export function findPreliminaryBankReceiptCandidates({
       cohortStartAt,
     });
     const linkStatus = savedLink
-      ? (savedLink.reasonCode === 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH' ? 'SAVED_EXACT' : 'SAVED_REQUIRES_APPROVAL')
+      ? (savedLink.reasonCode === 'PROVEN_EXACT_ECASH_RECEIPT_BANK_PURCHASE_MATCH' ? 'SAVED_EXACT' : 'SAVED_STATUS_UNRECORDED')
       : persistedConflict ? 'CONFLICTING_SAVED_LINK' : 'NOT_SAVED';
     const candidateStatus = ambiguous ? PRELIMINARY_CANDIDATE_STATUSES.AMBIGUOUS : PRELIMINARY_CANDIDATE_STATUSES.UNIQUE;
     const automaticAccountingAction = strictDecision?.orchestrationAction ?? 'NOT_EVALUATED';
+    const automaticAccountingApprovalBasis = safeReason(strictDecision?.approvalBasis, 'NONE');
+    const hasCurrentAutomaticPolicyBasis = strictDecision?.approvalBasis === MATCHED_PURCHASE_AUTO_POLICY
+      && strictDecision?.automaticPolicy === MATCHED_PURCHASE_AUTO_POLICY
+      && strictDecision?.assignmentPolicy === BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES.UNAMBIGUOUS_COMPONENTS;
     const passesAutomaticAccountingPolicy = !ambiguous && !persistedConflict
+      && hasCurrentAutomaticPolicyBasis
       && ['PERSIST_REQUIRED', 'NOOP_ALREADY_PERSISTED'].includes(automaticAccountingAction);
     return {
       receiptId: receipt.receiptId,
@@ -276,6 +283,7 @@ export function findPreliminaryBankReceiptCandidates({
       persistedReasonCode: savedLink ? safeReason(savedLink.reasonCode, 'PERSISTED_MATCH') : null,
       bookkeepingReasonCodes: reasonCodes,
       automaticAccountingAction,
+      automaticAccountingApprovalBasis,
       passesAutomaticAccountingPolicy,
       bank: {
         occurredAt: bank.occurredAt ?? null,
@@ -361,7 +369,7 @@ export function summarizePreliminaryBankReceiptCandidates(candidates = []) {
     }
     if (bankIds.size !== 1 || receiptIds.size !== 1) ambiguousComponents += 1;
   }
-  const saved = candidates.filter((row) => row.linkStatus === 'SAVED_EXACT' || row.linkStatus === 'SAVED_REQUIRES_APPROVAL');
+  const saved = candidates.filter((row) => row.linkStatus === 'SAVED_EXACT' || row.linkStatus === 'SAVED_STATUS_UNRECORDED');
   return {
     candidateEdges: candidates.length,
     uniqueOneToOnePairs: candidates.filter((row) => row.candidateStatus === PRELIMINARY_CANDIDATE_STATUSES.UNIQUE).length,
@@ -369,7 +377,8 @@ export function summarizePreliminaryBankReceiptCandidates(candidates = []) {
     ambiguousComponents,
     savedPairs: saved.length,
     savedExactPairs: saved.filter((row) => row.linkStatus === 'SAVED_EXACT').length,
-    savedRequiresApprovalPairs: saved.filter((row) => row.linkStatus === 'SAVED_REQUIRES_APPROVAL').length,
+    savedStatusUnrecordedPairs: saved.filter((row) => row.linkStatus === 'SAVED_STATUS_UNRECORDED').length,
+    persistedReasonRequiresApprovalPairs: saved.filter((row) => row.persistedReasonCode === 'UNIQUE_COMPATIBLE_PAIR_REQUIRES_APPROVAL').length,
     automaticAccountingPolicyPasses: candidates.filter((row) => row.passesAutomaticAccountingPolicy).length,
   };
 }
