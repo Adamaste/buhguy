@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { readdirSync } from 'node:fs';
+import pg from 'pg';
 import { assertDisposableLocalTestDatabase } from './assert-disposable-local-test-database.js';
 
 const allTestFiles = readdirSync('tests')
@@ -25,6 +26,7 @@ const integrationFiles = [
   'tests/active-ledger-semantics-postgres.integration.test.js',
   'tests/matched-purchase-persistence-postgres.integration.test.js',
   'tests/matched-purchase-orchestration-postgres.integration.test.js',
+  'tests/bank-receipt-provisional-candidates-postgres.integration.test.js',
   'tests/matched-purchase-reconciliation-postgres.integration.test.js',
   'tests/fns-receipt-currency-postgres.integration.test.js',
   'tests/runtime-schema-postgres.integration.test.js',
@@ -41,14 +43,46 @@ const integrationFiles = [
 ];
 const run = (files, env = process.env) => spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env }).status ?? 1;
 const runFixture = (env) => spawnSync(process.execPath, ['scripts/prepare-postgres-integration.mjs'], { stdio: 'inherit', env }).status ?? 1;
+const runWithRuntimeRole = async (connectionString, baseEnv, callback) => {
+  const admin = new pg.Pool({ connectionString, max: 1 });
+  let created = false;
+  try {
+    const existing = await admin.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'");
+    if (existing.rowCount) {
+      console.error('Shared cluster role receipt_collector exists; use a fresh isolated PostgreSQL cluster.');
+      return 1;
+    }
+    await admin.query('CREATE ROLE receipt_collector NOLOGIN');
+    created = true;
+    return await callback({ ...baseEnv, TEST_POSTGRES_RECEIPT_COLLECTOR_ROLE: 'true' });
+  } finally {
+    try {
+      if (created) {
+        await admin.query('DROP OWNED BY receipt_collector');
+        await admin.query('DROP ROLE receipt_collector');
+      }
+    } finally {
+      await admin.end();
+    }
+  }
+};
+const runIntegrationFiles = async (baseEnv) => {
+  for (const file of integrationFiles) {
+    const needsRuntimeRole = file === 'tests/bank-only-purchase-postgres.integration.test.js';
+    const exitCode = needsRuntimeRole
+      ? await runWithRuntimeRole(baseEnv.TEST_DATABASE_URL, baseEnv, async (env) => {
+        if (runFixture(env) !== 0) return 1;
+        return run([file], env);
+      })
+      : runFixture(baseEnv) === 0 ? run([file], baseEnv) : 1;
+    if (exitCode !== 0) return 1;
+  }
+  return 0;
+};
 if (process.env.TEST_DATABASE_URL) {
   assertDisposableLocalTestDatabase(process.env.TEST_DATABASE_URL);
   if (run([migrationTest]) !== 0) process.exit(1);
-  for (const file of integrationFiles) {
-    if (runFixture(process.env) !== 0) process.exit(1);
-    if (run([file]) !== 0) process.exit(1);
-  }
-  process.exit(0);
+  process.exit(await runIntegrationFiles(process.env));
 }
 
 try { execFileSync('docker', ['version'], { stdio: 'ignore' }); } catch {
@@ -70,16 +104,7 @@ try {
   }
   const env = { ...process.env, TEST_DATABASE_URL: `postgres://postgres:${encodeURIComponent(password)}@127.0.0.1:${port}/${database}` };
   if (run([migrationTest], env) !== 0) exitCode = 1;
-  for (const file of exitCode === 0 ? integrationFiles : []) {
-    if (runFixture(env) !== 0) {
-      exitCode = 1;
-      break;
-    }
-    if (run([file], env) !== 0) {
-      exitCode = 1;
-      break;
-    }
-  }
+  if (exitCode === 0) exitCode = await runIntegrationFiles(env);
 } finally {
   if (containerStarted) { try { execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' }); } catch {} }
 }

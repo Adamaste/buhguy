@@ -2,6 +2,37 @@
 
 This document is the operational starting point for a new ChatGPT/Codex session.
 
+## Amount/time-only receipt and bank candidate search (2026-10-30)
+
+Draft implementation is being prepared from master `bdf76d849225dfbd3127e501e49a2b4904cad348` on branch
+`codex/preliminary-receipt-bank-candidates`. The new report is a separate,
+repeatable-read, read-only research path. Candidate inclusion uses only exact
+numeric amount and event-time distance at most five minutes. Merchant, currency,
+account/source/owner/scope evidence, cohort cutoff, and strict matching are
+annotations or blocker explanations; they do not create or remove candidate
+edges. Ambiguous graphs remain ambiguous, and the report cannot write matches
+or ledger entries. Existing strict matcher and automatic writer gates are
+unchanged.
+
+A production read-only snapshot for Moscow October 1–26 produced 57 candidate
+edges: 49 one-to-one and 8 ambiguous edges across four components. It found 28
+already saved links (9 exact and 19 requiring approval). No candidate was
+excluded by currency in this snapshot. The strict automatic preview found 18
+eligible links, all already persisted (`NOOP_ALREADY_PERSISTED`); it proposed
+zero new postings. These aggregates are research output, not proof that any
+unsaved edge is one economic purchase. The earlier 55-edge report's exact SQL
+and pair-key inventory are not available, so the reported 52 within-window
+overlap is aggregate reconstruction only, not a verified row-by-row crosswalk.
+
+Local validation on Node 22: `npm run test:unit` passed 541 tests, 21 skipped;
+the new PostgreSQL integration test passed on disposable local PostgreSQL
+18.6. The full PostgreSQL suite was attempted but stopped in the unchanged
+`bank-ingestion-postgres.integration.test.js` cleanup because PostgreSQL
+refused to drop its test role (`2BP01`, dependent objects); do not report the
+full suite as passing. Hosted Actions were not run. Production data and
+configuration remain unchanged. The next action is review of the Draft PR and
+the isolated PostgreSQL suite blocker; no merge or deployment is authorized.
+
 ## Newer Alfa rollout supplement (2026-10-28)
 
 This supplement supersedes the older phase and next-step statements below for

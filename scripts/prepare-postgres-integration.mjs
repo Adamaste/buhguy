@@ -33,12 +33,21 @@ const raw = {
 };
 
 try {
-  const runtimeRole = await pool.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='receipt_collector'");
-  if (!runtimeRole.rowCount) await pool.query('CREATE ROLE receipt_collector NOLOGIN');
-  else if (runtimeRole.rows[0].rolcanlogin) throw new Error('Disposable test role receipt_collector unexpectedly allows login');
+  // PostgreSQL roles are cluster-wide. Keep this shared runtime role out of
+  // ordinary test fixtures; the suite runner owns opt-in creation and cleanup.
+  const runtimeRole = await pool.query("SELECT 1 FROM pg_roles WHERE rolname='receipt_collector'");
+  const prepareRuntimeRole = process.env.TEST_POSTGRES_RECEIPT_COLLECTOR_ROLE === 'true';
+  if (process.env.TEST_POSTGRES_RECEIPT_COLLECTOR_ROLE && !prepareRuntimeRole) {
+    throw new Error('TEST_POSTGRES_RECEIPT_COLLECTOR_ROLE must be either unset or true');
+  }
+  if (Boolean(runtimeRole.rowCount) !== prepareRuntimeRole) {
+    throw new Error(prepareRuntimeRole
+      ? 'The suite runner must create receipt_collector before this grant fixture'
+      : 'Shared cluster role receipt_collector exists; run tests on a fresh isolated PostgreSQL cluster');
+  }
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
-  await pool.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
   await migrate(pool);
+  if (prepareRuntimeRole) await pool.query('GRANT USAGE ON SCHEMA public TO receipt_collector');
   for (const file of ['db/analytics/008_analytics_v1.sql', 'db/analytics/009_purchase_details_v1.sql']) {
     await pool.query(await fs.readFile(file, 'utf8'));
   }
