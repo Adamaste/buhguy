@@ -13,6 +13,7 @@ import { analyticsSummary } from '../src/analytics.js';
 import { loadBankCashFlowProjection } from '../src/bank-cash-flow-projection.js';
 import { BANK_RECEIPT_MATCH_ASSIGNMENT_POLICIES, loadBankReceiptMatching } from '../src/bank-receipt-matching.js';
 import { persistStandalonePurchases } from '../src/standalone-purchase.js';
+import { writeBankOnlyPurchase } from '../src/bank-only-purchase.js';
 import { syncReceipts } from '../src/sync.js';
 import { previewMatchedPurchaseOrchestration } from '../src/matched-purchase-orchestration.js';
 import { MATCHED_PURCHASE_AUTO_POLICY } from '../src/matched-purchase-orchestration.js';
@@ -69,6 +70,8 @@ async function createFixture(prefix, {
   approvedMatchKey = null,
   automaticPolicy = null,
   bankIngestedAfter = null,
+  bankOnlyEnabled = false,
+  accountBankOnlyPurchase,
   reconcileMatchedPurchases,
 } = {}) {
   const suffix = `${process.pid}-${Date.now()}-${sequence += 1}`;
@@ -104,7 +107,18 @@ async function createFixture(prefix, {
     automaticPolicy,
     bankIngestedAfter,
   };
-  const server = createBankIngestionServer({ pool, logger: quietLogger, matchedPurchaseCanary: canary, reconcileMatchedPurchases });
+  const bankOnlyPurchaseOptIn = bankOnlyEnabled ? {
+    enabled: true,
+    scopeKey,
+    startAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    alfaStartAt: null,
+    maxWrites: 25,
+  } : { enabled: false, reasonCode: 'DISABLED' };
+  const server = createBankIngestionServer({
+    pool, logger: quietLogger, matchedPurchaseCanary: canary, reconcileMatchedPurchases,
+    bankOnlyPurchaseOptIn,
+    ...(accountBankOnlyPurchase ? { accountBankOnlyPurchase } : {}),
+  });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
     prefix: fixturePrefix,
@@ -121,6 +135,7 @@ async function createFixture(prefix, {
     server,
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     canary,
+    bankOnlyPurchaseOptIn,
     receiptIds: [],
   };
 }
@@ -278,6 +293,16 @@ async function expenseTotals(fixture) {
     amount: summary.metrics.CONFIRMED_ACQUISITION_VALUE.amount,
     count: summary.metrics.CONFIRMED_ACQUISITION_VALUE.count,
   };
+}
+
+async function activePurchaseEntries(fixture) {
+  return (await pool.query(`SELECT e.id,e.derivation_rule,e.source_event_id
+    FROM ledger_entries e
+    WHERE e.scope_id=$1
+      AND e.derivation_rule IN ('LEDGER_BANK_ONLY_PURCHASE_V1','LEDGER_STANDALONE_PURCHASE_V1','LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1')
+      AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s
+        WHERE s.scope_id=e.scope_id AND s.superseded_ledger_entry_id=e.id)
+    ORDER BY e.id`, [fixture.scopeId])).rows;
 }
 
 async function certificationFacts(fixture) {
@@ -514,6 +539,111 @@ integration('new bank-first purchase automatically reuses its receipt expense an
     assert.ok(afterRestart.accounting.reconciliations[0].reused >= 1);
     assert.deepEqual(await expenseTotals(fixture), { amount: '12.34', count: 1 });
     assert.equal((await matchedCounts(fixture)).active_purchase_entries, 1);
+  } finally { await closeFixture(fixture); }
+});
+
+integration('bank-only HTTP retry is idempotent and a later FNS receipt automatically refines the expense once', { concurrency: false }, async () => {
+  let writerAttempts = 0;
+  const fixture = await createFixture('auto-bank-only-late-receipt-e2e', {
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: new Date(Date.now() - 5 * 60_000).toISOString(),
+    bankOnlyEnabled: true,
+    accountBankOnlyPurchase: async (targetPool, options) => {
+      writerAttempts += 1;
+      return writeBankOnlyPurchase(targetPool, {
+        ...options,
+        ...(writerAttempts === 1 ? { failAfter: 'evidence' } : {}),
+      });
+    },
+  });
+  try {
+    const bankEvent = { amount: '22.22', id: 'same-android-source-event' };
+    const failedDelivery = await ingestBank(fixture, bankEvent);
+    assert.equal(failedDelivery.status, 503);
+    assert.equal(failedDelivery.body.status, 'created');
+    assert.equal(failedDelivery.body.bankOnlyPurchase.status, 'ERROR');
+    assert.equal((await activePurchaseEntries(fixture)).length, 0);
+
+    const retriedDelivery = await ingestBank(fixture, bankEvent);
+    assert.equal(retriedDelivery.status, 200);
+    assert.equal(retriedDelivery.body.status, 'duplicate');
+    assert.equal(retriedDelivery.body.bankOnlyPurchase.status, 'PERSISTED');
+    assert.equal(writerAttempts, 2);
+    const sourceEventId = `${fixture.prefix}-same-android-source-event`;
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM bank_event_observations WHERE source_event_id=$1', [sourceEventId])).rows[0].count, 1);
+    const bankTransactionId = Number((await pool.query(`SELECT bt.id FROM bank_transactions bt
+      JOIN bank_event_observations eo ON eo.id=bt.observation_id WHERE eo.source_event_id=$1`, [sourceEventId])).rows[0].id);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '22.22', count: 1 });
+    assert.deepEqual((await activePurchaseEntries(fixture)).map((row) => row.derivation_rule), ['LEDGER_BANK_ONLY_PURCHASE_V1']);
+
+    const receipt = await syncFns(fixture, { receipts: [{ amount: '22.22', suffix: 'arrives-after-bank', dateTime: fixture.dateTime }] });
+    assert.equal(receipt.syncResult.normalization_ready_count, 1);
+    assert.equal(receipt.accounting.reconciliations[0].persisted, 1);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '22.22', count: 1 });
+    const active = await activePurchaseEntries(fixture);
+    assert.equal(active.length, 1);
+    assert.equal(active[0].derivation_rule, 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1');
+
+    const receiptId = fixture.receiptIds[0];
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_receipt_matches
+      WHERE scope_id=$1 AND bank_transaction_id=$2 AND receipt_id=$3`, [fixture.scopeId, bankTransactionId, receiptId])).rows[0].count, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_source_links
+      WHERE ledger_entry_id=$1 AND bank_transaction_id=$2 AND receipt_id=$3
+        AND link_role='MATCHED_PURCHASE_BANK_FUNDING'`, [active[0].id, bankTransactionId, receiptId])).rows[0].count, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM business_event_evidence
+      WHERE receipt_id=$1 AND evidence_role='PURCHASE_EVIDENCE'`, [receiptId])).rows[0].count, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ledger_entry_supersessions s
+      JOIN ledger_entries old_entry ON old_entry.id=s.superseded_ledger_entry_id
+      WHERE s.scope_id=$1 AND old_entry.derivation_rule='LEDGER_BANK_ONLY_PURCHASE_V1'
+        AND s.reason_code='BANK_ONLY_PURCHASE_MATCHED_REFINEMENT'`, [fixture.scopeId])).rows[0].count, 1);
+    assert.equal((await certificationFacts(fixture)).length, 1);
+
+    const duplicateAfterMatch = await ingestBank(fixture, bankEvent);
+    assert.equal(duplicateAfterMatch.status, 200);
+    assert.equal(duplicateAfterMatch.body.status, 'duplicate');
+    assert.deepEqual(await expenseTotals(fixture), { amount: '22.22', count: 1 });
+    assert.equal((await activePurchaseEntries(fixture)).length, 1);
+  } finally { await closeFixture(fixture); }
+});
+
+integration('near-simultaneous bank and FNS arrival converges to one matched ACTIVE expense', { concurrency: false }, async () => {
+  const fixture = await createFixture('auto-near-simultaneous-e2e', {
+    automaticPolicy: MATCHED_PURCHASE_AUTO_POLICY,
+    bankIngestedAfter: new Date(Date.now() - 5 * 60_000).toISOString(),
+    bankOnlyEnabled: true,
+  });
+  try {
+    const [bank, receipt] = await Promise.all([
+      ingestBank(fixture, { amount: '18.75', id: 'racing-bank-event' }),
+      syncFns(fixture, { receipts: [{ amount: '18.75', suffix: 'racing-fns-receipt', dateTime: fixture.dateTime }] }),
+    ]);
+    assert.equal(bank.status, 201);
+    assert.equal(receipt.syncResult.normalization_ready_count, 1);
+    assert.equal(receipt.accounting.reconciliations[0].errors, 0);
+    assert.deepEqual(await expenseTotals(fixture), { amount: '18.75', count: 1 });
+    const active = await activePurchaseEntries(fixture);
+    assert.equal(active.length, 1);
+    assert.equal(active[0].derivation_rule, 'LEDGER_MATCHED_PURCHASE_BANK_FUNDING_V1');
+    const counts = await matchedCounts(fixture);
+    assert.equal(counts.matches, 1);
+    assert.equal(counts.matched_entries, 1);
+    assert.equal(counts.active_purchase_entries, 1);
+    assert.equal(counts.active_purchase_debits, '18.75');
+    const evidenceByRole = Object.fromEntries((await pool.query(`SELECT evidence_role,count(*)::int AS count
+      FROM business_event_bank_evidence WHERE scope_id=$1 GROUP BY evidence_role`, [fixture.scopeId])).rows
+      .map((row) => [row.evidence_role, row.count]));
+    assert.equal(evidenceByRole.BANK_PURCHASE_MATCH, 1);
+    assert.ok((evidenceByRole.BANK_ONLY_PURCHASE ?? 0) <= 1);
+    assert.ok(Object.keys(evidenceByRole).every((role) => ['BANK_PURCHASE_MATCH', 'BANK_ONLY_PURCHASE'].includes(role)));
+    assert.equal((await pool.query(`SELECT count(*)::int AS count
+      FROM business_event_bank_evidence evidence
+      JOIN ledger_entries entry ON entry.source_event_id=evidence.business_event_id
+        AND entry.derivation_rule='LEDGER_BANK_ONLY_PURCHASE_V1'
+      WHERE evidence.scope_id=$1 AND evidence.evidence_role='BANK_ONLY_PURCHASE'
+        AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions s
+          WHERE s.scope_id=entry.scope_id AND s.superseded_ledger_entry_id=entry.id)`, [fixture.scopeId])).rows[0].count, 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM bank_receipt_matches
+      WHERE scope_id=$1 AND bank_transaction_id=$2 AND receipt_id=$3`, [fixture.scopeId, Number(bank.body.transactionId), fixture.receiptIds[0]])).rows[0].count, 1);
   } finally { await closeFixture(fixture); }
 });
 

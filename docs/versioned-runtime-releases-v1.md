@@ -9,7 +9,7 @@
 - `release-manifest.json` binds the full target SHA to the sorted runtime file inventory, Git blob identity for repository files, SHA-256, byte size, and immutable POSIX mode. Every verify/select command also requires the expected manifest SHA-256 from the reviewed artifact record.
 - Sealing checks repository file modes against the exact Git tree as well as file contents; executable flags cannot be introduced or lost during staging.
 - Release files and directories are read-only (`0444`/`0555`); executable bits from Git/runtime dependencies are retained as `0555`. Symlinks must resolve inside the release. Hardlinks, special files, unexpected paths, traversal, sensitive names, writable files, missing files, or hash/mode drift stop the operation.
-- The artifact contains `bin/`, `src/`, `db/migrations/`, `package.json`, `package-lock.json`, `node_modules/`, this verifier, and the two explicitly allowlisted migration runners: `scripts/migrate-prod-troika-024.mjs` and `scripts/migrate-prod-bank-only-025.mjs`. No other `scripts/` content is allowed. Sealing checks both runner paths against the target Git tree and fails with `RUNTIME_FILE_MISSING` if either is absent from the staged archive; both files are recorded with Git blob and SHA-256 in the manifest. It excludes `.receipt-collector`, `.env`, tokens/cookies, browser profiles and binaries, logs, backups, PostgreSQL files, Android, tests, and local caches. Playwright's package is included; browser downloads are not.
+- The artifact contains `bin/`, `src/`, `db/migrations/`, `package.json`, `package-lock.json`, `node_modules/`, this verifier, and only the explicitly allowlisted migration tools present in that Git tree. Required migration files and runners are capability-aware: legacy releases without newer migration markers remain verifiable; a release containing the 024, 025, PR #194's 026, or bank-only 027 capability must contain that migration's SQL and runner plus its required predecessor files. PR #194's capability also requires `scripts/manual-bank-reconciliation-review.mjs`. Every declared file is still checked against the manifest's Git blob and SHA-256; a missing capability file or modified checksum stops verification. No other `scripts/` content is allowed. It excludes `.receipt-collector`, `.env`, tokens/cookies, browser profiles and binaries, logs, backups, PostgreSQL files, Android, tests, and local caches. Playwright's package is included; browser downloads are not.
 
 ## Preserve the legacy working directory
 
@@ -27,15 +27,16 @@ Use a detached worktree at the exact full SHA and a fresh empty staging director
 SHA=<full-40-character-commit-sha>
 git worktree add --detach "$WORKTREE" "$SHA"
 mkdir -m 0755 "$STAGE"
-git -C "$WORKTREE" archive --format=tar "$SHA" \
-  bin src db/migrations deploy/runtime-release.mjs scripts/migrate-prod-troika-024.mjs scripts/migrate-prod-bank-only-025.mjs package.json package-lock.json \
-  | tar -xf - -C "$STAGE"
-for required in scripts/migrate-prod-troika-024.mjs scripts/migrate-prod-bank-only-025.mjs; do
-  if [ ! -f "$STAGE/$required" ]; then
-    printf 'required runtime runner missing from git archive: %s\n' "$required" >&2
-    exit 1
+ARCHIVE_PATHS="bin src db/migrations deploy/runtime-release.mjs package.json package-lock.json"
+for optional in scripts/migrate-prod-troika-024.mjs scripts/migrate-prod-bank-only-025.mjs \
+  scripts/migrate-prod-bank-reconciliation-026.mjs scripts/manual-bank-reconciliation-review.mjs \
+  scripts/migrate-prod-bank-only-027.mjs; do
+  if git -C "$WORKTREE" cat-file -e "$SHA:$optional" 2>/dev/null; then
+    ARCHIVE_PATHS="$ARCHIVE_PATHS $optional"
   fi
 done
+# shellcheck disable=SC2086
+git -C "$WORKTREE" archive --format=tar "$SHA" $ARCHIVE_PATHS | tar -xf - -C "$STAGE"
 (cd "$STAGE" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts)
 node "$STAGE/deploy/runtime-release.mjs" seal \
   --source-root "$WORKTREE" --release-dir "$STAGE" --sha "$SHA"
@@ -43,7 +44,7 @@ tar -C "$STAGE" -czf "buhguy-$SHA.tar.gz" .
 sha256sum "buhguy-$SHA.tar.gz"
 ```
 
-`seal` compares every included repository file with the exact Git tree, checks the dependency tree and Node >=22 import closure, writes the deterministic manifest, and normalizes immutable modes. Record both the printed manifest SHA-256 and archive SHA-256 outside production. Do not put runtime state or credentials in the worktree or artifact. If runtime code requires a file outside this allowlist, stop and review that dependency before extending the package.
+`seal` compares every included repository file with the exact Git tree, checks the dependency tree and Node >=22 import closure, enforces the capability-specific migration files and runners, writes the deterministic manifest, and normalizes immutable modes. Record both the printed manifest SHA-256 and archive SHA-256 outside production. Do not put runtime state or credentials in the worktree or artifact. If runtime code requires a file outside this allowlist, stop and review that dependency before extending the package.
 
 ## Publish and select
 

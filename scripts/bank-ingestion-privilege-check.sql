@@ -58,7 +58,8 @@ ORDER BY object_name, privilege_name;
 SELECT column_name, privilege_name,
   has_column_privilege('receipt_collector', 'public.bank_transactions', column_name, privilege_name) AS granted
 FROM (VALUES
-  ('id'::text, 'SELECT'::text)
+  ('id'::text, 'SELECT'::text),
+  ('merchant'::text, 'SELECT'::text)
 ) AS columns(column_name, privilege_name)
 ORDER BY column_name;
 
@@ -83,6 +84,20 @@ FROM (VALUES
   ,('public.bank_source_provider_account_bindings'::text, 'provider'::text, 'SELECT'::text)
   ,('public.bank_source_provider_account_bindings'::text, 'financial_account_id'::text, 'SELECT'::text)
   ,('public.bank_source_provider_account_bindings'::text, 'active'::text, 'SELECT'::text)
+  ,('public.business_events'::text, 'created_at'::text, 'SELECT'::text)
+  ,('public.business_event_edges'::text, 'scope_id'::text, 'SELECT'::text)
+  ,('public.business_event_edges'::text, 'source_event_id'::text, 'SELECT'::text)
+  ,('public.business_event_edges'::text, 'target_event_id'::text, 'SELECT'::text)
+  ,('public.business_event_edges'::text, 'relation_type'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'id'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'scope_id'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'target_event_id'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'source_receipt_id'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'allocated_amount'::text, 'SELECT'::text)
+  ,('public.business_event_allocations'::text, 'resolution_status'::text, 'SELECT'::text)
+  ,('public.ledger_source_links'::text, 'graph_allocation_id'::text, 'INSERT'::text)
+  ,('public.ledger_entries'::text, 'derivation_status'::text, 'UPDATE'::text)
+  ,('public.ledger_postings'::text, 'source_allocation_id'::text, 'INSERT'::text)
 ) AS lookup(object_name,column_name,privilege_name)
 ORDER BY object_name, column_name;
 

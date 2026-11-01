@@ -24,6 +24,14 @@ async function migrationsThrough024() {
   return directory;
 }
 
+async function migrationsThrough025() {
+  const source = new URL('../db/migrations/', import.meta.url);
+  const names = (await readdir(source)).filter(name => name.endsWith('.sql') && name <= BANK_ONLY_MIGRATION_025).sort();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'buhguy-bank-only-025-runner-'));
+  for (const name of names) await copyFile(new URL(name, source), path.join(directory, name));
+  return directory;
+}
+
 async function createFixture(pool, prefix, { amount, standalone = false }) {
   const suffix = `${process.pid}-${Date.now()}-${fixtureSequence += 1}`;
   const scopeKey = `${prefix}-scope-${suffix}`;
@@ -172,6 +180,7 @@ async function snapshotScope(pool, scopeId) {
 integration('strict migration 025 preserves existing synthetic FNS-only and matched-purchase accounting data', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
   const migrationsDir = await migrationsThrough024();
+  let runnerMigrations;
   try {
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
     await migrate(pool, migrationsDir);
@@ -185,7 +194,8 @@ integration('strict migration 025 preserves existing synthetic FNS-only and matc
     assert.equal(beforeMatched.matches.length, 1);
     assert.equal(beforeMatched.bankEvidence.length, 1);
 
-    const result = await migrateBankOnly025(pool);
+    runnerMigrations = await migrationsThrough025();
+    const result = await migrateBankOnly025(pool, runnerMigrations);
     assert.deepEqual(result.applied, [BANK_ONLY_MIGRATION_025]);
     assert.deepEqual(await snapshotScope(pool, standalone.scopeId), beforeStandalone);
     assert.deepEqual(await snapshotScope(pool, matched.scopeId), beforeMatched);
@@ -202,5 +212,6 @@ integration('strict migration 025 preserves existing synthetic FNS-only and matc
   } finally {
     await pool.end();
     await rm(migrationsDir, { recursive: true, force: true });
+    if (runnerMigrations) await rm(runnerMigrations, { recursive: true, force: true });
   }
 });

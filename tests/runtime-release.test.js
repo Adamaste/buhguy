@@ -47,17 +47,65 @@ function posixTestFs() {
   return api;
 }
 
-async function makeStage(root, sha, label) {
+async function makeStage(root, sha, label, { capability = 'legacy' } = {}) {
   const stage = path.join(root, `.staging-${sha}`);
   const contents = new Map([
     ['bin/receipt-collector.js', `export const release = '${label}';\n`],
     ['src/cli.js', `export const cliRelease = '${label}';\n`],
     ['deploy/runtime-release.mjs', 'export const releaseTool = true;\n'],
-    ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
-    ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0' } } }) + '\n'],
   ]);
+  const troika = ['db/migrations/024_manual_troika_topup_expenses.sql', 'SELECT 24;\n', 'scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'];
+  const bank025 = ['db/migrations/025_bank_only_purchase_ledger.sql', 'SELECT 25;\n', 'scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'];
+  const reconciliation026 = ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'SELECT 26;\n', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'export const migrationRunner = "026_manual_bank_reconciliation_review_evidence.sql";\n'];
+  const reviewTool = ['scripts/manual-bank-reconciliation-review.mjs', 'export const manualReview = true;\n'];
+  const bank027 = ['db/migrations/027_bank_only_purchase_runtime_privileges.sql', 'SELECT 27;\n', 'scripts/migrate-prod-bank-only-027.mjs', 'export const migrationRunner = "027_bank_only_purchase_runtime_privileges.sql";\n'];
+  const addPair = ([migrationPath, migrationText, runnerPath, runnerText]) => {
+    contents.set(migrationPath, migrationText);
+    contents.set(runnerPath, runnerText);
+  };
+  if (['bank-only-025', 'manual-026', 'bank-only-027', 'combined'].includes(capability)) {
+    addPair(troika);
+    addPair(bank025);
+  }
+  if (['manual-026', 'combined'].includes(capability)) {
+    addPair(reconciliation026);
+    contents.set(...reviewTool);
+  }
+  if (['bank-only-027', 'combined'].includes(capability)) addPair(bank027);
+  if (capability === 'bank-only-027-missing-runner') {
+    addPair(troika);
+    addPair(bank025);
+    contents.set(bank027[0], bank027[1]);
+  }
+  if (capability === 'bank-only-027-missing-migration') {
+    addPair(troika);
+    addPair(bank025);
+    contents.set(bank027[2], bank027[3]);
+  }
+  if (capability === 'manual-026-missing-runner') {
+    addPair(troika);
+    addPair(bank025);
+    contents.set(reconciliation026[0], reconciliation026[1]);
+    contents.set(...reviewTool);
+  }
+  if (capability === 'manual-026-missing-tool') {
+    addPair(troika);
+    addPair(bank025);
+    addPair(reconciliation026);
+  }
+  if (capability === 'manual-026-missing-migration') {
+    addPair(troika);
+    addPair(bank025);
+    contents.set(reconciliation026[2], reconciliation026[3]);
+    contents.set(...reviewTool);
+  }
+  if (capability === 'bank-only-027-missing-prior-migration') {
+    addPair(troika);
+    contents.set(bank025[2], bank025[3]);
+    addPair(bank027);
+  }
   for (const [relative, content] of contents) {
     const file = path.join(stage, ...relative.split('/'));
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -206,6 +254,39 @@ test('manifest traversal and manifest hash mismatch stop verification', async t 
   await assert.rejects(() => verifyRelease({ releaseDir: release.stage, sha: shaA, manifestSha256: hash, runtimeCheck: false }), error => ['PATH_TRAVERSAL', 'PATH_INVALID'].includes(error.code));
 });
 
+test('release verification is compatible by migration capability and requires complete runner sets', async t => {
+  const root = await fs.mkdtemp(path.join(testDirectory, '.runtime-capabilities-'));
+  t.after(() => makeWritableAndRemove(root));
+  for (const [index, capability] of ['legacy', 'bank-only-025', 'manual-026', 'bank-only-027', 'combined'].entries()) {
+    const sha = String(index + 1).repeat(40);
+    const release = await makeStage(root, sha, capability, { capability });
+    const result = await verifyRelease({ releaseDir: release.stage, sha, manifestSha256: release.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() });
+    assert.equal(result.status, 'PASS', capability);
+  }
+  for (const [index, capability] of ['bank-only-027-missing-runner', 'bank-only-027-missing-migration', 'bank-only-027-missing-prior-migration', 'manual-026-missing-runner', 'manual-026-missing-tool', 'manual-026-missing-migration'].entries()) {
+    const sha = (index + 6).toString(16).repeat(40);
+    const release = await makeStage(root, sha, capability, { capability });
+    await assert.rejects(
+      () => verifyRelease({ releaseDir: release.stage, sha, manifestSha256: release.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() }),
+      error => {
+        assert.equal(error.code, 'RUNTIME_FILE_MISSING', `${capability}: got ${error.code}`);
+        return true;
+      },
+      capability,
+    );
+  }
+
+  const sealed = await makeStage(root, 'c'.repeat(40), 'checksum', { capability: 'combined' });
+  const alteredPath = path.join(sealed.stage, 'db', 'migrations', '027_bank_only_purchase_runtime_privileges.sql');
+  await fs.chmod(alteredPath, 0o644);
+  await fs.appendFile(alteredPath, '-- modified after seal\n');
+  await fs.chmod(alteredPath, 0o444);
+  await assert.rejects(
+    () => verifyRelease({ releaseDir: sealed.stage, sha: 'c'.repeat(40), manifestSha256: sealed.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() }),
+    error => error.code === 'FILE_INTEGRITY_MISMATCH',
+  );
+});
+
 test('sensitive dependency code and documentation are distinct from secret and runtime-state paths', () => {
   assert.equal(validateReleasePath('node_modules/dotenv/lib/env-options.js'), 'node_modules/dotenv/lib/env-options.js');
   assert.equal(validateReleasePath('node_modules/playwright-core/lib/tools/cli-client/session.js'), 'node_modules/playwright-core/lib/tools/cli-client/session.js');
@@ -234,6 +315,9 @@ test('runtime allowlist admits only the pinned production migration runners unde
   assert.equal(validateReleasePath('scripts'), 'scripts');
   assert.equal(validateReleasePath('scripts/migrate-prod-troika-024.mjs'), 'scripts/migrate-prod-troika-024.mjs');
   assert.equal(validateReleasePath('scripts/migrate-prod-bank-only-025.mjs'), 'scripts/migrate-prod-bank-only-025.mjs');
+  assert.equal(validateReleasePath('scripts/migrate-prod-bank-reconciliation-026.mjs'), 'scripts/migrate-prod-bank-reconciliation-026.mjs');
+  assert.equal(validateReleasePath('scripts/manual-bank-reconciliation-review.mjs'), 'scripts/manual-bank-reconciliation-review.mjs');
+  assert.equal(validateReleasePath('scripts/migrate-prod-bank-only-027.mjs'), 'scripts/migrate-prod-bank-only-027.mjs');
   assert.throws(() => validateReleasePath('scripts/migrate-prod-only.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
   assert.throws(() => validateReleasePath('scripts/arbitrary-migration.mjs'), error => error.code === 'PATH_OUTSIDE_RUNTIME_ALLOWLIST');
 });
@@ -251,8 +335,15 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     ['src/browser-session-import.js', 'export const browserSessionImportModule = true;\n'],
     ['db/migrations/001_initial.sql', 'SELECT 1;\n'],
     ['db/migrations/011_bank_device_credentials.sql', 'CREATE TABLE device_credentials (id integer PRIMARY KEY);\n'],
+    ['db/migrations/024_manual_troika_topup_expenses.sql', 'SELECT 24;\n'],
+    ['db/migrations/025_bank_only_purchase_ledger.sql', 'SELECT 25;\n'],
+    ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'SELECT 26;\n'],
+    ['db/migrations/027_bank_only_purchase_runtime_privileges.sql', 'SELECT 27;\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
     ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
+    ['scripts/migrate-prod-bank-reconciliation-026.mjs', 'export const migrationRunner = "026_manual_bank_reconciliation_review_evidence.sql";\n'],
+    ['scripts/manual-bank-reconciliation-review.mjs', 'export const manualReview = true;\n'],
+    ['scripts/migrate-prod-bank-only-027.mjs', 'export const migrationRunner = "027_bank_only_purchase_runtime_privileges.sql";\n'],
     ['deploy/runtime-release.mjs', (await fs.readFile(fileURLToPath(new URL('../deploy/runtime-release.mjs', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n')],
     ['package.json', JSON.stringify({ name: 'synthetic-release', type: 'module', engines: { node: '>=22' }, dependencies: {} }) + '\n'],
     ['package-lock.json', JSON.stringify({ name: 'synthetic-release', version: '1.0.0', lockfileVersion: 3, requires: true, packages: { '': { name: 'synthetic-release', version: '1.0.0', engines: { node: '>=22' } } } }) + '\n'],
@@ -276,7 +367,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.copyFile(from, to);
   }
-  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
+  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs']) {
     const stagedPath = path.join(stage, ...relative.split('/'));
     await fs.unlink(stagedPath);
     await assert.rejects(
@@ -350,7 +441,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
   const manifest = JSON.parse(await fs.readFile(path.join(stage, 'release-manifest.json'), 'utf8'));
-  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs']) {
+  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs']) {
     assert.ok(manifest.files.some(entry => entry.path === relative && entry.gitBlob));
   }
 

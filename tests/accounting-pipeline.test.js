@@ -34,3 +34,28 @@ test('accounting catch-up is source-agnostic and idempotent at orchestration bou
   assert.deepEqual(calls.slice(5).map(([name]) => name), ['prepayment-replay', 'standalone-replay', 'returns-replay', 'ledger-replay', 'certification-replay']);
   assert.ok(calls.every(([, scope]) => scope === 'household'));
 });
+
+test('accounting catch-up summary distinguishes disabled bank-only from an empty successful pass', async () => {
+  const records = [];
+  await runAccountingCatchup({}, {
+    prepaymentMatcher: async () => ({}),
+    standaloneMatcher: async () => ({}),
+    returnMatcher: async () => ({}),
+    bankOnlyPurchaseOptIn: { enabled: false, reasonCode: 'DISABLED' },
+    bankOnlyPurchaseRunner: async () => ({ status: 'DISABLED', reasonCode: 'DISABLED', examined: 0, persisted: 0, reused: 0, blocked: 0, errors: 0 }),
+    ledgerBuilder: async () => ({}),
+    certificationBuilder: async () => ({ facts: [] }),
+    logger: { info: (event, fields) => records.push({ event, fields }) },
+  });
+  const row = records.find(item => item.event === 'accounting_catchup_completed');
+  assert.deepEqual({
+    status: row.fields.bankOnlyPurchaseStatus,
+    examined: row.fields.bankOnlyPurchaseExamined,
+    persisted: row.fields.bankOnlyPurchaseWrites,
+    blocked: row.fields.bankOnlyPurchaseBlocked,
+    errors: row.fields.bankOnlyPurchaseErrors,
+    reasonCode: row.fields.bankOnlyPurchaseReasonCode,
+  }, {
+    status: 'DISABLED', examined: 0, persisted: 0, blocked: 0, errors: 0, reasonCode: 'DISABLED',
+  });
+});

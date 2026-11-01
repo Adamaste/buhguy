@@ -59,6 +59,87 @@ integration('ledger no-op fails closed for a missing scope', { concurrency: fals
   }
 });
 
+integration('ordinary return rebuild preserves allocation provenance, updates entry metadata and retains certification', { concurrency: false }, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const suffix = `${process.pid}-${Date.now()}`;
+    const scopeKey = `ledger-allocation-provenance-${suffix}`;
+    const scope = (await client.query('INSERT INTO accounting_scopes(scope_key,label) VALUES($1,$2) RETURNING id', [scopeKey, 'Allocation provenance regression'])).rows[0];
+    const receiptId = Number((await client.query(`INSERT INTO receipts(fns_id,date_time,seller,total_sum,currency)
+      VALUES($1,NOW(),'Fixture seller',10,'RUB') RETURNING id`, [`ledger-allocation-${suffix}`])).rows[0].id);
+    await client.query(`INSERT INTO receipt_fiscal_facts(
+      receipt_id,normalization_version,source_content_sha256,normalized_content_sha256,normalization_status,
+      cash_total_sum,ecash_total_sum,cash_total_state,ecash_total_state,prepaid_state,credit_state,provision_state,
+      payment_components_status,payment_stage,correction_status
+    ) VALUES($1,'fiscal-normalizer-v1',repeat('e',64),repeat('f',64),'READY',0,10,
+      'EXPLICIT_ZERO','PRESENT_VALUE','EXPLICIT_ZERO','EXPLICIT_ZERO','EXPLICIT_ZERO','RECONCILED','SETTLEMENT_ONLY','NORMAL')`, [receiptId]);
+    const ruleVersion = 'ledger-allocation-provenance-test-v1';
+    await client.query('INSERT INTO business_graph_rules(rule_code,rule_version,description) VALUES($1,$2,$3)', ['RETURN_REFUND_V1', ruleVersion, 'Allocation provenance regression fixture']);
+    const eventId = Number((await client.query(`INSERT INTO business_events(
+      scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description
+    ) VALUES($1,'RETURN','CONFIRMED','SYSTEM_DERIVED','business-graph-v1','RETURN_REFUND_V1',$2,repeat('a',64),10,'RUB','return fixture') RETURNING id`, [scope.id, ruleVersion])).rows[0].id);
+    const allocationId = Number((await client.query(`INSERT INTO business_event_allocations(
+      scope_id,target_event_id,source_receipt_id,normalization_version,allocated_amount,currency,allocation_role,
+      resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key
+    ) VALUES($1,$2,$3,'fiscal-normalizer-v1',10,'RUB','RETURNED_ITEM','CONFIRMED','SYSTEM_DERIVED',
+      'business-graph-v1','RETURN_REFUND_V1',$4,repeat('b',64)) RETURNING id`, [scope.id, eventId, receiptId, ruleVersion])).rows[0].id);
+    const entry = {
+      scopeKey,
+      sourceEventId: eventId,
+      currency: 'RUB',
+      eventAt: new Date().toISOString(),
+      semanticKey: 'c'.repeat(64),
+      derivationRule: 'LEDGER_RETURN_V1',
+      derivationVersion: 'ledger-v1',
+      derivationStatus: 'READY',
+      certificationStatus: 'FUNDING_UNRECONCILED',
+      origin: 'SYSTEM_DERIVED',
+      reasonCode: null,
+      description: 'Initial return projection',
+      postings: [
+        { account: 'MERCHANT_REFUND_RECEIVABLE', debit: '10.00', credit: '0.00', allocationId, receiptId },
+        { account: 'UNCLASSIFIED_ACQUISITION', debit: '0.00', credit: '10.00', allocationId, receiptId },
+      ],
+      links: [{ allocationId, receiptId, role: 'RETURN_ALLOCATION' }],
+    };
+    const projection = { entries: [entry] };
+    const first = await rebuildLedger(pool, { scopeKey, projection, client });
+    assert.equal(first.created.entries, 1);
+    const ledgerEntryId = Number((await client.query('SELECT id FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2', [scope.id, eventId])).rows[0].id);
+    const runId = Number((await client.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status)
+      VALUES($1,'certification-v1',repeat('d',64),'READY') RETURNING id`, [scope.id])).rows[0].id);
+    const factId = Number((await client.query(`INSERT INTO certification_facts(
+      run_id,scope_id,subject_type,subject_id,metric_code,dimension,status,amount,currency,event_at,reason_code,
+      rule_code,rule_version,ledger_entry_id,business_event_id,semantic_key,source_state_key
+    ) VALUES($1,$2,'LEDGER_ENTRY',$3,'ALLOCATION_FIXTURE','BUSINESS_CERTIFICATION','CERTIFIED',10,'RUB',NOW(),
+      'FIXTURE','RETURN_REFUND_V1',$4,$3,$5,repeat('f',64),repeat('d',64)) RETURNING id`, [runId, scope.id, ledgerEntryId, ruleVersion, eventId])).rows[0].id);
+
+    const changedProjection = { entries: [{ ...entry, description: 'Rebuilt return projection' }] };
+    const replay = await rebuildLedger(pool, { scopeKey, projection: changedProjection, client });
+    assert.equal(replay.created.entries, 0);
+    assert.equal(replay.created.postings, 0);
+    assert.equal(replay.created.links, 0);
+
+    const storedEntry = (await client.query('SELECT id,description FROM ledger_entries WHERE scope_id=$1 AND source_event_id=$2', [scope.id, eventId])).rows[0];
+    assert.deepEqual(storedEntry, { id: String(ledgerEntryId), description: 'Rebuilt return projection' });
+    const postings = (await client.query(`SELECT source_allocation_id,source_receipt_id,debit::text,credit::text
+      FROM ledger_postings WHERE ledger_entry_id=$1 ORDER BY id`, [ledgerEntryId])).rows;
+    assert.equal(postings.length, 2);
+    assert(postings.every(posting => Number(posting.source_allocation_id) === allocationId && Number(posting.source_receipt_id) === receiptId));
+    const links = (await client.query(`SELECT graph_allocation_id,receipt_id,link_role FROM ledger_source_links WHERE ledger_entry_id=$1`, [ledgerEntryId])).rows;
+    assert.deepEqual(links.map(link => ({ ...link, graph_allocation_id: Number(link.graph_allocation_id), receipt_id: Number(link.receipt_id) })),
+      [{ graph_allocation_id: allocationId, receipt_id: receiptId, link_role: 'RETURN_ALLOCATION' }]);
+    const facts = (await client.query('SELECT id,ledger_entry_id,business_event_id,status,amount::text,semantic_key FROM certification_facts WHERE scope_id=$1', [scope.id])).rows;
+    assert.deepEqual(facts, [{ id: String(factId), ledger_entry_id: String(ledgerEntryId), business_event_id: String(eventId), status: 'CERTIFIED', amount: '10.00', semantic_key: 'f'.repeat(64) }]);
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    await pool.end();
+  }
+});
+
 integration('identical certified bounded refresh preserves ledger identity', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl });
   let scopeId = null;

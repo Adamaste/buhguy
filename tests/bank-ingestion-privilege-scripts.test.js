@@ -15,6 +15,7 @@ test('bank ingestion grant script is narrowly scoped to runtime DML', async () =
   assert.match(sql, /GRANT SELECT, INSERT ON public\.bank_event_observations TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT SELECT \(id, observation_id, account_reference, account_reference_kind\) ON public\.bank_transactions TO receipt_collector/);
+  assert.match(sql, /GRANT SELECT \(merchant\) ON public\.bank_transactions TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transaction_account_resolution TO receipt_collector/);
   assert.match(sql, /GRANT INSERT ON public\.bank_transaction_payment_instrument_resolution TO receipt_collector/);
   assert.match(sql, /GRANT SELECT \(bank_source_id, provider, financial_account_id, active\)\s+ON public\.bank_source_provider_account_bindings TO receipt_collector/);
@@ -46,6 +47,7 @@ test('bank ingestion privilege check covers required and forbidden capabilities'
   assert.match(sql, /has_column_privilege\('receipt_collector', 'public\.bank_device_credentials'/);
   assert.match(sql, /has_column_privilege\('receipt_collector', 'public\.bank_transactions', column_name, privilege_name\)/);
   assert.match(sql, /'last_used_at'/);
+  assert.match(sql, /'merchant'/);
   assert.match(sql, /'secret_hash'/);
   assert.match(sql, /'enabled'/);
   assert.match(sql, /'revoked_at'/);
@@ -53,6 +55,11 @@ test('bank ingestion privilege check covers required and forbidden capabilities'
   assert.match(sql, /'UPDATE'/);
   assert.match(sql, /bank_transaction_payment_instrument_resolution/);
   assert.match(sql, /bank_source_provider_account_bindings/);
+  assert.match(sql, /business_event_edges/);
+  assert.match(sql, /business_event_allocations/);
+  assert.match(sql, /ledger_source_links/);
+  assert.match(sql, /'derivation_status'::text, 'UPDATE'::text/);
+  assert.match(sql, /'source_allocation_id'::text, 'INSERT'::text/);
   assert.match(sql, /financial_accounts/);
   assert.match(sql, /payment_instrument_person_relations/);
 });

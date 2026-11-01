@@ -62,6 +62,7 @@ class BankCollectorCoreTest {
         assertEquals(DeliveryDecision.Sent, deliveryDecision(201, false, "created"))
         assertEquals(DeliveryDecision.Sent, deliveryDecision(200, false, "duplicate"))
         assertEquals(DeliveryDecision.Retry, deliveryDecision(500, false))
+        assertEquals(DeliveryDecision.Retry, deliveryDecision(503, false, "created"))
         assertEquals(DeliveryDecision.Retry, deliveryDecision(null, true))
         assertEquals(DeliveryDecision.PermanentlyRejected("HTTP_400"), deliveryDecision(400, false))
         assertEquals(DeliveryDecision.PreservePending("AUTH_REQUIRED"), deliveryDecision(401, false))

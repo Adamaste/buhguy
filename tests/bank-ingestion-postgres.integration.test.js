@@ -360,6 +360,7 @@ integration('bank ingestion works under the restricted runtime role without extr
       has_column_privilege('receipt_collector','public.bank_transactions','amount','SELECT') AS transactions_amount_select,
       has_column_privilege('receipt_collector','public.bank_transactions','currency','SELECT') AS transactions_currency_select,
       has_column_privilege('receipt_collector','public.bank_transactions','occurred_at','SELECT') AS transactions_occurred_at_select,
+      has_column_privilege('receipt_collector','public.bank_transactions','merchant','SELECT') AS transactions_merchant_select,
       has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','bank_transaction_id','SELECT') AS resolution_transaction_select,
       has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','financial_account_id','SELECT') AS resolution_account_select,
       has_column_privilege('receipt_collector','public.bank_transaction_account_resolution','resolution_state','SELECT') AS resolution_state_select,
@@ -392,6 +393,7 @@ integration('bank ingestion works under the restricted runtime role without extr
     assert.equal(privilegeRows.transactions_amount_select, true);
     assert.equal(privilegeRows.transactions_currency_select, true);
     assert.equal(privilegeRows.transactions_occurred_at_select, true);
+    assert.equal(privilegeRows.transactions_merchant_select, true);
     assert.equal(privilegeRows.resolution_transaction_select, true);
     assert.equal(privilegeRows.resolution_account_select, true);
     assert.equal(privilegeRows.resolution_state_select, true);

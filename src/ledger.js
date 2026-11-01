@@ -187,7 +187,9 @@ export function deriveLedgerEntries({ events, evidence, allocations, edges, bank
 export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds = null) {
   const eventFilter = eventIds?.length ? ' AND e.id = ANY($2::bigint[])' : '';
   const eventParams = eventIds?.length ? [scopeKey, eventIds] : [scopeKey];
-  const events = (await pool.query(`SELECT e.*, s.scope_key FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id
+  const events = (await pool.query(`SELECT e.id,e.scope_id,e.event_type,e.resolution_status,e.origin,e.graph_model_version,
+      e.rule_code,e.rule_version,e.semantic_key,e.amount,e.currency,e.created_at,s.scope_key
+    FROM business_events e JOIN accounting_scopes s ON s.id=e.scope_id
     WHERE s.scope_key=$1${eventFilter}
       AND NOT EXISTS (SELECT 1 FROM manual_troika_topup_expenses m
         WHERE m.scope_id=e.scope_id AND m.business_event_id=e.id)
@@ -210,8 +212,10 @@ export async function loadLedgerProjection(pool, scopeKey = 'default', eventIds 
     WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1)
       AND business_event_id=ANY($2::bigint[]) AND evidence_role=$3
     ORDER BY id`, [scopeKey, ids, BANK_ONLY_PURCHASE_EVIDENCE_ROLE])).rows;
-  const allocations = (await pool.query(`SELECT a.* FROM business_event_allocations a JOIN accounting_scopes s ON s.id=a.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
-  const edges = (await pool.query(`SELECT e.* FROM business_event_edges e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
+  const allocations = (await pool.query(`SELECT a.id,a.scope_id,a.target_event_id,a.source_receipt_id,a.allocated_amount,a.resolution_status
+    FROM business_event_allocations a JOIN accounting_scopes s ON s.id=a.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
+  const edges = (await pool.query(`SELECT e.scope_id,e.source_event_id,e.target_event_id,e.relation_type
+    FROM business_event_edges e JOIN accounting_scopes s ON s.id=e.scope_id WHERE s.scope_key=$1`, [scopeKey])).rows;
   return { events, evidence, allocations, edges, bankEvidence, entries: deriveLedgerEntries({ events, evidence, allocations, edges, bankEvidence }) };
 }
 
@@ -400,15 +404,27 @@ function assessLedgerProjection(projection, persisted, requestedEventIds = null)
 }
 
 async function persistEntry(tx, entry, accounts) {
-  const row = (await tx.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description)
+  const bankOnlyEntry = entry.derivationRule === BANK_ONLY_PURCHASE_LEDGER_RULE;
+  const entryResult = await tx.query(`INSERT INTO ledger_entries(scope_id,source_event_id,currency,event_at,semantic_key,derivation_rule,derivation_version,derivation_status,certification_status,origin,reason_code,description)
     VALUES((SELECT id FROM accounting_scopes WHERE scope_key=$1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-    ON CONFLICT(scope_id,semantic_key,derivation_rule,derivation_version,origin) DO UPDATE SET description=EXCLUDED.description,derivation_status=EXCLUDED.derivation_status,certification_status=EXCLUDED.certification_status,reason_code=EXCLUDED.reason_code
-    RETURNING id,(xmax=0) AS created`, [entry.scopeKey, entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.origin, entry.reasonCode, entry.description])).rows[0];
-  const entryId = Number(row.id);
+    ON CONFLICT(scope_id,semantic_key,derivation_rule,derivation_version,origin) ${bankOnlyEntry
+    ? 'DO NOTHING RETURNING id'
+    : 'DO UPDATE SET description=EXCLUDED.description,derivation_status=EXCLUDED.derivation_status,certification_status=EXCLUDED.certification_status,reason_code=EXCLUDED.reason_code RETURNING id,(xmax=0) AS created'}`,
+  [entry.scopeKey, entry.sourceEventId, entry.currency, entry.eventAt, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.derivationStatus, entry.certificationStatus, entry.origin, entry.reasonCode, entry.description]);
+  const row = entryResult.rows[0];
+  const existingEntry = bankOnlyEntry && !row ? (await tx.query(`SELECT id FROM ledger_entries
+    WHERE scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1)
+      AND semantic_key=$2 AND derivation_rule=$3 AND derivation_version=$4 AND origin=$5`,
+  [entry.scopeKey, entry.semanticKey, entry.derivationRule, entry.derivationVersion, entry.origin])).rows[0] : null;
+  const persistedEntry = row ?? existingEntry;
+  if (!persistedEntry) throw Object.assign(new Error('LEDGER_ENTRY_IDEMPOTENCY_CONFLICT'), { code: 'LEDGER_ENTRY_IDEMPOTENCY_CONFLICT' });
+  const entryId = Number(persistedEntry.id);
   let postingCount = 0;
   if (entry.derivationStatus !== 'BLOCKED') {
     for (const posting of entry.postings) {
-      const inserted = await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_allocation_id,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]);
+      const inserted = bankOnlyEntry
+        ? await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.receiptId ?? null])
+        : await tx.query(`INSERT INTO ledger_postings(ledger_entry_id,account_id,currency,debit,credit,source_allocation_id,source_receipt_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING id`, [entryId, accounts.get(posting.account), entry.currency, posting.debit, posting.credit, posting.allocationId ?? null, posting.receiptId ?? null]);
       postingCount += inserted.rowCount;
     }
   }
@@ -420,7 +436,7 @@ async function persistEntry(tx, entry, accounts) {
     const inserted = await tx.query(`INSERT INTO ledger_source_links(ledger_entry_id,business_event_id,graph_evidence_id,graph_allocation_id,receipt_id,normalization_version,link_role,semantic_key,bank_transaction_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [entryId, entry.sourceEventId, link.evidenceId ?? null, link.allocationId ?? null, link.receiptId ?? null, link.normalizationVersion ?? null, link.role, semanticKey, link.bankTransactionId ?? null]);
     linkCount += inserted.rowCount;
   }
-  return { entryId, created: Boolean(row.created), postings: postingCount, links: linkCount };
+  return { entryId, created: bankOnlyEntry ? Boolean(row) : Boolean(row.created), postings: postingCount, links: linkCount };
 }
 
 export async function rebuildLedger(pool, { scopeKey = 'default', dryRun = false, replace = false, failAfter = null, eventIds = null, projection: providedProjection = null, client: transactionClient = null } = {}) {
