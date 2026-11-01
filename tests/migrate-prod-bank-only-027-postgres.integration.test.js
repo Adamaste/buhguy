@@ -69,9 +69,13 @@ async function seedEligiblePurchase(pool) {
 integration('027 grants only required columns and lets bounded catch-up retry a previously failed bank-only purchase', { concurrency: false }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
   const previousMigrations = await migrationsThrough025();
+  let createdRuntimeRole = false;
   try {
     const role = await pool.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='receipt_collector'");
-    if (!role.rowCount) await pool.query('CREATE ROLE receipt_collector NOLOGIN');
+    if (!role.rowCount) {
+      await pool.query('CREATE ROLE receipt_collector NOLOGIN');
+      createdRuntimeRole = true;
+    }
     else assert.equal(role.rows[0].rolcanlogin, false);
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT USAGE ON SCHEMA public TO receipt_collector');
     await migrate(pool, previousMigrations);
@@ -149,7 +153,14 @@ integration('027 grants only required columns and lets bounded catch-up retry a 
           WHERE ss.scope_id=entry.scope_id AND ss.superseded_ledger_entry_id=entry.id)`, [fixture.bankTransactionId]);
     assert.equal(ledger.rows[0].count, 1);
   } finally {
-    await rm(previousMigrations, { recursive: true, force: true });
-    await pool.end();
+    try {
+      if (createdRuntimeRole) {
+        await pool.query('DROP OWNED BY receipt_collector');
+        await pool.query('DROP ROLE receipt_collector');
+      }
+    } finally {
+      await rm(previousMigrations, { recursive: true, force: true });
+      await pool.end();
+    }
   }
 });
