@@ -12,6 +12,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.text.InputType
 import android.view.View
+import android.os.Handler
+import android.os.Looper
+import com.adamaste.buhguy.bankcollector.notification.AlfaExtrasDiagnostic
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
@@ -21,6 +24,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+    private val diagnosticHandler = Handler(Looper.getMainLooper())
+    private var alfaRefresh: Runnable? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val preferences = AppPreferences(this)
@@ -83,6 +88,25 @@ class MainActivity : AppCompatActivity() {
             text = "Clear local T-Bank diagnostic report"
             setOnClickListener { preferences.clearTbankExtraDiagnosticsReport() }
         })
+        layout.addView(TextView(this).apply {
+            text = "Alfa extras: one-time local diagnostic. Only the Alfa app is inspected. Field values and notification keys never appear in this report or in the server event. The window closes after five minutes or three callbacks."
+        })
+        val alfaReport = TextView(this).apply { text = AlfaExtrasDiagnostic.display() }
+        layout.addView(Button(this).apply {
+            text = "Start one-time Alfa diagnostic"
+            setOnClickListener { AlfaExtrasDiagnostic.arm(); alfaReport.text = AlfaExtrasDiagnostic.display() }
+        })
+        layout.addView(Button(this).apply {
+            text = "Stop Alfa diagnostic and erase report"
+            setOnClickListener { AlfaExtrasDiagnostic.clear(); alfaReport.text = AlfaExtrasDiagnostic.display() }
+        })
+        layout.addView(alfaReport)
+        alfaRefresh = object : Runnable {
+            override fun run() {
+                alfaReport.text = AlfaExtrasDiagnostic.display()
+                diagnosticHandler.postDelayed(this, 1000L)
+            }
+        }
         val pending = TextView(this).apply {
             tag = "diagnostics"
             text = "Pending events: loading..."
@@ -102,6 +126,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
         setContentView(scrollableScreen(this, layout))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        alfaRefresh?.let(diagnosticHandler::post)
+    }
+
+    override fun onPause() {
+        alfaRefresh?.let(diagnosticHandler::removeCallbacks)
+        AlfaExtrasDiagnostic.clearFinishedReport()
+        super.onPause()
     }
 }
 
