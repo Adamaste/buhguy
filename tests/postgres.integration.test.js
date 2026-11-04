@@ -26,6 +26,13 @@ if (!connectionString) {
   const normalized = (raw) => ({ id: raw.key, dateTime: raw.dateTime, seller: raw.user, sellerInn: raw.userInn, totalSum: raw.totalSum, currency: 'RUB', operationType: raw.operationType, cashTotalSum: raw.cashTotalSum, ecashTotalSum: raw.ecashTotalSum, prepaidSum: raw.prepaidSum, creditSum: raw.creditSum, provisionSum: raw.provisionSum, items: raw.items.map((item) => ({ name: item.name, quantity: item.quantity, price: item.price, sum: item.sum, paymentType: item.paymentType, productType: item.productType, providerInn: item.providerInn })) });
   const bundle = (raw) => ({ normalized: normalized(raw), raw });
 
+  async function observeReceipt(receiptId, sourceReceiptId, { scopeKey = 'default', observedAt = null } = {}) {
+    const repo = new ReceiptRepository(pool);
+    const source = await repo.ensureSource({ scopeKey, sourceKey: 'prepayment-matcher-test', sessionRef: `test:${scopeKey}:prepayment-matcher` });
+    await pool.query(`INSERT INTO receipt_source_observations(fns_source_id,receipt_id,source_receipt_id,observed_at)
+      VALUES($1,$2,$3,COALESCE($4::timestamptz,NOW()))`, [source.id, receiptId, sourceReceiptId, observedAt]);
+  }
+
   async function reset() {
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
     await migrate(pool);
@@ -166,8 +173,10 @@ if (!connectionString) {
     const prepayment = rawFixture('matcher-prepayment', 'matcher-prepayment', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-19T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 32380, prepaidSum: 0, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 1, productType: 1, providerInn: '7700000000' }] });
     const settlement = rawFixture('matcher-settlement', 'matcher-settlement', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-22T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 0, prepaidSum: 32380, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 1, providerInn: '7700000000' }] });
     const repo = new ReceiptRepository(pool);
-    await repo.upsertBundle(bundle(prepayment));
-    await repo.upsertBundle(bundle(settlement));
+    const savedPrepayment = await repo.upsertBundle(bundle(prepayment));
+    const savedSettlement = await repo.upsertBundle(bundle(settlement));
+    await observeReceipt(savedPrepayment.id, prepayment.key);
+    await observeReceipt(savedSettlement.id, settlement.key);
     await backfillNormalization(pool);
     const before = await counts();
     const first = await dryRunPrepaymentSettlements(pool);
@@ -189,52 +198,78 @@ if (!connectionString) {
     const repo = new ReceiptRepository(pool);
     const prepayment = rawFixture('writer-prepayment', 'writer-prepayment', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-19T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 32380, prepaidSum: 0, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 1, productType: 1, providerInn: '7700000000' }] });
     const settlement = rawFixture('writer-settlement', 'writer-settlement', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-22T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 0, prepaidSum: 32380, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 1, providerInn: '7700000000' }] });
-    await repo.upsertBundle(bundle(prepayment));
-    await repo.upsertBundle(bundle(settlement));
+    const savedPrepayment = await repo.upsertBundle(bundle(prepayment));
+    const savedSettlement = await repo.upsertBundle(bundle(settlement));
+    await observeReceipt(savedPrepayment.id, prepayment.key);
+    await observeReceipt(savedSettlement.id, settlement.key);
     await backfillNormalization(pool);
-    const first = await persistPrepaymentSettlementMatches(pool);
+    const startAt = new Date(Date.now() - 60_000).toISOString();
+    await assert.rejects(() => persistPrepaymentSettlementMatches(pool, { startAt, failAfter: 'evidence' }), /injected matcher failure/);
+    assert.equal((await pool.query('SELECT count(*) FROM business_events')).rows[0].count, '0');
+    assert.equal((await pool.query('SELECT count(*) FROM business_event_evidence')).rows[0].count, '0');
+    const first = await persistPrepaymentSettlementMatches(pool, { startAt });
     assert.equal(first.created.purchases, 1);
     assert.equal(first.created.lifecycleEvents, 2);
     assert.equal(first.created.evidenceLinks, 2);
     assert.equal(first.created.edges, 2);
     assert.equal((await pool.query('SELECT count(*) FROM business_events')).rows[0].count, '3');
-    assert.equal((await persistPrepaymentSettlementMatches(pool)).created.purchases, 0);
+    assert.equal((await persistPrepaymentSettlementMatches(pool, { startAt })).created.purchases, 0);
     assert.deepEqual((await pool.query('SELECT event_type,resolution_status,origin FROM business_events ORDER BY event_type')).rows, [
       { event_type: 'FULFILLMENT', resolution_status: 'CONFIRMED', origin: 'SYSTEM_DERIVED' },
       { event_type: 'PREPAYMENT', resolution_status: 'CONFIRMED', origin: 'SYSTEM_DERIVED' },
       { event_type: 'PURCHASE', resolution_status: 'CONFIRMED', origin: 'SYSTEM_DERIVED' },
     ]);
-    await assert.rejects(() => persistPrepaymentSettlementMatches(pool, { failAfter: 'evidence' }), /injected matcher failure/);
     assert.equal((await pool.query('SELECT count(*) FROM business_events')).rows[0].count, '3');
     assert.equal((await pool.query('SELECT count(*) FROM business_event_evidence')).rows[0].count, '2');
   });
 
   test('PREPAYMENT_SETTLEMENT_V1 incremental flow supports prepayment-first and settlement-first order', async () => {
     await reset();
+    const startAt = new Date(Date.now() - 60_000).toISOString();
     const repo = new ReceiptRepository(pool);
     const prepayment = rawFixture('incremental-prepayment', 'incremental-prepayment', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-19T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 32380, prepaidSum: 0, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 1, productType: 1, providerInn: '7700000000' }] });
     const settlement = rawFixture('incremental-settlement', 'incremental-settlement', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-22T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 0, prepaidSum: 32380, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 1, providerInn: '7700000000' }] });
     const savedPrepayment = await repo.upsertBundle(bundle(prepayment));
+    await observeReceipt(savedPrepayment.id, prepayment.key);
     await backfillNormalization(pool);
-    const first = await reconsiderPrepaymentSettlement(pool, savedPrepayment.id, { persist: true });
+    const first = await reconsiderPrepaymentSettlement(pool, savedPrepayment.id, { persist: true, startAt });
     assert.equal(first.triggerStatus, 'RECONSIDERED');
     assert.equal((await pool.query('SELECT count(*) FROM business_events')).rows[0].count, '0');
     const savedSettlement = await repo.upsertBundle(bundle(settlement));
+    await observeReceipt(savedSettlement.id, settlement.key);
     await backfillNormalization(pool);
-    const second = await reconsiderPrepaymentSettlement(pool, savedSettlement.id, { persist: true });
+    const second = await reconsiderPrepaymentSettlement(pool, savedSettlement.id, { persist: true, startAt });
     assert.equal(second.triggerStatus, 'CONFIRMED');
     assert.equal(second.created.purchases, 1);
     assert.equal((await pool.query("SELECT count(*) FROM business_events WHERE event_type='PURCHASE'")).rows[0].count, '1');
     const reverse = await reset();
     void reverse;
     const reverseSettlement = await repo.upsertBundle(bundle({ ...settlement, key: 'incremental-settlement-first' }));
+    await observeReceipt(reverseSettlement.id, 'incremental-settlement-first');
     await backfillNormalization(pool);
-    await reconsiderPrepaymentSettlement(pool, reverseSettlement.id, { persist: true });
+    await reconsiderPrepaymentSettlement(pool, reverseSettlement.id, { persist: true, startAt });
     const reversePrepayment = await repo.upsertBundle(bundle({ ...prepayment, key: 'incremental-prepayment-later' }));
+    await observeReceipt(reversePrepayment.id, 'incremental-prepayment-later');
     await backfillNormalization(pool);
-    const reverseResult = await reconsiderPrepaymentSettlement(pool, reversePrepayment.id, { persist: true });
+    const reverseResult = await reconsiderPrepaymentSettlement(pool, reversePrepayment.id, { persist: true, startAt });
     assert.equal(reverseResult.created.purchases, 1);
     assert.equal((await pool.query("SELECT count(*) FROM business_events WHERE event_type='PURCHASE'")).rows[0].count, '1');
+  });
+
+  test('PREPAYMENT_SETTLEMENT_V1 only considers receipts observed by a source in the requested scope', async () => {
+    await reset();
+    const repo = new ReceiptRepository(pool);
+    const prepayment = rawFixture('scope-prepayment', 'scope-prepayment', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-19T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 32380, prepaidSum: 0, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 1, productType: 1, providerInn: '7700000000' }] });
+    const settlement = rawFixture('scope-settlement', 'scope-settlement', { fiscalDocumentFormatVer: '4', dateTime: '2026-08-22T10:00:00Z', totalSum: 32380, cashTotalSum: 0, ecashTotalSum: 0, prepaidSum: 32380, creditSum: 0, provisionSum: 0, items: [{ name: 'Xiaomi phone + insurance', quantity: 1, price: 32380, sum: 32380, paymentType: 4, productType: 1, providerInn: '7700000000' }] });
+    const savedPrepayment = await repo.upsertBundle(bundle(prepayment));
+    const savedSettlement = await repo.upsertBundle(bundle(settlement));
+    await observeReceipt(savedPrepayment.id, prepayment.key, { scopeKey: 'scope-a' });
+    await observeReceipt(savedSettlement.id, settlement.key, { scopeKey: 'scope-a' });
+    await backfillNormalization(pool);
+    const defaultScope = await dryRunPrepaymentSettlements(pool, { scopeKey: 'default' });
+    assert.equal(defaultScope.summary.settlementsExamined, 0);
+    const owningScope = await dryRunPrepaymentSettlements(pool, { scopeKey: 'scope-a' });
+    assert.equal(owningScope.summary.confirmedSettlements, 1);
   });
 
   test('normalization backfill and rebuild are idempotent and preserve source', async () => {

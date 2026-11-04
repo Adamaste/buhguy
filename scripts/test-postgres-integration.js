@@ -41,6 +41,8 @@ const integrationFiles = [
   'tests/migrate-prod-bank-only-027-postgres.integration.test.js',
   'tests/manual-troika-topup-history-postgres.integration.test.js',
   'tests/bank-only-purchase-postgres.integration.test.js',
+  'tests/prepayment-bank-funding-postgres.integration.test.js',
+  'tests/migrate-prod-prepayment-028-postgres.integration.test.js',
 ];
 const run = (files, env = process.env) => spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env }).status ?? 1;
 const runFixture = (env) => spawnSync(process.execPath, ['scripts/prepare-postgres-integration.mjs'], { stdio: 'inherit', env }).status ?? 1;
@@ -69,7 +71,8 @@ const runWithRuntimeRole = async (connectionString, baseEnv, callback) => {
 };
 const runIntegrationFiles = async (baseEnv) => {
   for (const file of integrationFiles) {
-    const needsRuntimeRole = file === 'tests/bank-only-purchase-postgres.integration.test.js';
+    const needsRuntimeRole = file === 'tests/bank-only-purchase-postgres.integration.test.js'
+      || file === 'tests/prepayment-bank-funding-postgres.integration.test.js';
     const exitCode = needsRuntimeRole
       ? await runWithRuntimeRole(baseEnv.TEST_DATABASE_URL, baseEnv, async (env) => {
         if (runFixture(env) !== 0) return 1;

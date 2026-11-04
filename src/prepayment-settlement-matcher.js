@@ -4,8 +4,9 @@ import { decodePostgresTextEvidence } from './postgres-text-evidence.js';
 import { lockMatchedPurchaseScope, lockMatchedPurchaseScopeTransaction } from './matched-purchase-locks.js';
 
 export const PREPAYMENT_SETTLEMENT_RULE = 'PREPAYMENT_SETTLEMENT_V1';
-export const MATCHER_VERSION = 'prepayment-settlement-matcher-v1';
+export const MATCHER_VERSION = 'prepayment-settlement-matcher-v2';
 export const NORMALIZED_FACT_VERSION = 'fiscal-normalizer-v1';
+export const PREPAYMENT_SETTLEMENT_START_AT_ENV = 'PREPAYMENT_SETTLEMENT_START_AT';
 
 const PREPAYMENT_STAGES = new Set(['PREPAYMENT_ONLY', 'ADVANCE_ONLY']);
 const SETTLEMENT_STAGES = new Set(['SETTLEMENT_ONLY', 'MIXED']);
@@ -18,8 +19,8 @@ function amount(value) {
 
 function positive(value) { return value !== null && value !== undefined && Number(value) > 0; }
 
-function itemsFingerprint(items) {
-  return fiscalContentFingerprint((items ?? []).map((item) => ({
+function itemFingerprint(item) {
+  return fiscalContentFingerprint({
     name: item.name ?? null,
     quantity: amount(item.quantity),
     price: amount(item.price),
@@ -27,7 +28,38 @@ function itemsFingerprint(items) {
     providerInn: item.providerInn ?? null,
     gtin: item.gtin ?? null,
     rawProductCode: item.rawProductCode ?? null,
-  })));
+  });
+}
+
+function sameMultiset(left, right, fingerprint = (value) => JSON.stringify(value)) {
+  if (left.length !== right.length) return false;
+  const a = left.map(fingerprint).sort();
+  const b = right.map(fingerprint).sort();
+  return a.every((value, index) => value === b[index]);
+}
+
+function itemsFingerprint(items) {
+  return fiscalContentFingerprint((items ?? []).map(itemFingerprint).sort());
+}
+
+function strictStartAt(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    const error = new Error(`${PREPAYMENT_SETTLEMENT_START_AT_ENV} must be an ISO timestamp`);
+    error.code = 'PREPAYMENT_SETTLEMENT_START_AT_INVALID';
+    throw error;
+  }
+  const normalized = new Date(value).toISOString();
+  if (normalized !== value) {
+    const error = new Error(`${PREPAYMENT_SETTLEMENT_START_AT_ENV} must be a canonical UTC timestamp`);
+    error.code = 'PREPAYMENT_SETTLEMENT_START_AT_INVALID';
+    throw error;
+  }
+  return normalized;
+}
+
+export function readPrepaymentSettlementStartAt(env = process.env) {
+  return strictStartAt(env[PREPAYMENT_SETTLEMENT_START_AT_ENV]);
 }
 
 function newMoney(fact) {
@@ -54,11 +86,11 @@ function comparePair(prepayment, settlement, { scopeKey = 'default' } = {}) {
       || (prepayment.currency !== null && settlement.currency !== null && prepayment.currency === settlement.currency)),
     predicate('amount_equality', amount(prepayment.totalSum) !== null && amount(prepayment.totalSum) === amount(settlement.totalSum)),
     predicate('item_count', preItems.length > 0 && preItems.length === settlementItems.length),
-    predicate('item_names', preItems.length === settlementItems.length && preItems.every((item, index) => item.name === settlementItems[index]?.name)),
-    predicate('quantity', preItems.length === settlementItems.length && preItems.every((item, index) => amount(item.quantity) === amount(settlementItems[index]?.quantity))),
-    predicate('price', preItems.length === settlementItems.length && preItems.every((item, index) => amount(item.price) === amount(settlementItems[index]?.price))),
-    predicate('item_sum', preItems.length === settlementItems.length && preItems.every((item, index) => amount(item.itemSum) === amount(settlementItems[index]?.itemSum))),
-    predicate('provider_inn', preItems.length === settlementItems.length && preItems.every((item, index) => item.providerInn === settlementItems[index]?.providerInn)),
+    predicate('item_names', sameMultiset(preItems, settlementItems, (item) => JSON.stringify(item.name ?? null))),
+    predicate('quantity', sameMultiset(preItems, settlementItems, (item) => amount(item.quantity))),
+    predicate('price', sameMultiset(preItems, settlementItems, (item) => amount(item.price))),
+    predicate('item_sum', sameMultiset(preItems, settlementItems, (item) => amount(item.itemSum))),
+    predicate('provider_inn', sameMultiset(preItems, settlementItems, (item) => JSON.stringify(item.providerInn ?? null))),
     predicate('gtin_product_code', itemsFingerprint(preItems) === itemsFingerprint(settlementItems)),
     predicate('prepayment_new_money', positive(newMoney(prepayment))),
     predicate('settlement_consumes_prepaid', amount(settlement.prepaidSum) === amount(settlement.totalSum) && newMoney(settlement) === 0),
@@ -76,6 +108,8 @@ function comparePair(prepayment, settlement, { scopeKey = 'default' } = {}) {
     amount: amount(prepayment.totalSum),
     prepaymentTimestamp: prepayment.dateTime,
     settlementTimestamp: settlement.dateTime,
+    prepaymentObservedAt: prepayment.sourceObservedAt ?? null,
+    settlementObservedAt: settlement.sourceObservedAt ?? null,
     research,
     strict,
     firstExclusionReason: firstFailed?.name ?? null,
@@ -102,6 +136,9 @@ export function matchPrepaymentSettlements(receipts, { scopeKey = 'default', ret
         amount: pair.amount,
         purchaseValue: pair.purchaseValue,
         strict: pair.strict,
+        confirmed: pair.confirmed === true,
+        prepaymentObservedAt: pair.prepaymentObservedAt,
+        settlementObservedAt: pair.settlementObservedAt,
       };
     });
     const strictPairs = pairs.filter((pair) => pair.strict);
@@ -140,7 +177,13 @@ export function matchPrepaymentSettlements(receipts, { scopeKey = 'default', ret
 }
 
 const MATCHER_RECEIPTS_BODY = `
-SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime", r.seller_inn AS "sellerInn",
+SELECT r.id, r.fns_id AS "fnsId", r.date_time AS "dateTime",
+       (SELECT min(observation.observed_at)
+        FROM receipt_source_observations observation
+        JOIN fns_sources source ON source.id=observation.fns_source_id
+        WHERE observation.receipt_id=r.id
+          AND source.scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$2)) AS "sourceObservedAt",
+       r.seller_inn AS "sellerInn",
        r.operation_type AS "operationType",
        r.total_sum AS "totalSum", r.currency, f.normalization_status AS "normalizationStatus",
        f.payment_stage AS "paymentStage", f.cash_total_sum AS "cashTotalSum",
@@ -161,19 +204,29 @@ const MATCHER_RECEIPTS_GROUP = `
 GROUP BY r.id, f.receipt_id, f.normalization_version;
 `;
 
-export const MATCHER_RECEIPTS_SQL = `${MATCHER_RECEIPTS_BODY}WHERE f.normalization_status = 'READY'${MATCHER_RECEIPTS_GROUP}`;
+const MATCHER_SCOPE_OBSERVATION_FILTER = `EXISTS (
+  SELECT 1 FROM receipt_source_observations observation
+  JOIN fns_sources source ON source.id=observation.fns_source_id
+  WHERE observation.receipt_id=r.id
+    AND source.scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$2)
+)`;
+
+export const MATCHER_RECEIPTS_SQL = `${MATCHER_RECEIPTS_BODY}WHERE f.normalization_status = 'READY'
+  AND ${MATCHER_SCOPE_OBSERVATION_FILTER}${MATCHER_RECEIPTS_GROUP}`;
 
 const MATCHER_INCREMENTAL_RECEIPTS_SQL = `
 WITH target AS (
   SELECT r.id, r.seller_inn
   FROM receipts r
   JOIN receipt_fiscal_facts f ON f.receipt_id = r.id AND f.normalization_version = $1
-  WHERE r.id = $2 AND f.normalization_status = 'READY'
+  WHERE r.id = $3 AND f.normalization_status = 'READY'
+    AND ${MATCHER_SCOPE_OBSERVATION_FILTER}
 )
 ${MATCHER_RECEIPTS_BODY}
 WHERE f.normalization_status = 'READY'
+  AND ${MATCHER_SCOPE_OBSERVATION_FILTER}
   AND (
-    r.id = $2
+    r.id = $3
     OR (
       r.operation_type = 1
       AND f.payment_stage IN ('PREPAYMENT_ONLY', 'ADVANCE_ONLY', 'SETTLEMENT_ONLY', 'MIXED')
@@ -184,16 +237,16 @@ ${MATCHER_RECEIPTS_GROUP}
 `;
 
 export async function dryRunPrepaymentSettlements(pool, options = {}) {
-  const result = await pool.query(MATCHER_RECEIPTS_SQL, [options.normalizerVersion ?? NORMALIZED_FACT_VERSION]);
   const scopeKey = options.scopeKey ?? 'default';
+  const result = await pool.query(MATCHER_RECEIPTS_SQL, [options.normalizerVersion ?? NORMALIZED_FACT_VERSION, scopeKey]);
   return matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey, items: row.items.map((item) => ({ ...item, rawProductCode: decodePostgresTextEvidence(item.rawProductCode) })) })), { ...options, scopeKey, retainDetails: options.retainDetails ?? true });
 }
 
 export async function reconsiderPrepaymentSettlement(pool, receiptId, options = {}) {
   const normalizerVersion = options.normalizerVersion ?? NORMALIZED_FACT_VERSION;
-  const result = await pool.query(MATCHER_INCREMENTAL_RECEIPTS_SQL, [normalizerVersion, receiptId]);
-  if (!result.rowCount) return { rule: PREPAYMENT_SETTLEMENT_RULE, matcherVersion: MATCHER_VERSION, normalizerVersion, receiptId, summary: { settlementsExamined: 0, candidatePairs: 0, strictMatches: 0, confirmedSettlements: 0, ambiguousSettlements: 0, unmatchedSettlements: 0, candidateOnlySettlements: 0 }, candidates: [], settlements: [], triggerStatus: 'NOT_READY' };
   const scopeKey = options.scopeKey ?? 'default';
+  const result = await pool.query(MATCHER_INCREMENTAL_RECEIPTS_SQL, [normalizerVersion, scopeKey, receiptId]);
+  if (!result.rowCount) return { rule: PREPAYMENT_SETTLEMENT_RULE, matcherVersion: MATCHER_VERSION, normalizerVersion, receiptId, summary: { settlementsExamined: 0, candidatePairs: 0, strictMatches: 0, confirmedSettlements: 0, ambiguousSettlements: 0, unmatchedSettlements: 0, candidateOnlySettlements: 0 }, candidates: [], settlements: [], triggerStatus: 'NOT_READY' };
   const dryRun = matchPrepaymentSettlements(result.rows.map((row) => ({ ...row, scopeKey, items: row.items.map((item) => ({ ...item, rawProductCode: decodePostgresTextEvidence(item.rawProductCode) })) })), { ...options, scopeKey });
   const trigger = dryRun.settlements.find((row) => String(row.settlementReceiptId) === String(receiptId)) ?? null;
   if (options.persist && dryRun.summary.confirmedSettlements) {
@@ -207,6 +260,9 @@ export async function reconsiderPrepaymentSettlement(pool, receiptId, options = 
 
 export async function persistPrepaymentSettlementMatches(pool, options = {}) {
   const result = options.result ?? await dryRunPrepaymentSettlements(pool, { ...options, retainDetails: false });
+  const configuredStartAt = Object.hasOwn(options, 'startAt')
+    ? strictStartAt(options.startAt)
+    : readPrepaymentSettlementStartAt();
   const strictBySettlement = new Map();
   for (const pair of result.candidates.filter((candidate) => candidate.strict)) {
     const list = strictBySettlement.get(pair.settlementReceiptId) ?? [];
@@ -214,10 +270,21 @@ export async function persistPrepaymentSettlementMatches(pool, options = {}) {
     strictBySettlement.set(pair.settlementReceiptId, list);
   }
   const allConfirmedPairs = result.candidates.filter((pair) => pair.confirmed === true);
+  const eligibleByStartAt = (pair) => configuredStartAt !== null
+    && pair.prepaymentObservedAt !== null && pair.settlementObservedAt !== null
+    && Number.isFinite(Date.parse(pair.prepaymentObservedAt)) && Number.isFinite(Date.parse(pair.settlementObservedAt))
+    && Date.parse(pair.prepaymentObservedAt) >= Date.parse(configuredStartAt)
+    && Date.parse(pair.settlementObservedAt) >= Date.parse(configuredStartAt);
+  const blockedByStartAt = allConfirmedPairs.filter((pair) => !eligibleByStartAt(pair)).map((pair) => ({
+    prepaymentReceiptId: Number(pair.prepaymentReceiptId),
+    settlementReceiptId: Number(pair.settlementReceiptId),
+    reason: configuredStartAt === null ? 'PREPAYMENT_SETTLEMENT_START_AT_UNSET' : 'OUTSIDE_PREPAYMENT_SETTLEMENT_COHORT',
+  }));
+  const cohortConfirmedPairs = allConfirmedPairs.filter(eligibleByStartAt);
   const requestedKeys = options.pairKeys ? new Set(options.pairKeys) : null;
   const confirmedPairs = requestedKeys
-    ? allConfirmedPairs.filter((pair) => requestedKeys.has(`${pair.prepaymentReceiptId}:${pair.settlementReceiptId}`))
-    : allConfirmedPairs;
+    ? cohortConfirmedPairs.filter((pair) => requestedKeys.has(`${pair.prepaymentReceiptId}:${pair.settlementReceiptId}`))
+    : cohortConfirmedPairs;
   const created = { purchases: 0, lifecycleEvents: 0, evidenceLinks: 0, edges: 0, allocations: 0 };
   const scopeKey = options.scopeKey ?? 'default';
   const lockClient = await pool.connect();
@@ -242,6 +309,35 @@ export async function persistPrepaymentSettlementMatches(pool, options = {}) {
       persistablePairs = confirmedPairs.filter((pair) => !pairHasManualTopupEvidence(pair));
       blockedManualTopupPairs = confirmedPairs.filter(pairHasManualTopupEvidence);
       for (const pair of persistablePairs) {
+      const priorLifecycles = (await tx.pool.query(`SELECT DISTINCT pre_evidence.receipt_id AS prepayment_receipt_id,
+          settle_evidence.receipt_id AS settlement_receipt_id
+        FROM business_events purchase
+        JOIN business_event_edges pre_edge ON pre_edge.target_event_id=purchase.id
+          AND pre_edge.relation_type='PREPAYMENT_FOR' AND pre_edge.resolution_status='CONFIRMED'
+        JOIN business_events prepayment ON prepayment.id=pre_edge.source_event_id
+        JOIN business_event_evidence pre_evidence ON pre_evidence.event_id=prepayment.id
+          AND pre_evidence.evidence_role='PREPAYMENT_EVIDENCE'
+        JOIN business_event_edges settle_edge ON settle_edge.target_event_id=purchase.id
+          AND settle_edge.relation_type='FULFILLS' AND settle_edge.resolution_status='CONFIRMED'
+        JOIN business_events fulfillment ON fulfillment.id=settle_edge.source_event_id
+        JOIN business_event_evidence settle_evidence ON settle_evidence.event_id=fulfillment.id
+          AND settle_evidence.evidence_role='FULFILLMENT_EVIDENCE'
+        WHERE purchase.scope_id=(SELECT id FROM accounting_scopes WHERE scope_key=$1)
+          AND purchase.event_type='PURCHASE' AND purchase.resolution_status='CONFIRMED'
+          AND prepayment.resolution_status='CONFIRMED' AND fulfillment.resolution_status='CONFIRMED'
+          AND (pre_evidence.receipt_id=ANY($2::bigint[]) OR settle_evidence.receipt_id=ANY($2::bigint[]))`,
+      [scopeKey, [pair.prepaymentReceiptId, pair.settlementReceiptId]])).rows;
+      if (priorLifecycles.length) {
+        const exactExisting = priorLifecycles.length === 1
+          && Number(priorLifecycles[0].prepayment_receipt_id) === Number(pair.prepaymentReceiptId)
+          && Number(priorLifecycles[0].settlement_receipt_id) === Number(pair.settlementReceiptId);
+        if (!exactExisting) {
+          const error = new Error('A prepayment receipt already belongs to a different confirmed lifecycle');
+          error.code = 'PREPAYMENT_LIFECYCLE_CONFLICT';
+          throw error;
+        }
+        continue;
+      }
       const base = {
         scopeKey, origin: SYSTEM_DERIVED,
         graphModelVersion: GRAPH_MODEL_VERSION, ruleCode: PREPAYMENT_SETTLEMENT_RULE,
@@ -280,6 +376,8 @@ export async function persistPrepaymentSettlementMatches(pool, options = {}) {
     ...result,
     writeMode: true,
     created,
+    persistenceStartAt: configuredStartAt,
+    blockedByStartAt,
     confirmedPairs: persistablePairs.map((pair) => ({ prepaymentReceiptId: Number(pair.prepaymentReceiptId), settlementReceiptId: Number(pair.settlementReceiptId), purchaseValue: pair.purchaseValue })),
     blockedManualTopupPairs: blockedManualTopupPairs.map((pair) => ({ prepaymentReceiptId: Number(pair.prepaymentReceiptId), settlementReceiptId: Number(pair.settlementReceiptId), reason: 'RECEIPT_ALREADY_RECORDED_AS_MANUAL_TROIKA_EXPENSE' })),
   };

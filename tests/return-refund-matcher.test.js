@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchReturnReceipts } from '../src/return-refund-matcher.js';
+import { dryRunReturnRefundMatches, matchReturnReceipts } from '../src/return-refund-matcher.js';
 
 const sale = (id, overrides = {}) => ({ id, operationType: 1, sellerInn: 'seller-a', totalSum: '100.00', currency: 'RUB', dateTime: '2026-01-01T10:00:00Z', normalizationStatus: 'READY', paymentStage: 'SETTLEMENT_ONLY', items: [{ name: 'Widget', quantity: 1, price: '100.00', itemSum: '100.00' }], ...overrides });
 const ret = (id, overrides = {}) => ({ id, operationType: 2, sellerInn: 'seller-a', totalSum: '100.00', currency: 'RUB', dateTime: '2026-01-02T10:00:00Z', normalizationStatus: 'READY', paymentStage: 'SETTLEMENT_ONLY', items: [{ name: 'Widget', quantity: 1, price: '100.00', itemSum: '100.00' }], ...overrides });
@@ -50,4 +50,18 @@ test('repeat and concurrent dry-run are deterministic and non-mutating', async (
   const [first, second, concurrent] = await Promise.all([Promise.resolve(matchReturnReceipts(inputs, { standalonePurchaseEligible: new Set(['s']) })), Promise.resolve(matchReturnReceipts(inputs, { standalonePurchaseEligible: new Set(['s']) })), Promise.resolve(matchReturnReceipts(inputs, { standalonePurchaseEligible: new Set(['s']) }))]);
   assert.deepEqual(second, first);
   assert.deepEqual(concurrent, first);
+});
+
+test('return matcher loads receipts only from its requested source scope', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+  };
+  const result = await dryRunReturnRefundMatches(pool, { scopeKey: 'scope-test' });
+  assert.equal(result.summary.returnsExamined, 0);
+  assert.deepEqual(calls[0].values, ['fiscal-normalizer-v1', 'scope-test']);
+  assert.match(calls[0].sql, /source\.scope_id=\(SELECT id FROM accounting_scopes WHERE scope_key=\$2\)/);
 });

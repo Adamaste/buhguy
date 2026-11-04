@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import os from 'node:os';
 import { createPool, migrate } from '../src/database.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -24,11 +25,20 @@ export async function migrateBankOnly027(pool, migrationsDir = path.resolve(path
     throw error;
   }
 
-  return migrate(pool, migrationsDir, {
-    requireSinglePendingMigration: BANK_ONLY_MIGRATION_027,
-    lockTimeoutMs: Number(process.env.MIGRATION_LOCK_TIMEOUT_MS ?? 5000),
-    statementTimeoutMs: Number(process.env.MIGRATION_STATEMENT_TIMEOUT_MS ?? 120000),
-  });
+  const stagedMigrations = await mkdtemp(path.join(os.tmpdir(), 'buhguy-migrate-027-'));
+  try {
+    const files = (await readdir(migrationsDir))
+      .filter((filename) => filename.endsWith('.sql') && filename <= BANK_ONLY_MIGRATION_027)
+      .sort();
+    for (const filename of files) await copyFile(path.join(migrationsDir, filename), path.join(stagedMigrations, filename));
+    return await migrate(pool, stagedMigrations, {
+      requireSinglePendingMigration: BANK_ONLY_MIGRATION_027,
+      lockTimeoutMs: Number(process.env.MIGRATION_LOCK_TIMEOUT_MS ?? 5000),
+      statementTimeoutMs: Number(process.env.MIGRATION_STATEMENT_TIMEOUT_MS ?? 120000),
+    });
+  } finally {
+    await rm(stagedMigrations, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -115,6 +115,7 @@ integration('027 grants only required columns and lets bounded catch-up retry a 
 
     const applied = await migrateBankOnly027(pool);
     assert.deepEqual(applied.applied, [BANK_ONLY_MIGRATION_027]);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE filename='028_prepayment_bank_funding.sql'")).rows[0].count, 0);
     const after = (await pool.query(`SELECT has_column_privilege('receipt_collector','public.bank_transactions','merchant','SELECT') AS merchant,
       has_column_privilege('receipt_collector','public.bank_transactions','counterparty','SELECT') AS counterparty,
       has_column_privilege('receipt_collector','public.business_events','created_at','SELECT') AS event_created_at,
