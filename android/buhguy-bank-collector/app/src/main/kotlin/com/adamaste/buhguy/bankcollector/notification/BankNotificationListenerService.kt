@@ -22,6 +22,7 @@ class BankNotificationListenerService : NotificationListenerService() {
     private val lifecycleStore by lazy { NotificationLifecycleStore(this) }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        AlfaOneShotNotificationDiagnostics.captureIfActive(sbn)
         val callbackAt = Instant.now().toString()
         BankCaptureDiagnostics.log(
             BankCaptureLogEvent(

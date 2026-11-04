@@ -17,6 +17,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import com.adamaste.buhguy.bankcollector.notification.AlfaOneShotNotificationDiagnostics
+import com.adamaste.buhguy.bankcollector.notification.renderAlfaDiagnosticState
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -83,6 +85,26 @@ class MainActivity : AppCompatActivity() {
             text = "Clear local T-Bank diagnostic report"
             setOnClickListener { preferences.clearTbankExtraDiagnosticsReport() }
         })
+        layout.addView(TextView(this).apply { text = "Alfa-Bank one-shot metadata diagnostic" })
+        layout.addView(TextView(this).apply {
+            text = "Only notification metadata is held in memory for up to 5 minutes or 6 Alfa notifications. No notification text or extras values are read by this diagnostic; nothing is saved or sent. Matching groupKey hashes only identify a notification group, not one operation."
+        })
+        val alfaDiagnosticReport = TextView(this).apply {
+            text = renderAlfaDiagnosticState(AlfaOneShotNotificationDiagnostics.state.value)
+        }
+        layout.addView(alfaDiagnosticReport)
+        layout.addView(Button(this).apply {
+            text = "Start one-shot Alfa diagnostic"
+            setOnClickListener { AlfaOneShotNotificationDiagnostics.start() }
+        })
+        layout.addView(Button(this).apply {
+            text = "Stop Alfa diagnostic"
+            setOnClickListener { AlfaOneShotNotificationDiagnostics.stop() }
+        })
+        layout.addView(Button(this).apply {
+            text = "Clear in-memory Alfa report"
+            setOnClickListener { AlfaOneShotNotificationDiagnostics.clear() }
+        })
         val pending = TextView(this).apply {
             tag = "diagnostics"
             text = "Pending events: loading..."
@@ -90,6 +112,11 @@ class MainActivity : AppCompatActivity() {
         layout.addView(pending)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    AlfaOneShotNotificationDiagnostics.state.collect { state ->
+                        alfaDiagnosticReport.text = renderAlfaDiagnosticState(state)
+                    }
+                }
                 val pendingFlow = (application as BankCollectorApplication).database.outbox().pendingCountFlow()
                 preferences.diagnosticChanges()
                     .combine(pendingFlow) { _, count -> count }
