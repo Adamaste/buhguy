@@ -61,8 +61,8 @@ chain rather than selecting the more convenient number.
 | `fns_sources` | One FNS source, without auth material | `id`; map through `fns_source_person` |
 | `fns_source_person` | One source-person association | `(fns_source_id, person_id)` |
 | `fns_source_sync_state` | One source sync state | `fns_source_id` |
-| `analytics_purchases` | One certified acquisition at purchase grain | `purchase_id`; sum `amount` here only |
-| `analytics_purchase_items` | One item of a certified acquisition | `purchase_id`, `item_position`; sum `item_sum` here only |
+| `analytics_purchases` | One certified acquisition fact; one business purchase can repeat across facts/runs | `certification_fact_id`; not safe to sum across the whole view |
+| `analytics_purchase_items` | Item lines attached to one certified acquisition fact | `(purchase_id, certification_fact_id, item_position)`; item-grain only |
 | `reconciliation_runs` | One reconciliation run | `id`; results are 1:N |
 | `reconciliation_results` | One reconciliation metric | `run_id -> reconciliation_runs.id` |
 | `bank_sources` | One bank capture source | `id`; source type/display metadata only, without source key |
@@ -78,7 +78,7 @@ chain rather than selecting the more convenient number.
 3. Receipt to graph: `business_event_evidence.receipt_id = receipts.id`, then `event_id = business_events.id`.
 4. Event to ledger: `ledger_entries.source_event_id = business_events.id`, then `ledger_postings.ledger_entry_id = ledger_entries.id`.
 5. Event to certification: `certification_facts.business_event_id = business_events.id`.
-6. Purchase to items: `analytics_purchases.purchase_id = analytics_purchase_items.purchase_id`.
+6. Purchase to items: join `analytics_purchases` to `analytics_purchase_items` on both `purchase_id` and `certification_fact_id`. For totals, use one validated current snapshot from `canonical_spending_purchases_v1` or the current-snapshot reader; never sum across certification facts/runs.
 7. FNS reference to canonical receipt: `fns_source_receipt_refs.receipt_id = receipts.id` when status is `RESOLVED`.
 8. Person to source to observations: `persons.id = fns_source_person.person_id`, `fns_source_person.fns_source_id = fns_sources.id`, then `receipt_source_observations.fns_source_id = fns_sources.id`.
 9. Bank transaction to normalized evidence: `bank_transactions.id = bank_transaction_account_resolution.bank_transaction_id` and the analogous payment-instrument/context views. Do not join bank source-person rows directly to transaction amounts; use the aggregated context view to avoid fan-out.

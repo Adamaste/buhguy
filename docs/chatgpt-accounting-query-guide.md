@@ -4,9 +4,88 @@
 
 ### Ordinary analytics
 
-Start with `analytics_purchases` and `analytics_purchase_items` for spending,
-products, sellers, price history, and period summaries. Do not reconstruct
-purchase totals from raw receipts when these curated views answer the question.
+Use the current-snapshot spending reader for monetary totals. Do not sum
+`analytics_purchases` across its whole history: it has one row per
+certification fact, and the same `purchase_id` may occur in more than one
+certification fact or run. `analytics_purchase_items` has the same fact
+identity and may repeat item lines across facts. For detail joins, include both
+`purchase_id` and `certification_fact_id`; do not join on `purchase_id` alone.
+These views remain useful for row-level drill-down, not as an unqualified
+historical total.
+
+The authoritative current totals are returned by the server-side
+`resolveCurrentSpendingSnapshot` plus `currentHouseholdSummary` or
+`currentMonthlySpending` in `src/canonical-spending-current-snapshot.js`.
+They verify one exact current unbounded READY snapshot in a repeatable-read,
+read-only transaction and fail closed for missing, stale, conflicting, or
+corrupt state. A plain `MAX(run_id)` or “latest READY” query is not a substitute.
+This reader and its canonical views are not exposed in the current BlazeSQL
+semantic schema, so BlazeSQL cannot yet produce a complete current monetary
+total safely. Use its curated views for read-only drill-down only; use the
+reader or prepared read-only report for totals. Do not compensate by summing
+`analytics_purchases` or all ledger history.
+
+### Safe monetary grains
+
+- FNS receipt inventory: one row per canonical `receipts.id` (or `fns_id`).
+  Use `EXISTS` for provenance filters; never sum after joining
+  `receipt_source_observations` or `user_receipts`.
+- Normalized bank movements: one row per `bank_transactions.id`. Do not join
+  one-to-many evidence or person relations before summing.
+- Current certified expenses: one row per `purchase_id` in one validated
+  `(scope_id, certification_run_id, source_state_key)` snapshot.
+- Active ledger: exclude any entry superseded by
+  `ledger_entry_supersessions`; do not add the historical entry and its
+  replacement.
+- Candidate amount/time pairs are investigative only. They do not reduce or
+  merge totals unless a persisted, evidence-backed match exists.
+
+For a manual SQL export, first obtain the tuple from the successful
+`resolveCurrentSpendingSnapshot` result, then use all three identity fields:
+
+```sql
+SELECT currency, count(*) AS purchase_rows,
+       count(DISTINCT purchase_id) AS unique_purchases,
+       sum(amount)::numeric(18,2) AS gross_spend
+FROM canonical_spending_purchases_v1
+WHERE scope_id = $1
+  AND certification_run_id = $2
+  AND source_state_key = $3
+  AND purchased_at >= TIMESTAMPTZ '2026-09-30 21:00:00+00'
+  AND purchased_at <  TIMESTAMPTZ '2026-10-26 21:00:00+00'
+GROUP BY currency;
+```
+
+The query period above is 1–26 October 2026 in Europe/Moscow and is
+half-open: `[2026-10-01 00:00, 2026-10-27 00:00)` Moscow, or
+`[2026-09-30 21:00Z, 2026-10-26 21:00Z)`. The separately audited period
+through the current date 29 October is `[2026-10-01 00:00, 2026-10-30 00:00)`
+Moscow, or `[2026-09-30 21:00Z, 2026-10-29 21:00Z)`. Keep the intervals
+separate. Require `purchase_rows = unique_purchases`; if not, stop and inspect
+the snapshot rather than applying `DISTINCT` to monetary values.
+
+To count fiscal receipts without observation fan-out, keep the monetary base
+on `receipts` and use an existence predicate:
+
+```sql
+SELECT r.currency, count(*) AS unique_receipts,
+       sum(r.total_sum)::numeric(18,2) AS fiscal_header_total
+FROM receipts r
+WHERE r.date_time >= TIMESTAMPTZ '2026-09-30 21:00:00+00'
+  AND r.date_time <  TIMESTAMPTZ '2026-10-26 21:00:00+00'
+  AND r.operation_type = 1
+  AND EXISTS (
+    SELECT 1 FROM receipt_source_observations o WHERE o.receipt_id = r.id
+  )
+GROUP BY r.currency;
+```
+
+This is a fiscal-header inventory, not a confirmed cash-flow or expense total.
+Use fiscal payment-stage evidence and the certified purchase snapshot to
+separate settlements from advances, prepayments, and returns.
+If `receipts.currency` is NULL, show the currency as UNKNOWN; do not render
+the amount as RUB unless an independent source contract resolves that
+currency.
 
 ### Why a result has a particular value
 

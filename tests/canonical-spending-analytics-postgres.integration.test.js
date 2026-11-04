@@ -46,16 +46,61 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
 
   const secondPerson = (await pool.query(`INSERT INTO persons(scope_id,person_key,display_name)
     VALUES($1,'analytics-fanout-person','Analytics Fanout Person') RETURNING id`, [scope.id])).rows[0];
-  const source = (await pool.query("SELECT id FROM fns_sources WHERE scope_id=$1 ORDER BY id LIMIT 1", [scope.id])).rows[0];
+  const firstPerson = (await pool.query('SELECT id FROM persons WHERE scope_id=$1 ORDER BY id LIMIT 1', [scope.id])).rows[0];
+  const sourceA = (await pool.query(`INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref)
+    VALUES($1,'analytics-fanout-source-a','Synthetic analytics source A','synthetic:analytics-fanout-a')
+    RETURNING id`, [scope.id])).rows[0];
+  const sourceB = (await pool.query(`INSERT INTO fns_sources(scope_id,source_key,display_name,session_ref)
+    VALUES($1,'analytics-fanout-source-b','Synthetic analytics source B','synthetic:analytics-fanout-b')
+    RETURNING id`, [scope.id])).rows[0];
   await pool.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
-    VALUES($1,$2,'canonical-spending-fanout-source')
-    ON CONFLICT DO NOTHING`, [receipt.receipt_id, source.id]);
-  await pool.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2)', [source.id, secondPerson.id]);
+    VALUES($1,$2,'canonical-spending-fanout-source-a'),($1,$3,'canonical-spending-fanout-source-b')`,
+  [receipt.receipt_id, sourceA.id, sourceB.id]);
+  await pool.query('INSERT INTO fns_source_person(fns_source_id,person_id) VALUES($1,$2),($3,$4)',
+    [sourceA.id, firstPerson.id, sourceB.id, secondPerson.id]);
   const provenance = await pool.query(`SELECT count(*)::int AS rows, count(DISTINCT p.person_id)::int AS persons
     FROM receipt_source_observations o JOIN fns_source_person p ON p.fns_source_id=o.fns_source_id
     WHERE o.receipt_id=$1`, [receipt.receipt_id]);
   assert.ok(provenance.rows[0].rows >= 2);
   assert.ok(provenance.rows[0].persons >= 2);
+
+  // Provenance is one-to-many. A receipt total must be selected once at
+  // receipt grain, or filtered through EXISTS, before any monetary SUM.
+  const receiptFanout = (await pool.query(`SELECT
+      (SELECT count(*)::int FROM receipts r
+       JOIN receipt_source_observations o ON o.receipt_id=r.id
+       WHERE r.id=$1) AS joined_rows,
+      (SELECT COALESCE(sum(r.total_sum),0)::numeric(18,2)::text FROM receipts r
+       JOIN receipt_source_observations o ON o.receipt_id=r.id
+       WHERE r.id=$1) AS fanout_sum,
+      (SELECT count(*)::int FROM receipts r
+       WHERE r.id=$1 AND EXISTS (SELECT 1 FROM receipt_source_observations o WHERE o.receipt_id=r.id)) AS receipt_rows,
+      (SELECT COALESCE(sum(r.total_sum),0)::numeric(18,2)::text FROM receipts r
+       WHERE r.id=$1 AND EXISTS (SELECT 1 FROM receipt_source_observations o WHERE o.receipt_id=r.id)) AS receipt_grain_sum,
+      (SELECT total_sum::numeric(18,2)::text FROM receipts WHERE id=$1) AS receipt_amount`, [receipt.receipt_id])).rows[0];
+  assert.ok(receiptFanout.joined_rows > 1);
+  assert.notEqual(receiptFanout.fanout_sum, receiptFanout.receipt_amount);
+  assert.equal(receiptFanout.receipt_rows, 1);
+  assert.equal(receiptFanout.receipt_grain_sum, receiptFanout.receipt_amount);
+
+  const sameAmountReceipt = (await pool.query(`INSERT INTO receipts(fns_id,source,total_sum,currency)
+    SELECT 'canonical-spending-same-amount-receipt','synthetic-test',total_sum,currency
+    FROM receipts WHERE id=$1 RETURNING id`, [receipt.receipt_id])).rows[0];
+  await pool.query(`INSERT INTO receipt_source_observations(receipt_id,fns_source_id,source_receipt_id)
+    VALUES($1,$2,'same-amount-receipt-source-a'),($1,$3,'same-amount-receipt-source-b')`,
+  [sameAmountReceipt.id, sourceA.id, sourceB.id]);
+  const sameAmountReceipts = (await pool.query(`SELECT count(*)::int AS rows,
+      count(DISTINCT r.id)::int AS unique_receipts,
+      sum(r.total_sum)::numeric(18,2)::text AS total
+    FROM receipts r
+    WHERE r.id=ANY($1::bigint[])
+      AND EXISTS (SELECT 1 FROM receipt_source_observations o WHERE o.receipt_id=r.id)`,
+  [[receipt.receipt_id, sameAmountReceipt.id]])).rows[0];
+  assert.deepEqual(sameAmountReceipts, {
+    rows: 2,
+    unique_receipts: 2,
+    total: money(minorUnits(receiptFanout.receipt_amount) * 2n),
+  });
 
   const snapshotKey = 'b'.repeat(64);
   const secondRun = (await pool.query(`INSERT INTO reconciliation_runs(scope_id,model_version,source_state_key,status,finished_at)
@@ -67,6 +112,25 @@ integration('canonical spending analytics is fan-out-safe, snapshot-qualified, a
       reason_code,rule_code,rule_version,ledger_entry_id,business_event_id,graph_evidence_id,
       repeat(md5(semantic_key || 'snapshot-b'),2),$2
     FROM certification_facts WHERE id=$3`, [secondRun.id, snapshotKey, initial.id]);
+
+  // analytics_purchases exposes certification-fact grain. The same economic
+  // event can occur in multiple facts/runs; pin the canonical view to one
+  // exact run/source-state before summing it.
+  const factGrain = (await pool.query(`SELECT count(*)::int AS fact_rows,
+      count(DISTINCT purchase_id)::int AS purchase_events,
+      COALESCE(sum(amount),0)::numeric(18,2)::text AS fact_sum
+    FROM analytics_purchases WHERE purchase_id=$1 AND status='CERTIFIED'`, [initial.business_event_id])).rows[0];
+  assert.ok(factGrain.fact_rows >= 2);
+  assert.equal(factGrain.purchase_events, 1);
+  const oneSnapshot = (await pool.query(`SELECT count(*)::int AS rows,
+      count(DISTINCT purchase_id)::int AS purchases,
+      COALESCE(sum(amount),0)::numeric(18,2)::text AS amount
+    FROM canonical_spending_purchases_v1
+    WHERE scope_id=$1 AND certification_run_id=$2 AND source_state_key=$3 AND purchase_id=$4`,
+  [scope.id, secondRun.id, snapshotKey, initial.business_event_id])).rows[0];
+  assert.equal(oneSnapshot.rows, 1);
+  assert.equal(oneSnapshot.purchases, 1);
+  assert.equal(oneSnapshot.amount, initial.amount);
 
   const rule = (await pool.query('SELECT rule_code,rule_version FROM business_graph_rules ORDER BY rule_code,rule_version LIMIT 1')).rows[0];
   const returnEvent = (await pool.query(`INSERT INTO business_events(

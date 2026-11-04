@@ -37,27 +37,28 @@ test('purchase details views are deterministic, reconciled and read-only in a cl
     const items = (await pool.query(`SELECT * FROM analytics_purchase_items
       WHERE purchased_at >= '2026-08-01T00:00:00+03' AND purchased_at < '2026-09-01T00:00:00+03'
       ORDER BY purchase_id, item_position`)).rows;
-    assert.equal(new Set(purchases.map((row) => row.purchase_id)).size, purchases.length);
+    assert.equal(new Set(purchases.map((row) => row.certification_fact_id)).size, purchases.length);
     assert.equal(Number((await pool.query('SELECT count(*) FROM analytics_purchases WHERE status <> \'CERTIFIED\'')).rows[0].count), 0);
     assert.equal(Number((await pool.query(`SELECT count(*) FROM analytics_purchase_items
       WHERE item_name IS NULL OR item_name = ''`)).rows[0].count), 0);
 
-    const reconciliation = (await pool.query(`SELECT p.purchase_id,
+    const reconciliation = (await pool.query(`SELECT p.purchase_id,p.certification_fact_id,
       p.amount, COALESCE(SUM(i.item_sum), 0)::numeric AS item_sum,
       CASE WHEN count(i.item_position)=0 THEN 'NO_ITEMS'
            WHEN COALESCE(SUM(i.item_sum), 0) = p.amount THEN 'MATCH'
            ELSE 'MISMATCH' END AS result
       FROM analytics_purchases p
-      LEFT JOIN analytics_purchase_items i ON i.purchase_id=p.purchase_id
+      LEFT JOIN analytics_purchase_items i
+        ON i.purchase_id=p.purchase_id AND i.certification_fact_id=p.certification_fact_id
       WHERE p.purchased_at >= '2026-08-01T00:00:00+03' AND p.purchased_at < '2026-09-01T00:00:00+03'
-      GROUP BY p.purchase_id,p.amount`)).rows;
+      GROUP BY p.purchase_id,p.certification_fact_id,p.amount`)).rows;
     assert.equal(reconciliation.length, purchases.length);
     assert.equal(reconciliation.filter((row) => row.result === 'MISMATCH').length, 0);
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const purchase = (await client.query(`SELECT purchase_id, scope_id, receipt_id,
+      const purchase = (await client.query(`SELECT purchase_id, certification_fact_id, scope_id, receipt_id,
           purchased_at, amount, currency
         FROM analytics_purchases WHERE amount=32380.00 AND status='CERTIFIED'
         ORDER BY purchase_id LIMIT 1`)).rows[0];
@@ -102,7 +103,8 @@ test('purchase details views are deterministic, reconciled and read-only in a cl
       [purchase.scope_id, purchase.purchase_id, match.id]);
       const projected = (await client.query(`SELECT seller, bank_merchant,
           bank_merchant_source, merchant_display, merchant_display_source
-        FROM analytics_purchases WHERE purchase_id=$1`, [purchase.purchase_id])).rows;
+        FROM analytics_purchases WHERE purchase_id=$1 AND certification_fact_id=$2`,
+      [purchase.purchase_id, purchase.certification_fact_id])).rows;
       assert.equal(projected.length, 1);
       assert.equal(projected[0].seller, 'Synthetic Merchant');
       assert.equal(projected[0].bank_merchant, 'Synthetic bank merchant');
@@ -114,10 +116,11 @@ test('purchase details views are deterministic, reconciled and read-only in a cl
       client.release();
     }
 
-    const xiaomi = (await pool.query(`SELECT count(*)::int AS count, COALESCE(sum(amount),0)::numeric AS amount
-      FROM analytics_purchases WHERE amount=32380.00`)).rows[0];
-    assert.equal(xiaomi.count, 1);
-    assert.equal(Number(xiaomi.amount), 32380);
+    const xiaomi = (await pool.query(`SELECT certification_fact_id,amount::numeric(18,2)::text AS amount
+      FROM analytics_purchases WHERE amount=32380.00 AND status='CERTIFIED'
+      ORDER BY certification_fact_id LIMIT 1`)).rows[0];
+    assert.ok(xiaomi.certification_fact_id);
+    assert.equal(xiaomi.amount, '32380.00');
     assert.deepEqual(await counts(), before);
   } finally {
     await pool.end();
