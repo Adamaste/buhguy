@@ -513,7 +513,15 @@ async function persistUniquePair(client, scopeId, lifecycle, bankRow, purchase) 
   return { created: funding.created, linkCreated: ledgerLink.created, superseded: supersession.created };
 }
 
-export async function reconcilePrepaymentBankFunding(pool, { scopeKey = 'default', startAt = null } = {}) {
+export async function reconcilePrepaymentBankFunding(pool, { scopeKey = 'default', startAt = null, targets = null } = {}) {
+  if (targets !== null && (!Array.isArray(targets) || targets.length === 0
+      || targets.some(target => !target || ['prepaymentReceiptId', 'settlementReceiptId', 'bankTransactionId']
+        .some(key => !Number.isSafeInteger(target[key]) || target[key] <= 0))
+      || ['prepaymentReceiptId', 'settlementReceiptId', 'bankTransactionId']
+        .some(key => new Set(targets.map(target => target[key])).size !== targets.length))) {
+    throw Object.assign(new Error('Explicit funding targets must contain unique positive safe integer IDs'),
+      { code: 'PREPAYMENT_FUNDING_TARGETS_INVALID' });
+  }
   const cutoff = validStartAt(startAt);
   if (!cutoff) return { status: 'DISABLED', reasonCode: 'PREPAYMENT_SETTLEMENT_START_AT_UNSET', examined: 0, persisted: 0, reused: 0, ambiguous: 0, blocked: 0 };
   const client = await pool.connect();
@@ -547,11 +555,20 @@ export async function reconcilePrepaymentBankFunding(pool, { scopeKey = 'default
     const result = { status: 'COMPLETED', reasonCode: null, examined: 0, persisted: 0, reused: 0, ambiguous: 0, blocked: 0, superseded: 0 };
     for (const lifecycle of lifecycles) {
       const eventId = Number(lifecycle.prepaymentEventId);
+      const target = targets?.find(item => item.prepaymentReceiptId === Number(lifecycle.receiptId)
+        && item.settlementReceiptId === Number(lifecycle.settlementReceiptId));
+      if (targets !== null && !target) continue;
       const ids = adjacency.get(eventId) ?? [];
       if (!ids.length) continue;
       result.examined += ids.length;
       if (ids.length !== 1 || transactionToLifecycleIds.get(ids[0])?.length !== 1) {
         result.ambiguous += 1;
+        continue;
+      }
+      // Select writes only after building and checking the full competition graph.
+      // An allowlist must never hide an alternative bank or lifecycle candidate.
+      if (target && ids[0] !== target.bankTransactionId) {
+        result.blocked += 1;
         continue;
       }
       const bankRow = bankRows.get(ids[0]);

@@ -16,6 +16,7 @@ const unitFiles = [
   'tests/sync.test.js',
   'tests/business-event-graph.test.js',
   'tests/prepayment-settlement-matcher.test.js',
+  'tests/prepayment-bank-funding.test.js',
   'tests/return-refund-research.test.js',
   'tests/return-refund-matcher.test.js',
   'tests/ledger.test.js',

@@ -96,3 +96,11 @@ test('ordinary bank transaction identifiers and private notification text are ab
   assert.doesNotMatch(serialized, /notificationText|rawPayload|merchant|accountReference|cardNumber|otp|secret/i);
   assert.equal(Object.hasOwn(value.evidence.evidence_snapshot, 'notificationLifecycleId'), false);
 });
+
+test('invalid explicit funding targets fail before any database access', async () => {
+  const { reconcilePrepaymentBankFunding } = await import('../src/prepayment-bank-funding.js');
+  for (const targets of [[], {}, [null], [{ prepaymentReceiptId: 1, settlementReceiptId: 2, bankTransactionId: '3' }]]) {
+    await assert.rejects(() => reconcilePrepaymentBankFunding({}, { targets }),
+      error => error.code === 'PREPAYMENT_FUNDING_TARGETS_INVALID');
+  }
+});
