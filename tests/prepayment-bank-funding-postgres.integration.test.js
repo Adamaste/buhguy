@@ -7,6 +7,7 @@ import { backfillNormalization } from '../src/fiscal-normalization.js';
 import { createPool, migrate, ReceiptRepository } from '../src/database.js';
 import { runAccountingCatchup } from '../src/accounting-pipeline.js';
 import { runBankOnlyPurchaseCatchup, writeBankOnlyPurchase } from '../src/bank-only-purchase.js';
+import { rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { PREPAYMENT_BANK_FUNDING_EVIDENCE_ROLE, PREPAYMENT_BANK_FUNDING_LINK_ROLE } from '../src/prepayment-bank-funding-contract.js';
 import { persistPrepaymentSettlementMatches } from '../src/prepayment-settlement-matcher.js';
@@ -157,6 +158,7 @@ if (!connectionString) {
       scopeKey: 'default', optIn: optIn(startAt), now: new Date(now), logger: { info() {}, warn() {}, error() {} },
     });
     assert.equal(bankOnly.persisted, 1);
+    const priorCertification = await rebuildCertification(runtimePool, { persist: true });
 
     const [prepaymentReceipt, settlementReceipt] = await seedReceipts({
       prepaymentAt: new Date(now - 140_000).toISOString(),
@@ -169,6 +171,11 @@ if (!connectionString) {
     assert.equal(catchup.prepayments.created.purchases, 1);
     assert.equal(catchup.prepaymentBankFunding.persisted, 1);
     assert.equal(catchup.prepaymentBankFunding.superseded, 1);
+    assert.notEqual(catchup.certification.runId, priorCertification.runId);
+    assert.notEqual(catchup.certification.sourceStateKey, priorCertification.sourceStateKey);
+    const snapshots = await admin.query('SELECT id FROM reconciliation_runs WHERE id = ANY($1::bigint[])',
+      [[priorCertification.runId, catchup.certification.runId]]);
+    assert.equal(snapshots.rowCount, 2);
 
     const persisted = (await admin.query(`SELECT
       (SELECT count(*)::int FROM business_event_bank_evidence WHERE bank_transaction_id=$1 AND evidence_role=$2) AS evidence,
@@ -193,6 +200,8 @@ if (!connectionString) {
     });
     assert.equal(replay.prepaymentBankFunding.persisted, 0);
     assert.equal(replay.prepaymentBankFunding.reused, 1);
+    assert.equal(replay.certification.runId, catchup.certification.runId);
+    assert.equal(replay.certification.reused, true);
     const bankRetry = await writeBankOnlyPurchase(runtimePool, { bankTransactionId: bank.bankTransactionId, optIn: optIn(startAt), now: new Date(now) });
     assert.equal(bankRetry.status, 'REUSED');
     assert.equal(bankRetry.reasonCode, 'PREPAYMENT_BANK_FUNDING_ALREADY_ACCOUNTED');

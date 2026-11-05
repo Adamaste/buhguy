@@ -30,8 +30,9 @@ export async function runAccountingCatchup(pool, {
   const prepaymentBankFunding = await prepaymentBankFundingRunner(pool, {
     scopeKey, startAt: prepaymentSettlementStartAt,
   });
-  // Reuse an exact READY snapshot, but replace the current snapshot when the
-  // source state changes so routine catch-up cannot accumulate old full runs.
+  // Reuse the READY snapshot for the current source state. If funding or
+  // supersession changes that state, append a new snapshot. The runtime role
+  // can insert certification runs but cannot delete earlier runs.
   const certification = await certificationBuilder(pool, { scopeKey, persist: true, replace: false, reuseUnchanged: true });
   const result = { prepayments, standalone, returns, bankOnlyPurchases, ledger, prepaymentBankFunding, certification };
   logger.info?.('accounting_catchup_completed', {

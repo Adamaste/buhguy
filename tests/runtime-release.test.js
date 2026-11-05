@@ -74,6 +74,13 @@ async function makeStage(root, sha, label, { capability = 'legacy' } = {}) {
     contents.set(...reviewTool);
   }
   if (['bank-only-027', 'combined'].includes(capability)) addPair(bank027);
+  if (capability.startsWith('prepayment-028')) {
+    addPair(troika);
+    addPair(bank025);
+    addPair(bank027);
+    if (capability !== 'prepayment-028-missing-sql') contents.set('db/migrations/028_prepayment_bank_funding.sql', 'SELECT 28;\n');
+    if (capability !== 'prepayment-028-missing-runner') contents.set('scripts/migrate-prod-prepayment-028.mjs', 'export const migrationRunner = true;\n');
+  }
   if (capability === 'bank-only-027-missing-runner') {
     addPair(troika);
     addPair(bank025);
@@ -257,14 +264,14 @@ test('manifest traversal and manifest hash mismatch stop verification', async t 
 test('release verification is compatible by migration capability and requires complete runner sets', async t => {
   const root = await fs.mkdtemp(path.join(testDirectory, '.runtime-capabilities-'));
   t.after(() => makeWritableAndRemove(root));
-  for (const [index, capability] of ['legacy', 'bank-only-025', 'manual-026', 'bank-only-027', 'combined'].entries()) {
+  for (const [index, capability] of ['legacy', 'bank-only-025', 'manual-026', 'bank-only-027', 'combined', 'prepayment-028'].entries()) {
     const sha = String(index + 1).repeat(40);
     const release = await makeStage(root, sha, capability, { capability });
     const result = await verifyRelease({ releaseDir: release.stage, sha, manifestSha256: release.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() });
     assert.equal(result.status, 'PASS', capability);
   }
-  for (const [index, capability] of ['bank-only-027-missing-runner', 'bank-only-027-missing-migration', 'bank-only-027-missing-prior-migration', 'manual-026-missing-runner', 'manual-026-missing-tool', 'manual-026-missing-migration'].entries()) {
-    const sha = (index + 6).toString(16).repeat(40);
+  for (const [index, capability] of ['bank-only-027-missing-runner', 'bank-only-027-missing-migration', 'bank-only-027-missing-prior-migration', 'manual-026-missing-runner', 'manual-026-missing-tool', 'manual-026-missing-migration', 'prepayment-028-missing-sql', 'prepayment-028-missing-runner'].entries()) {
+    const sha = (index + 7).toString(16).repeat(40);
     const release = await makeStage(root, sha, capability, { capability });
     await assert.rejects(
       () => verifyRelease({ releaseDir: release.stage, sha, manifestSha256: release.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() }),
@@ -276,13 +283,13 @@ test('release verification is compatible by migration capability and requires co
     );
   }
 
-  const sealed = await makeStage(root, 'c'.repeat(40), 'checksum', { capability: 'combined' });
-  const alteredPath = path.join(sealed.stage, 'db', 'migrations', '027_bank_only_purchase_runtime_privileges.sql');
+  const sealed = await makeStage(root, 'f'.repeat(40), 'checksum', { capability: 'prepayment-028' });
+  const alteredPath = path.join(sealed.stage, 'db', 'migrations', '028_prepayment_bank_funding.sql');
   await fs.chmod(alteredPath, 0o644);
   await fs.appendFile(alteredPath, '-- modified after seal\n');
   await fs.chmod(alteredPath, 0o444);
   await assert.rejects(
-    () => verifyRelease({ releaseDir: sealed.stage, sha: 'c'.repeat(40), manifestSha256: sealed.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() }),
+    () => verifyRelease({ releaseDir: sealed.stage, sha: 'f'.repeat(40), manifestSha256: sealed.manifestSha256, runtimeCheck: false, fsApi: posixTestFs() }),
     error => error.code === 'FILE_INTEGRITY_MISMATCH',
   );
 });
@@ -339,6 +346,8 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     ['db/migrations/025_bank_only_purchase_ledger.sql', 'SELECT 25;\n'],
     ['db/migrations/026_manual_bank_reconciliation_review_evidence.sql', 'SELECT 26;\n'],
     ['db/migrations/027_bank_only_purchase_runtime_privileges.sql', 'SELECT 27;\n'],
+    ['db/migrations/028_prepayment_bank_funding.sql', 'SELECT 28;\n'],
+    ['scripts/migrate-prod-prepayment-028.mjs', 'export const migrationRunner = true;\n'],
     ['scripts/migrate-prod-troika-024.mjs', 'export const migrationRunner = "024_manual_troika_topup_expenses.sql";\n'],
     ['scripts/migrate-prod-bank-only-025.mjs', 'export const migrationRunner = "025_bank_only_purchase_ledger.sql";\n'],
     ['scripts/migrate-prod-bank-reconciliation-026.mjs', 'export const migrationRunner = "026_manual_bank_reconciliation_review_evidence.sql";\n'],
@@ -367,7 +376,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.copyFile(from, to);
   }
-  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs']) {
+  for (const relative of ['scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs', 'scripts/migrate-prod-prepayment-028.mjs', 'db/migrations/028_prepayment_bank_funding.sql']) {
     const stagedPath = path.join(stage, ...relative.split('/'));
     await fs.unlink(stagedPath);
     await assert.rejects(
@@ -441,7 +450,7 @@ test('seal binds a synthetic release to one exact Git tree and verifies runtime 
   assert.equal(result.sha, sha);
   assert.match(result.manifestSha256, /^[a-f0-9]{64}$/);
   const manifest = JSON.parse(await fs.readFile(path.join(stage, 'release-manifest.json'), 'utf8'));
-  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs']) {
+  for (const relative of ['src/session-store.js', 'src/bank-device-auth.js', 'src/browser-session-import.js', 'scripts/migrate-prod-troika-024.mjs', 'scripts/migrate-prod-bank-only-025.mjs', 'scripts/migrate-prod-bank-reconciliation-026.mjs', 'scripts/manual-bank-reconciliation-review.mjs', 'scripts/migrate-prod-bank-only-027.mjs', 'scripts/migrate-prod-prepayment-028.mjs', 'db/migrations/028_prepayment_bank_funding.sql']) {
     assert.ok(manifest.files.some(entry => entry.path === relative && entry.gitBlob));
   }
 
