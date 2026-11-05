@@ -15,6 +15,7 @@ import {
   bankOnlyEvidenceSha256,
   isValidBankOnlyPurchaseEvidence,
 } from './bank-only-purchase-contract.js';
+import { isValidPrepaymentBankFundingEvidence, PREPAYMENT_BANK_FUNDING_EVIDENCE_ROLE, PREPAYMENT_BANK_FUNDING_LINK_ROLE } from './prepayment-bank-funding-contract.js';
 
 export const BANK_ONLY_PURCHASE_LEDGER_ENABLED_ENV = 'BANK_ONLY_PURCHASE_LEDGER_ENABLED';
 export const BANK_ONLY_PURCHASE_LEDGER_SCOPE_ENV = 'BANK_ONLY_PURCHASE_LEDGER_SCOPE';
@@ -169,6 +170,69 @@ async function existingState(client, scope, bankTransactionId) {
   const matches = (await client.query('SELECT id FROM bank_receipt_matches WHERE bank_transaction_id=$1', [bankTransactionId])).rows;
   if (matches.length > 1) throw Object.assign(new Error('BANK_MATCH_CONFLICT'), { code: 'BANK_MATCH_CONFLICT' });
   if (matches.length) return { matched: true };
+  const fundingRows = (await client.query(`SELECT be.id AS evidence_id,be.scope_id,be.business_event_id,
+      be.bank_receipt_match_id,be.bank_transaction_id,be.financial_account_id,be.evidence_role,
+      be.rule_version AS evidence_rule_version,be.semantic_key,be.evidence_snapshot,be.evidence_sha256,
+      e.id,e.event_type,e.resolution_status,e.origin,e.graph_model_version,e.rule_code,
+      e.rule_version,e.amount::text AS amount,e.currency,s.scope_key
+    FROM business_event_bank_evidence be
+    JOIN business_events e ON e.id=be.business_event_id
+    JOIN accounting_scopes s ON s.id=e.scope_id
+    WHERE be.scope_id=$1 AND be.bank_transaction_id=$2 AND be.evidence_role=$3`,
+  [scope.id, bankTransactionId, PREPAYMENT_BANK_FUNDING_EVIDENCE_ROLE])).rows;
+  if (fundingRows.length > 1) throw Object.assign(new Error('PREPAYMENT_BANK_FUNDING_CONFLICT'), { code: 'PREPAYMENT_BANK_FUNDING_CONFLICT' });
+  if (fundingRows.length === 1) {
+    const row = fundingRows[0];
+    const event = {
+      id: Number(row.id), scope_id: Number(row.scope_id), scope_key: row.scope_key,
+      event_type: row.event_type, resolution_status: row.resolution_status, origin: row.origin,
+      graph_model_version: row.graph_model_version, rule_code: row.rule_code,
+      rule_version: row.rule_version, amount: row.amount, currency: row.currency,
+    };
+    const evidence = {
+      evidence_role: row.evidence_role, rule_version: row.evidence_rule_version,
+      business_event_id: row.business_event_id, scope_id: row.scope_id,
+      bank_transaction_id: row.bank_transaction_id, financial_account_id: row.financial_account_id,
+      semantic_key: row.semantic_key, evidence_snapshot: row.evidence_snapshot,
+      evidence_sha256: row.evidence_sha256, bank_receipt_match_id: row.bank_receipt_match_id,
+    };
+    if (!isValidPrepaymentBankFundingEvidence(event, evidence)) {
+      throw Object.assign(new Error('PREPAYMENT_BANK_FUNDING_EVIDENCE_INVALID'), { code: 'PREPAYMENT_BANK_FUNDING_EVIDENCE_INVALID' });
+    }
+    const fundingLinks = (await client.query(`SELECT entry.id,entry.source_event_id,entry.derivation_rule,
+        entry.derivation_status,link.id AS link_id
+      FROM ledger_source_links link JOIN ledger_entries entry ON entry.id=link.ledger_entry_id
+      WHERE entry.scope_id=$1 AND entry.source_event_id=$2
+        AND entry.derivation_rule='LEDGER_PREPAYMENT_V1'
+        AND link.bank_transaction_id=$3 AND link.link_role=$4
+        AND NOT EXISTS (SELECT 1 FROM ledger_entry_supersessions ss
+          WHERE ss.scope_id=entry.scope_id AND ss.superseded_ledger_entry_id=entry.id)
+      ORDER BY entry.id`, [scope.id, row.business_event_id, bankTransactionId,
+      PREPAYMENT_BANK_FUNDING_LINK_ROLE])).rows;
+    if (fundingLinks.length !== 1 || fundingLinks[0].derivation_status !== 'READY') {
+      throw Object.assign(new Error('PREPAYMENT_BANK_FUNDING_LEDGER_CONFLICT'), { code: 'PREPAYMENT_BANK_FUNDING_LEDGER_CONFLICT' });
+    }
+    const allLinks = (await client.query(`SELECT entry.id,entry.derivation_rule,link.link_role,
+        ss.replacement_ledger_entry_id,ss.business_event_id,ss.reason_code
+      FROM ledger_source_links link JOIN ledger_entries entry ON entry.id=link.ledger_entry_id
+      LEFT JOIN ledger_entry_supersessions ss ON ss.scope_id=entry.scope_id
+        AND ss.superseded_ledger_entry_id=entry.id
+      WHERE link.bank_transaction_id=$1 ORDER BY link.id`, [bankTransactionId])).rows;
+    const allowed = allLinks.every((item) =>
+      item.link_role === PREPAYMENT_BANK_FUNDING_LINK_ROLE
+      || item.link_role === BANK_ONLY_PURCHASE_EVIDENCE_ROLE);
+    const bankOnlyLinks = allLinks.filter((item) => item.link_role === BANK_ONLY_PURCHASE_EVIDENCE_ROLE);
+    const validRefinement = bankOnlyLinks.length <= 1 && bankOnlyLinks.every((item) =>
+      item.derivation_rule === BANK_ONLY_PURCHASE_LEDGER_RULE
+      && Number(item.replacement_ledger_entry_id) === Number(fundingLinks[0].id)
+      && Number(item.business_event_id) === Number(row.business_event_id)
+      && item.reason_code === 'BANK_ONLY_PREPAYMENT_REFINEMENT');
+    if (!allowed || !validRefinement || allLinks.filter((item) => item.link_role === PREPAYMENT_BANK_FUNDING_LINK_ROLE).length !== 1) {
+      throw Object.assign(new Error('PREPAYMENT_BANK_FUNDING_LINK_CONFLICT'), { code: 'PREPAYMENT_BANK_FUNDING_LINK_CONFLICT' });
+    }
+    return { matched: false, existing: true, prepaymentFunding: true,
+      eventId: Number(row.business_event_id), ledgerEntryId: Number(fundingLinks[0].id) };
+  }
   const evidence = (await client.query(`SELECT be.id,be.scope_id,be.business_event_id,be.bank_receipt_match_id,
       be.bank_transaction_id,be.financial_account_id,be.enrichment_key,be.evidence_role,be.rule_version,
       be.semantic_key,be.evidence_snapshot,be.evidence_sha256,e.id AS event_row_id,e.scope_id AS event_scope_id,
@@ -360,7 +424,9 @@ export async function writeBankOnlyPurchase(pool, { bankTransactionId, optIn = r
     const prior = await existingState(client, scope, txId);
     if (prior.existing) {
       await client.query('COMMIT');
-      return { status: 'REUSED', reasonCode: 'BANK_ONLY_PURCHASE_ALREADY_ACCOUNTED', eventId: prior.eventId, ledgerEntryId: prior.ledgerEntryId };
+      return { status: 'REUSED', reasonCode: prior.prepaymentFunding
+        ? 'PREPAYMENT_BANK_FUNDING_ALREADY_ACCOUNTED' : 'BANK_ONLY_PURCHASE_ALREADY_ACCOUNTED',
+      eventId: prior.eventId, ledgerEntryId: prior.ledgerEntryId };
     }
     const projection = await loadBankLedgerProjection(client, {
       scopeKey, bankTransactionIds: [txId], maxTimeDeltaMs: INTERNAL_TRANSFER_MAX_TIME_DELTA_MS,

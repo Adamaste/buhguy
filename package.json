@@ -14,6 +14,7 @@
     "migrate:prod:troika-024": "node ./scripts/migrate-prod-troika-024.mjs",
     "migrate:prod:bank-only-025": "node ./scripts/migrate-prod-bank-only-025.mjs",
     "migrate:prod:bank-only-027": "node ./scripts/migrate-prod-bank-only-027.mjs",
+    "migrate:prod:prepayment-028": "node ./scripts/migrate-prod-prepayment-028.mjs",
     "normalize": "node ./bin/receipt-collector.js normalize",
     "test": "node ./scripts/test-suite.js",
     "test:unit": "node ./scripts/test-suite.js --unit-only",

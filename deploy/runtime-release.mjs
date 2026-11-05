@@ -20,12 +20,15 @@ const BANK_RECONCILIATION_026_RUNNER = 'scripts/migrate-prod-bank-reconciliation
 const MANUAL_BANK_REVIEW_TOOL = 'scripts/manual-bank-reconciliation-review.mjs';
 const BANK_ONLY_027_MIGRATION = 'db/migrations/027_bank_only_purchase_runtime_privileges.sql';
 const BANK_ONLY_027_RUNNER = 'scripts/migrate-prod-bank-only-027.mjs';
+const PREPAYMENT_028_MIGRATION = 'db/migrations/028_prepayment_bank_funding.sql';
+const PREPAYMENT_028_RUNNER = 'scripts/migrate-prod-prepayment-028.mjs';
+const PREPAYMENT_028_MARKERS = [PREPAYMENT_028_MIGRATION, PREPAYMENT_028_RUNNER, 'src/prepayment-bank-funding.js'];
 const RECONCILIATION_026_MARKERS = [BANK_RECONCILIATION_026_MIGRATION, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL];
 const BANK_ONLY_027_MARKERS = [BANK_ONLY_027_MIGRATION, BANK_ONLY_027_RUNNER];
 const BANK_ONLY_025_MARKERS = [BANK_ONLY_025_MIGRATION, BANK_ONLY_025_RUNNER];
 const TROIKA_024_MARKERS = [TROIKA_024_MIGRATION, TROIKA_024_RUNNER];
 const ALLOWED_DIRECTORIES = new Set(['bin', 'src', 'db', 'db/migrations', 'deploy', 'scripts', 'node_modules']);
-const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL, BANK_ONLY_027_RUNNER]);
+const EXACT_CODE_FILES = new Set(['package.json', 'package-lock.json', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL, BANK_ONLY_027_RUNNER, PREPAYMENT_028_RUNNER]);
 const SENSITIVE = /(^|[._-])(env|secret|secrets|credential|credentials|token|tokens|cookie|cookies|auth|session|sessions|profile|profiles|state|backup|backups|dump|dumps|log|logs|cache|browser-profile)([._-]|$)/i;
 const NEVER_RELEASE_COMPONENTS = new Set([
   '.env', '.receipt-collector', '.local-browsers', 'ms-playwright',
@@ -65,9 +68,14 @@ export function requiredReleaseCapabilityFiles(paths) {
       BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_MIGRATION,
       BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL]) required.add(file);
   }
-  if (hasMarker(BANK_ONLY_027_MARKERS)) {
+  const hasPrepayment = hasMarker(PREPAYMENT_028_MARKERS);
+  if (hasPrepayment || hasMarker(BANK_ONLY_027_MARKERS)) {
     for (const file of [TROIKA_024_MIGRATION, TROIKA_024_RUNNER, BANK_ONLY_025_MIGRATION,
       BANK_ONLY_025_RUNNER, BANK_ONLY_027_MIGRATION, BANK_ONLY_027_RUNNER]) required.add(file);
+  }
+  if (hasPrepayment) {
+    required.add(PREPAYMENT_028_MIGRATION);
+    required.add(PREPAYMENT_028_RUNNER);
   }
   return [...required];
 }
@@ -307,7 +315,7 @@ function git(sourceRoot, args, options = {}) {
 }
 
 function gitPathList(sourceRoot, sha) {
-  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', 'deploy/runtime-release.mjs', TROIKA_024_RUNNER, BANK_ONLY_025_RUNNER, BANK_RECONCILIATION_026_RUNNER, MANUAL_BANK_REVIEW_TOOL, BANK_ONLY_027_RUNNER, 'package.json', 'package-lock.json']);
+  const output = git(sourceRoot, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'bin', 'src', 'db/migrations', ...EXACT_CODE_FILES]);
   return output.toString('utf8').split('\0').filter(Boolean).sort(comparePaths);
 }
 

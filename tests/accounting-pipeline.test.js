@@ -29,7 +29,7 @@ test('accounting catch-up is source-agnostic and idempotent at orchestration bou
   assert.equal(first.standalone.created, 1);
   assert.equal(second.standalone.created, undefined);
   assert.deepEqual(calls.slice(0, 5).map(([name]) => name), ['prepayment', 'standalone', 'returns', 'ledger', 'certification']);
-  assert.equal(calls[4][2], true);
+  assert.equal(calls[4][2], false);
   assert.equal(calls[4][3], true);
   assert.deepEqual(calls.slice(5).map(([name]) => name), ['prepayment-replay', 'standalone-replay', 'returns-replay', 'ledger-replay', 'certification-replay']);
   assert.ok(calls.every(([, scope]) => scope === 'household'));

@@ -1,10 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EXTERNAL_CONFIRMED, GRAPH_MODEL_VERSION, MANUAL, SYSTEM_DERIVED } from '../src/business-event-graph.js';
+import { BusinessEventGraphRepository, EXTERNAL_CONFIRMED, GRAPH_MODEL_VERSION, MANUAL, SYSTEM_DERIVED } from '../src/business-event-graph.js';
 
 test('GRAPH-INV-004: graph provenance constants are explicit and stable', () => {
   assert.equal(GRAPH_MODEL_VERSION, 'business-graph-v1');
   assert.deepEqual([SYSTEM_DERIVED, MANUAL, EXTERNAL_CONFIRMED], ['SYSTEM_DERIVED', 'MANUAL', 'EXTERNAL_CONFIRMED']);
+});
+
+test('existing accounting scopes are resolved with SELECT without requiring runtime INSERT privilege', async () => {
+  const calls = [];
+  const repository = new BusinessEventGraphRepository({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rowCount: 1, rows: [{ id: 7, scope_key: 'default' }] };
+    },
+  });
+  const scope = await repository.ensureScope('default', 'ignored existing label');
+  assert.deepEqual(scope, { id: 7, scope_key: 'default' });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /^SELECT id,scope_key FROM accounting_scopes/);
+  assert.deepEqual(calls[0].values, ['default']);
 });
 
 test('GRAPH-INV-001/002: migration declares required event types and typed relations', async () => {

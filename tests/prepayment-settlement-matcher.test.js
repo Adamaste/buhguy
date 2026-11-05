@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchPrepaymentSettlements, PREPAYMENT_SETTLEMENT_RULE } from '../src/prepayment-settlement-matcher.js';
+import { matchPrepaymentSettlements, PREPAYMENT_SETTLEMENT_RULE, readPrepaymentSettlementStartAt } from '../src/prepayment-settlement-matcher.js';
 
 const item = (name = 'phone') => ({ name, quantity: 1, price: 100, itemSum: 100, providerInn: '7700000000', gtin: null, rawProductCode: null });
 function receipt(id, dateTime, paymentStage, overrides = {}) {
@@ -15,6 +15,53 @@ test('PREPAYMENT_SETTLEMENT_V1 confirms one strong prepayment/settlement pair', 
   assert.equal(result.rule, PREPAYMENT_SETTLEMENT_RULE);
   assert.deepEqual(result.summary, { settlementsExamined: 1, candidatePairs: 1, strictMatches: 1, confirmedSettlements: 1, ambiguousSettlements: 0, unmatchedSettlements: 0, candidateOnlySettlements: 0 });
   assert.equal(result.candidates[0].purchaseValue, '100.00');
+});
+
+test('prepayment persistence cutoff defaults to disabled and accepts only canonical UTC timestamps', () => {
+  assert.equal(readPrepaymentSettlementStartAt({}), null);
+  assert.equal(readPrepaymentSettlementStartAt({ PREPAYMENT_SETTLEMENT_START_AT: '' }), null);
+  assert.equal(readPrepaymentSettlementStartAt({ PREPAYMENT_SETTLEMENT_START_AT: '2026-11-02T12:00:00.000Z' }), '2026-11-02T12:00:00.000Z');
+  assert.throws(() => readPrepaymentSettlementStartAt({ PREPAYMENT_SETTLEMENT_START_AT: '2026-11-02T12:00:00Z' }), { code: 'PREPAYMENT_SETTLEMENT_START_AT_INVALID' });
+  assert.throws(() => readPrepaymentSettlementStartAt({ PREPAYMENT_SETTLEMENT_START_AT: 'not-a-date' }), { code: 'PREPAYMENT_SETTLEMENT_START_AT_INVALID' });
+});
+
+test('compact matcher candidates preserve confirmation and source-ingestion timestamps', () => {
+  const rows = pair();
+  rows[0].sourceObservedAt = '2026-01-01T10:00:00.000Z';
+  rows[1].sourceObservedAt = '2026-01-02T10:00:00.000Z';
+  const result = matchPrepaymentSettlements(rows, { retainDetails: false });
+  assert.equal(result.candidates[0].confirmed, true);
+  assert.equal(result.candidates[0].prepaymentObservedAt, rows[0].sourceObservedAt);
+  assert.equal(result.candidates[0].settlementObservedAt, rows[1].sourceObservedAt);
+  assert.equal(Object.hasOwn(result.candidates[0], 'predicates'), false);
+});
+
+test('same fiscal item multiset matches when receipt line order changes', () => {
+  const rows = pair();
+  const first = item('phone');
+  const second = { ...item('case'), quantity: 2, price: 25, itemSum: 50, gtin: '00000000000001' };
+  const third = { ...item('case'), quantity: 2, price: 25, itemSum: 50, gtin: '00000000000001' };
+  rows[0] = { ...rows[0], totalSum: 200, ecashTotalSum: 200, items: [first, second, third] };
+  rows[1] = { ...rows[1], totalSum: 200, prepaidSum: 200, items: [third, first, second] };
+  const result = matchPrepaymentSettlements(rows);
+  assert.equal(result.candidates[0].strict, true);
+  assert.equal(result.summary.confirmedSettlements, 1);
+});
+
+test('item multiset comparison preserves duplicate multiplicity and full item pairing', () => {
+  const rows = pair();
+  const a = item('a');
+  const b = { ...item('b'), price: 0, itemSum: 0 };
+  rows[0] = { ...rows[0], items: [a, b] };
+  rows[1] = { ...rows[1], items: [b, a, a] };
+  const result = matchPrepaymentSettlements(rows);
+  assert.equal(result.candidates[0].strict, false);
+  assert.equal(result.candidates[0].firstExclusionReason, 'item_count');
+
+  rows[1] = { ...rows[1], items: [{ ...a, price: 99 }, b] };
+  const crossed = matchPrepaymentSettlements(rows);
+  assert.equal(crossed.candidates[0].strict, false);
+  assert.equal(crossed.candidates[0].firstExclusionReason, 'price');
 });
 
 test('missing currency on both receipts is compatible, while a known conflict is not', () => {

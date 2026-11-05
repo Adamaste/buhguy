@@ -49,6 +49,8 @@ export class BusinessEventGraphRepository {
 
   async ensureScope(scopeKey, label = null) {
     requireValue(scopeKey, 'scopeKey');
+    const existing = await this.pool.query('SELECT id,scope_key FROM accounting_scopes WHERE scope_key=$1', [scopeKey]);
+    if (existing.rowCount) return existing.rows[0];
     const result = await this.pool.query('INSERT INTO accounting_scopes(scope_key,label) VALUES($1,$2) ON CONFLICT(scope_key) DO UPDATE SET label=COALESCE(accounting_scopes.label,EXCLUDED.label) RETURNING id,scope_key,label', [scopeKey, label]);
     return result.rows[0];
   }
@@ -64,12 +66,30 @@ export class BusinessEventGraphRepository {
     const scope = await this.ensureScope(input.scopeKey, input.scopeLabel);
     await this.registerRule(input.ruleCode, input.ruleVersion, input.ruleDescription ?? `${input.ruleCode} ${input.ruleVersion}`);
     const semanticKey = keyFor('event', input);
+    const values = [scope.id, input.eventType, input.resolutionStatus, input.origin, input.graphModelVersion,
+      input.ruleCode, input.ruleVersion, semanticKey, input.amount ?? null, input.currency ?? null, input.description ?? null];
     const result = await this.pool.query(`INSERT INTO business_events(scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      ON CONFLICT(scope_id,semantic_key,graph_model_version,rule_code,rule_version,origin) DO UPDATE SET description=COALESCE(business_events.description,EXCLUDED.description)
-      RETURNING id,scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description,(xmax=0) AS created`, [scope.id, input.eventType, input.resolutionStatus, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey, input.amount ?? null, input.currency ?? null, input.description ?? null]);
-    const row = statusFrom(result.rows[0]);
-    return { ...row, created: result.rows[0].created };
+      ON CONFLICT(scope_id,semantic_key,graph_model_version,rule_code,rule_version,origin) DO NOTHING
+      RETURNING id,scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description`, values);
+    if (result.rowCount) return { ...statusFrom(result.rows[0]), created: true };
+    let existing = await this.pool.query(`SELECT id,scope_id,event_type,resolution_status,origin,graph_model_version,
+        rule_code,rule_version,semantic_key,amount,currency,description
+      FROM business_events WHERE scope_id=$1 AND semantic_key=$2 AND graph_model_version=$3
+        AND rule_code=$4 AND rule_version=$5 AND origin=$6`,
+    [scope.id, semanticKey, input.graphModelVersion, input.ruleCode, input.ruleVersion, input.origin]);
+    if (!existing.rowCount) throw new Error('Business event conflict row was not found');
+    if (existing.rows[0].description == null && input.description != null) {
+      const filled = await this.pool.query(`UPDATE business_events SET description=$2
+        WHERE id=$1 AND description IS NULL
+        RETURNING id,scope_id,event_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,amount,currency,description`,
+      [existing.rows[0].id, input.description]);
+      if (filled.rowCount) existing = filled;
+      else existing = await this.pool.query(`SELECT id,scope_id,event_type,resolution_status,origin,graph_model_version,
+          rule_code,rule_version,semantic_key,amount,currency,description
+        FROM business_events WHERE id=$1`, [existing.rows[0].id]);
+    }
+    return { ...statusFrom(existing.rows[0]), created: false };
   }
 
   async createEvidenceLink(input) {
@@ -79,10 +99,11 @@ export class BusinessEventGraphRepository {
     const result = await this.pool.query(`INSERT INTO business_event_evidence(event_id,receipt_id,receipt_item_id,normalization_version,evidence_role,origin,graph_model_version,rule_code,rule_version,semantic_key)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT(semantic_key) DO NOTHING
-      RETURNING *`, [input.eventId, input.receiptId ?? null, input.receiptItemId ?? null, input.normalizationVersion, input.evidenceRole, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey]);
-    if (result.rowCount) return { ...result.rows[0], id: Number(result.rows[0].id), created: true };
-    const existing = await this.pool.query('SELECT * FROM business_event_evidence WHERE semantic_key=$1', [semanticKey]);
-    return { ...existing.rows[0], id: Number(existing.rows[0].id), created: false };
+      RETURNING id`, [input.eventId, input.receiptId ?? null, input.receiptItemId ?? null, input.normalizationVersion, input.evidenceRole, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey]);
+    if (result.rowCount) return { id: Number(result.rows[0].id), created: true };
+    const existing = await this.pool.query('SELECT id FROM business_event_evidence WHERE semantic_key=$1', [semanticKey]);
+    if (!existing.rowCount) throw new Error('Business event evidence conflict row was not found');
+    return { id: Number(existing.rows[0].id), created: false };
   }
 
   async createEdge(input) {
@@ -94,10 +115,11 @@ export class BusinessEventGraphRepository {
     const semanticKey = keyFor('edge', input);
     const result = await this.pool.query(`INSERT INTO business_event_edges(scope_id,source_event_id,target_event_id,relation_type,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,explanation)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      ON CONFLICT(semantic_key) DO NOTHING RETURNING *`, [scope.id, input.sourceEventId, input.targetEventId, input.relationType, input.resolutionStatus, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey, input.explanation ?? null]);
-    if (result.rowCount) return { ...result.rows[0], id: Number(result.rows[0].id), created: true };
-    const existing = await this.pool.query('SELECT * FROM business_event_edges WHERE semantic_key=$1', [semanticKey]);
-    return { ...existing.rows[0], id: Number(existing.rows[0].id), created: false };
+      ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [scope.id, input.sourceEventId, input.targetEventId, input.relationType, input.resolutionStatus, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey, input.explanation ?? null]);
+    if (result.rowCount) return { id: Number(result.rows[0].id), created: true };
+    const existing = await this.pool.query('SELECT id FROM business_event_edges WHERE semantic_key=$1', [semanticKey]);
+    if (!existing.rowCount) throw new Error('Business event edge conflict row was not found');
+    return { id: Number(existing.rows[0].id), created: false };
   }
 
   async createAllocation(input) {
@@ -108,10 +130,11 @@ export class BusinessEventGraphRepository {
     const semanticKey = keyFor('allocation', input);
     const result = await this.pool.query(`INSERT INTO business_event_allocations(scope_id,target_event_id,source_receipt_id,source_receipt_item_id,normalization_version,allocated_quantity,allocated_amount,currency,allocation_role,resolution_status,origin,graph_model_version,rule_code,rule_version,semantic_key,explanation)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-      ON CONFLICT(semantic_key) DO NOTHING RETURNING *`, [scope.id, input.targetEventId, input.sourceReceiptId ?? null, input.sourceReceiptItemId ?? null, input.normalizationVersion, input.allocatedQuantity ?? null, input.allocatedAmount ?? null, input.currency, input.allocationRole, input.resolutionStatus, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey, input.explanation ?? null]);
-    if (result.rowCount) return { ...result.rows[0], id: Number(result.rows[0].id), created: true };
-    const existing = await this.pool.query('SELECT * FROM business_event_allocations WHERE semantic_key=$1', [semanticKey]);
-    return { ...existing.rows[0], id: Number(existing.rows[0].id), created: false };
+      ON CONFLICT(semantic_key) DO NOTHING RETURNING id`, [scope.id, input.targetEventId, input.sourceReceiptId ?? null, input.sourceReceiptItemId ?? null, input.normalizationVersion, input.allocatedQuantity ?? null, input.allocatedAmount ?? null, input.currency, input.allocationRole, input.resolutionStatus, input.origin, input.graphModelVersion, input.ruleCode, input.ruleVersion, semanticKey, input.explanation ?? null]);
+    if (result.rowCount) return { id: Number(result.rows[0].id), created: true };
+    const existing = await this.pool.query('SELECT id FROM business_event_allocations WHERE semantic_key=$1', [semanticKey]);
+    if (!existing.rowCount) throw new Error('Business event allocation conflict row was not found');
+    return { id: Number(existing.rows[0].id), created: false };
   }
 
   async inspectEvent(eventId) {

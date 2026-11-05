@@ -21,7 +21,16 @@ if (!connectionString) {
   });
   const bundle = (value) => ({ normalized: { id: value.key, dateTime: value.dateTime, seller: value.user, sellerInn: value.userInn, totalSum: value.totalSum, currency: 'RUB', operationType: value.operationType, cashTotalSum: value.cashTotalSum, ecashTotalSum: value.ecashTotalSum, prepaidSum: value.prepaidSum, creditSum: value.creditSum, provisionSum: value.provisionSum, items: value.items.map((item) => ({ ...item, itemSum: item.sum })) }, raw: value });
   async function reset() { await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;'); await migrate(pool); }
-  async function seed(values) { const repo = new ReceiptRepository(pool); for (const value of values) await repo.upsertBundle(bundle(value)); await backfillNormalization(pool); }
+  async function seed(values) {
+    const repo = new ReceiptRepository(pool);
+    const sourceId = Number((await pool.query("SELECT id FROM fns_sources WHERE source_key='legacy-default' AND scope_id=(SELECT id FROM accounting_scopes WHERE scope_key='default')")).rows[0].id);
+    for (const value of values) {
+      const saved = await repo.upsertBundle(bundle(value));
+      await pool.query(`INSERT INTO receipt_source_observations(fns_source_id,receipt_id,source_receipt_id)
+        VALUES($1,$2,$3)`, [sourceId, saved.id, value.key]);
+    }
+    await backfillNormalization(pool);
+  }
   before(async () => { pool = createPool({ connectionString, max: 10 }); await reset(); });
   after(async () => { await pool.end(); });
 
@@ -85,7 +94,8 @@ if (!connectionString) {
     const settlement = raw('settle', { dateTime: '2026-08-20T10:00:00Z', cashTotalSum: 0, ecashTotalSum: 0, prepaidSum: 100, items: [{ name: 'Sanitized Widget', quantity: 1, price: 100, sum: 100, paymentType: 4, productType: 4, providerInn: '7700000000' }] });
     const ret = raw('return', { dateTime: '2026-08-21T10:00:00Z', operationType: 2 });
     await seed([pre, settlement, ret]);
-    await persistPrepaymentSettlementMatches(pool);
+    const startAt = new Date(Date.now() - 60_000).toISOString();
+    await persistPrepaymentSettlementMatches(pool, { startAt });
     const before = Number((await pool.query("SELECT count(*) FROM business_events WHERE event_type='PURCHASE'")).rows[0].count);
     const result = await persistReturnRefundMatches(pool);
     assert.equal(result.created.purchases, 0);
