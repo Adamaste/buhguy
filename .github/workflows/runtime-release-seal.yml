@@ -4,31 +4,51 @@ on:
   workflow_dispatch:
     inputs:
       confirm_target_sha:
-        description: Type the exact allowlisted release SHA to run this build
+        description: Type the full confirmed master HEAD SHA
         required: true
         type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   seal-verify:
     if: >-
       ${{ github.ref == 'refs/heads/master' &&
-          inputs.confirm_target_sha == 'c0a7959c26cde4b73a4b19efbe66e5e42336a502' }}
+          inputs.confirm_target_sha == github.sha }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
+      actions: read
     env:
-      TARGET_SHA: c0a7959c26cde4b73a4b19efbe66e5e42336a502
+      TARGET_SHA: ${{ github.sha }}
     steps:
       - name: Checkout the fixed target commit
         uses: actions/checkout@v4
         with:
-          ref: c0a7959c26cde4b73a4b19efbe66e5e42336a502
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Require the current master HEAD and successful CI
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const expected = process.env.TARGET_SHA;
+            if (!/^[a-f0-9]{40}$/.test(expected)) throw new Error('Invalid SHA');
+            const { data: head } = await github.rest.repos.getBranch({
+              ...context.repo, branch: 'master'
+            });
+            if (head.commit.sha !== expected) throw new Error('Master HEAD changed');
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', head_sha: expected, event: 'push'
+            });
+            if (!data.workflow_runs.some(run => run.head_sha === expected
+                && run.status === 'completed' && run.conclusion === 'success')) {
+              throw new Error('Successful master CI required');
+            }
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -49,6 +69,8 @@ jobs:
             deploy/runtime-release.mjs \
             scripts/migrate-prod-troika-024.mjs \
             scripts/migrate-prod-bank-only-025.mjs \
+            scripts/migrate-prod-bank-only-027.mjs \
+            scripts/migrate-prod-prepayment-028.mjs \
             package.json package-lock.json \
             | tar -xf - -C "$release_dir"
           test -s "$release_dir/scripts/migrate-prod-troika-024.mjs"
@@ -80,6 +102,10 @@ jobs:
           const required = [
             'scripts/migrate-prod-troika-024.mjs',
             'scripts/migrate-prod-bank-only-025.mjs',
+            'scripts/migrate-prod-bank-only-027.mjs',
+            'scripts/migrate-prod-prepayment-028.mjs',
+            'db/migrations/027_bank_only_purchase_runtime_privileges.sql',
+            'db/migrations/028_prepayment_bank_funding.sql',
           ];
           for (const path of required) {
             const entry = manifest.files.find((item) => item.path === path && item.type === 'file');
@@ -110,6 +136,8 @@ jobs:
           tar -tzf "$archive" | grep -Fx './release-manifest.json' >/dev/null
 
           archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          unpacked_bytes="$(du -sb "$RELEASE_DIR" | cut -f1)"
+          allocated_bytes="$(du -sB1 "$RELEASE_DIR" | cut -f1)"
           archive_bytes="$(stat -c '%s' "$archive")"
           report="$RUNNER_TEMP/buhguy-runtime-release-report.txt"
           {
@@ -117,6 +145,9 @@ jobs:
             printf 'manifest_sha256=%s\n' "$MANIFEST_SHA256"
             printf 'archive_sha256=%s\n' "$archive_sha256"
             printf 'archive_bytes=%s\n' "$archive_bytes"
+            printf 'unpacked_bytes=%s\n' "$unpacked_bytes"
+            printf 'allocated_bytes=%s\n' "$allocated_bytes"
+            printf 'runner_027_028=present-and-manifest-verified\n'
             printf 'runner_024=present-and-manifest-verified\n'
             printf 'runner_025=present-and-manifest-verified\n'
             printf 'seal_verify=PASS\n'
@@ -128,9 +159,9 @@ jobs:
       - name: Upload only the sealed release and hash report
         uses: actions/upload-artifact@v4
         with:
-          name: buhguy-runtime-sealed-c0a7959c26cde4b73a4b19efbe66e5e42336a502
+          name: buhguy-runtime-sealed-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/buhguy-runtime-c0a7959c26cde4b73a4b19efbe66e5e42336a502.tar.gz
+            ${{ runner.temp }}/buhguy-runtime-${{ github.sha }}.tar.gz
             ${{ runner.temp }}/buhguy-runtime-release-report.txt
           if-no-files-found: error
           retention-days: 7
