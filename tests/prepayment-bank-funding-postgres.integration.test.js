@@ -7,6 +7,7 @@ import { backfillNormalization } from '../src/fiscal-normalization.js';
 import { createPool, migrate, ReceiptRepository } from '../src/database.js';
 import { runAccountingCatchup } from '../src/accounting-pipeline.js';
 import { runBankOnlyPurchaseCatchup, writeBankOnlyPurchase } from '../src/bank-only-purchase.js';
+import { reconcilePrepaymentBankFunding } from '../src/prepayment-bank-funding.js';
 import { rebuildCertification } from '../src/certification.js';
 import { rebuildLedger } from '../src/ledger.js';
 import { PREPAYMENT_BANK_FUNDING_EVIDENCE_ROLE, PREPAYMENT_BANK_FUNDING_LINK_ROLE } from '../src/prepayment-bank-funding-contract.js';
@@ -256,6 +257,32 @@ if (!connectionString) {
     }
   });
 
+  test('explicit funding targets leave an independent lifecycle untouched and replay reuses evidence', { concurrency: false }, async () => {
+    await reset();
+    const now = Date.now();
+    const startAt = new Date(now - 300_000).toISOString();
+    const first = await seedReceipts({ prepaymentAt: iso(-140_000), settlementAt: iso(-40_000) });
+    const second = await seedReceipts({ prepaymentAt: iso(-140_000), settlementAt: iso(-40_000), amount: 200 });
+    const [bank] = await seedBank({ occurredAt: iso(-130_000), observedAt: iso(-20_000) });
+    const [otherBank] = await seedBank({ occurredAt: iso(-130_000), observedAt: iso(-20_000), amount: '200.00' });
+    await persistPrepaymentSettlementMatches(runtimePool, { startAt });
+    await rebuildLedger(runtimePool);
+    const targets = [{ prepaymentReceiptId: Number(first[0].id), settlementReceiptId: Number(first[1].id), bankTransactionId: bank.bankTransactionId }];
+    const wrongBank = await reconcilePrepaymentBankFunding(runtimePool, {
+      startAt, targets: [{ ...targets[0], bankTransactionId: otherBank.bankTransactionId }],
+    });
+    assert.equal(wrongBank.persisted, 0);
+    assert.equal(wrongBank.blocked, 1);
+    const firstPass = await reconcilePrepaymentBankFunding(runtimePool, { startAt, targets });
+    assert.equal(firstPass.persisted, 1);
+    const replay = await reconcilePrepaymentBankFunding(runtimePool, { startAt, targets });
+    assert.equal(replay.persisted, 0);
+    assert.equal(replay.reused, 1);
+    assert.equal((await admin.query('SELECT count(*)::int AS n FROM business_event_bank_evidence WHERE bank_transaction_id=$1', [otherBank.bankTransactionId])).rows[0].n, 0);
+    assert.equal((await admin.query('SELECT count(*)::int AS n FROM business_event_bank_evidence WHERE bank_transaction_id=$1', [bank.bankTransactionId])).rows[0].n, 1);
+    assert.ok(second[0].id > 0);
+  });
+
   test('two exact same-time bank purchases stay ambiguous and standalone prepayment stays unlinked', { concurrency: false }, async () => {
     await reset();
     const now = Date.now();
@@ -271,6 +298,12 @@ if (!connectionString) {
     });
     assert.equal(catchup.prepaymentBankFunding.persisted, 0);
     assert.equal(catchup.prepaymentBankFunding.ambiguous, 1);
+    const targeted = await reconcilePrepaymentBankFunding(runtimePool, {
+      startAt,
+      targets: [{ prepaymentReceiptId: Number(prepaymentReceipt.id), settlementReceiptId: Number(settlementReceipt.id), bankTransactionId: banks[0].bankTransactionId }],
+    });
+    assert.equal(targeted.persisted, 0);
+    assert.equal(targeted.ambiguous, 1);
     assert.equal((await admin.query(`SELECT count(*)::int AS count FROM business_event_bank_evidence
       WHERE evidence_role=$1`, [PREPAYMENT_BANK_FUNDING_EVIDENCE_ROLE])).rows[0].count, 0);
     assert.equal((await admin.query('SELECT count(*)::int AS count FROM ledger_entries WHERE derivation_rule=$1', ['LEDGER_BANK_ONLY_PURCHASE_V1'])).rows[0].count, 0);
